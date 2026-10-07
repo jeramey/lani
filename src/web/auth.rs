@@ -173,8 +173,13 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
         .next
         .filter(|next| is_safe_next(next))
         .unwrap_or_else(|| "/".to_string());
+    // SameSite=Lax, not Strict: `lani open` reaches /login from a local redirect file, which
+    // browsers treat as a cross-site origin, and they withhold Strict cookies for the rest of that
+    // navigation, including the redirect below. Lax cookies are still never sent on cross-site
+    // POSTs, every state change is a POST that must also pass the same-origin check in `check`,
+    // and no GET has side effects (design §13.2).
     let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Strict; Path=/",
+        "{}={}; HttpOnly; SameSite=Lax; Path=/",
         cookie_name(instance.port),
         instance.token
     );

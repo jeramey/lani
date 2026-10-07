@@ -90,9 +90,15 @@ fn open_starts_a_server_once_and_stop_removes_it() {
     );
     assert_eq!(mode & 0o777, 0o600, "server.json holds the token");
 
+    // A redirect file written by `open` (as with a browser) is removed when the server stops.
+    std::fs::write(home.path.join("run/open-test.html"), "token").unwrap();
     let stopped = stdout(&lani(&home, &["stop"]));
     assert!(stopped.starts_with("Stopped the LANI server"), "{stopped}");
     assert!(!server_file.exists(), "server.json is removed on shutdown");
+    assert!(
+        !home.path.join("run/open-test.html").exists(),
+        "redirect files are removed on shutdown"
+    );
     assert_eq!(
         stdout(&lani(&home, &["status"])),
         "No LANI server is running."

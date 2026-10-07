@@ -828,10 +828,18 @@ instead:
 1. Write `run/open-<random>.html` (mode 0600) containing a meta-refresh to
    `http://127.0.0.1:<port>/login?token=<token>&next=<path>`.
 2. Open *that file* with `$BROWSER` if set, otherwise `open` (macOS) or `xdg-open` (Linux).
-3. The server deletes `open-*.html` files older than 60 s.
+3. The server deletes `open-*.html` files older than 60 s, and all of them when it stops.
 
 **Session.** `/login` validates the token, sets the cookie, and redirects with 303 to `next`. The
-cookie is `lani_<port>=<token>` with `HttpOnly`, `SameSite=Strict` and `Path=/`. `next` must be a
+cookie is `lani_<port>=<token>` with `HttpOnly`, `SameSite=Lax` and `Path=/`.
+
+- **Why Lax, not Strict.** `lani open` reaches `/login` from a local redirect file, which browsers
+  treat as cross-site. They withhold Strict cookies for that whole navigation, including the
+  redirect to `next`, so a Strict cookie leaves the user signed out (found in M2 testing).
+- **What Lax gives up.** Only that a cross-site *top-level GET* carries the cookie. That is
+  harmless here: no GET has side effects (every state change is a POST), the other site cannot
+  read the response, and `frame-ancestors 'none'` stops framing. Cross-site POSTs never carry a
+  Lax cookie, and they must also pass the `Origin` check below. `next` must be a
 local path that starts with `/` and not `//`. The port is in the cookie name because browsers do
 not isolate cookies by port.
 
@@ -995,7 +1003,7 @@ lani version
 | Token read from another process's arguments (`ps`)       | The token never appears on a command line; the browser opens a 0600 redirect file instead. |
 | Token read from disk                                     | `server.json` is mode 0600 inside the 0700 `$LANI_HOME`; the DB is also 0600. |
 | DNS rebinding from a malicious website                   | `Host` header allowlist; the server binds 127.0.0.1 only. |
-| CSRF from a malicious website                            | `SameSite=Strict` cookie, plus an `Origin` or `Sec-Fetch-Site` check on mutations. |
+| CSRF from a malicious website                            | `SameSite=Lax` cookie (never sent on cross-site POSTs), plus an `Origin` or `Sec-Fetch-Site` check on every POST; GETs have no side effects. |
 | XSS via comment text written by Claude or pasted content | Autoescaping templates, raw HTML disabled in Markdown, dangerous URL schemes dropped, strict CSP with no inline scripts. |
 | Git option injection via refs or paths                   | `--end-of-options` or `--` before all user-supplied values; refs verified with `rev-parse --verify`. |
 | Path traversal in the file browser                       | Files are read only through git objects (`<commit>:<path>`), never from the filesystem. |

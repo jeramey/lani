@@ -283,6 +283,7 @@ async fn run(
         })
         .await;
     ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
+    daemon::remove_open_files(&options.home, Duration::ZERO);
     eprintln!("LANI server stopped");
     served.map_err(Error::Io)
 }

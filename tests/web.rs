@@ -214,7 +214,7 @@ async fn login_sets_a_port_scoped_cookie_and_redirects_only_locally() {
     let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
     assert_eq!(
         cookie,
-        format!("lani_{PORT}={TOKEN}; HttpOnly; SameSite=Strict; Path=/")
+        format!("lani_{PORT}={TOKEN}; HttpOnly; SameSite=Lax; Path=/")
     );
 
     let (_, headers, _) = send(&f.app, login(&format!("token={TOKEN}&next=//evil.example"))).await;

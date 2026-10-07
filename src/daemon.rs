@@ -364,6 +364,12 @@ pub fn open_in_browser(home: &Path, server: &ServerFile, next: &str) -> Result<(
 /// Delete browser-launch redirect files older than [`OPEN_FILE_MAX_AGE`]. Best effort: a file
 /// that cannot be inspected or removed is left for the next sweep.
 pub fn sweep_open_files(home: &Path) {
+    remove_open_files(home, OPEN_FILE_MAX_AGE);
+}
+
+/// Delete browser-launch redirect files at least `min_age` old (all of them for
+/// `Duration::ZERO`, as when the server stops and their tokens become useless).
+pub fn remove_open_files(home: &Path, min_age: Duration) {
     let Ok(entries) = std::fs::read_dir(run_dir(home)) else {
         return;
     };
@@ -379,7 +385,7 @@ pub fn sweep_open_files(home: &Path) {
             .and_then(|metadata| metadata.modified())
             .ok()
             .and_then(|modified| now.duration_since(modified).ok())
-            .is_some_and(|age| age >= OPEN_FILE_MAX_AGE);
+            .is_some_and(|age| age >= min_age);
         if expired {
             let _ = std::fs::remove_file(entry.path());
         }
