@@ -2,6 +2,11 @@
 //!
 //! The output is Markdown-like plain text rather than JSON: it costs fewer tokens and reads well.
 //! IDs and versions are always explicit so Claude can act on what it reads.
+//!
+//! Output contract (design §12.4): text written by a person or taken from a repository never
+//! appears as LANI's own structure. Single values inside LANI's lines go through [`quoted`];
+//! multi-line text goes through [`text::quote_body`]; and the MCP layer finally replaces any line
+//! break other than `\n` with `␤`.
 
 use std::fmt::Write as _;
 
@@ -12,7 +17,8 @@ use crate::service::{
     CodeExcerpt, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
     StartedReview, WorktreeReport,
 };
-use crate::{text, time};
+use crate::text::{self, quoted};
+use crate::time;
 
 /// Longest first-line preview shown for an issue in summary lists, in characters.
 const PREVIEW_CHARS: usize = 80;
@@ -25,25 +31,25 @@ pub fn started_review(started: &StartedReview) -> String {
     if started.created {
         let _ = writeln!(
             out,
-            "Created review {} \"{}\" · started by {}",
+            "Created review {} {} · started by {}",
             review.id,
-            review.title,
+            quoted(&review.title),
             review.created_by.as_str()
         );
     } else {
         let _ = writeln!(
             out,
-            "Review {} \"{}\" is already open for {} and was returned unchanged; the given title, base and \
+            "Review {} {} is already open for {} and was returned unchanged; the given title, base and \
              summary were not applied (use update_review_summary to change the summary).",
             review.id,
-            review.title,
-            short_ref(&review.head_ref)
+            quoted(&review.title),
+            quoted(short_ref(&review.head_ref))
         );
     }
     let head = head_text(view);
     if let Some(choice) = &started.base_choice {
         let base = match &choice.base_ref {
-            Some(base_ref) => format!("base {} ({})", short_ref(base_ref), choice.reason),
+            Some(base_ref) => format!("base {} ({})", quoted(short_ref(base_ref)), choice.reason),
             None => format!("whole-tree review ({})", choice.reason),
         };
         let _ = writeln!(out, "{head} · {base}");
@@ -51,7 +57,7 @@ pub fn started_review(started: &StartedReview) -> String {
             let others: Vec<String> = choice
                 .other_candidates
                 .iter()
-                .map(|(name, behind)| format!("{} ({})", short_ref(name), commits(*behind)))
+                .map(|(name, behind)| format!("{} ({})", quoted(short_ref(name)), commits(*behind)))
                 .collect();
             let _ = writeln!(out, "other candidates: {}", others.join(", "));
         }
@@ -77,7 +83,7 @@ pub fn review_list(list: &ReviewList, status_label: &str) -> String {
             let _ = writeln!(
                 out,
                 "Reviews ({status_label}) for the repo at {}:",
-                path.display()
+                quoted(&path.display().to_string())
             );
         }
         None => {
@@ -93,11 +99,11 @@ pub fn review_list(list: &ReviewList, status_label: &str) -> String {
         let repo = if list.filtered_by.is_some() {
             String::new()
         } else {
-            format!("{} · ", item.view.repo.name)
+            format!("{} · ", quoted(&item.view.repo.name))
         };
         let base = review.base_ref.as_deref().map_or_else(
             || "(whole tree)".to_string(),
-            |b| format!("→ {}", short_ref(b)),
+            |b| format!("→ {}", quoted(short_ref(b))),
         );
         let counts = item.view.counts;
         let marker = if item.checked_out {
@@ -107,11 +113,11 @@ pub fn review_list(list: &ReviewList, status_label: &str) -> String {
         };
         let _ = writeln!(
             out,
-            "Review {} · {repo}{} · \"{}\" · {} {base} · {} open, {} resolved issues · started by {} {}{marker}",
+            "Review {} · {repo}{} · {} · {} {base} · {} open, {} resolved issues · started by {} {}{marker}",
             review.id,
             review_status(review.status),
-            review.title,
-            short_ref(&review.head_ref),
+            quoted(&review.title),
+            quoted(short_ref(&review.head_ref)),
             counts.open,
             counts.resolved,
             review.created_by.as_str(),
@@ -128,12 +134,12 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "Review {} \"{}\" · {} · started by {} · repo {}",
+        "Review {} {} · {} · started by {} · repo {}",
         review.id,
-        review.title,
+        quoted(&review.title),
         review_status(review.status),
         review.created_by.as_str(),
-        view.repo.name
+        quoted(&view.repo.name)
     );
     let _ = writeln!(out, "{} · {}", head_text(view), base_text(view));
     let _ = writeln!(out, "{}", counts_text(view));
@@ -185,10 +191,19 @@ pub fn issue_list(list: &IssueList, status_label: &str, full: bool, path: Option
     let review = &view.review;
     let mut out = String::new();
     let refs = match &review.base_ref {
-        Some(base) => format!("{} → {}", short_ref(&review.head_ref), short_ref(base)),
-        None => format!("{} (whole tree)", short_ref(&review.head_ref)),
+        Some(base) => format!(
+            "{} → {}",
+            quoted(short_ref(&review.head_ref)),
+            quoted(short_ref(base))
+        ),
+        None => format!("{} (whole tree)", quoted(short_ref(&review.head_ref))),
     };
-    let _ = writeln!(out, "Review {} \"{}\" · {refs}", review.id, review.title);
+    let _ = writeln!(
+        out,
+        "Review {} {} · {refs}",
+        review.id,
+        quoted(&review.title)
+    );
 
     let mut position = Vec::new();
     if let Some(git) = &view.git {
@@ -200,7 +215,9 @@ pub fn issue_list(list: &IssueList, status_label: &str, full: bool, path: Option
             position.push(format!("merge-base {}", short_sha(merge_base)));
         }
     }
-    let in_path = path.map(|p| format!(" in {p}")).unwrap_or_default();
+    let in_path = path
+        .map(|p| format!(" in {}", quoted(p)))
+        .unwrap_or_default();
     position.push(format!(
         "showing {} {status_label}{in_path}",
         list.issues.len()
@@ -239,10 +256,10 @@ fn issue_summary_line(view: &IssueView) -> String {
             start_line,
             end_line,
             ..
-        } => format!("{path}:{}", lines(*start_line, *end_line)),
+        } => format!("{}:{}", quoted(path), lines(*start_line, *end_line)),
         Location::Outdated { .. } => format!(
             "{}:{} (outdated)",
-            issue.anchor.path,
+            quoted(&issue.anchor.path),
             lines(issue.anchor.start_line, issue.anchor.end_line)
         ),
     };
@@ -261,9 +278,10 @@ fn issue_summary_line(view: &IssueView) -> String {
         .last()
         .map_or("nobody", |comment| comment.author.as_str());
     format!(
-        "Issue {} · {} · {location}{side} · \"{preview}\" · {}, last: {last}\n",
+        "Issue {} · {} · {location}{side} · {} · {}, last: {last}\n",
         issue.id,
         issue_status(issue.status, issue.resolved_by),
+        quoted(&preview),
         plural(view.comments.len(), "comment")
     )
 }
@@ -321,7 +339,7 @@ pub fn location_text(view: &IssueView) -> String {
     };
     let opened_at = format!(
         "{}:{} ({side}) @ {}",
-        anchor.path,
+        quoted(&anchor.path),
         lines(anchor.start_line, anchor.end_line),
         short_sha(&anchor.commit)
     );
@@ -338,7 +356,8 @@ pub fn location_text(view: &IssueView) -> String {
                 format!("{opened_at}; unchanged at {}", short_sha(commit))
             } else {
                 format!(
-                    "{path}:{} ({side}) @ {} (opened at {opened_at})",
+                    "{}:{} ({side}) @ {} (opened at {opened_at})",
+                    quoted(path),
                     lines(*start_line, *end_line),
                     short_sha(commit)
                 )
@@ -397,7 +416,7 @@ fn longest_backtick_run(line: &str) -> usize {
 }
 
 fn head_text(view: &ReviewView) -> String {
-    let head = short_ref(&view.review.head_ref);
+    let head = quoted(short_ref(&view.review.head_ref));
     match view.git.as_ref().map(|git| &git.head_sha) {
         Some(Some(sha)) => format!("head {head} @ {}", short_sha(sha)),
         Some(None) => format!("head {head} (branch no longer exists)"),
@@ -415,7 +434,7 @@ fn base_text(view: &ReviewView) -> String {
         BaseSource::Explicit => "",
         BaseSource::WebUi => " (set in the web UI)",
     };
-    let mut text = format!("base {}{source}", short_ref(base_ref));
+    let mut text = format!("base {}{source}", quoted(short_ref(base_ref)));
     if let Some(git) = &view.git {
         if git.base_sha.is_none() {
             text.push_str(" (base ref no longer exists)");
@@ -441,10 +460,10 @@ fn worktree_text(report: &WorktreeReport) -> String {
     let head = match (&report.head, report.matches_review_head) {
         (Some(head), true) => format!("HEAD {} (= review head)", short_sha(head)),
         (Some(head), false) => {
-            let branch = report
-                .branch
-                .as_deref()
-                .map_or_else(|| "detached".to_string(), |b| format!("branch {b}"));
+            let branch = report.branch.as_deref().map_or_else(
+                || "detached".to_string(),
+                |b| format!("branch {}", quoted(b)),
+            );
             format!("HEAD {} (≠ review head; {branch})", short_sha(head))
         }
         (None, _) => "no commits checked out".to_string(),
@@ -452,9 +471,13 @@ fn worktree_text(report: &WorktreeReport) -> String {
     let changes = if report.modified.is_empty() {
         "no uncommitted changes to tracked files".to_string()
     } else {
-        format!("uncommitted changes: {}", report.modified.join(", "))
+        let files: Vec<String> = report.modified.iter().map(|file| quoted(file)).collect();
+        format!("uncommitted changes: {}", files.join(", "))
     };
-    format!("Worktree {}: {head} · {changes}", report.path.display())
+    format!(
+        "Worktree {}: {head} · {changes}",
+        quoted(&report.path.display().to_string())
+    )
 }
 
 fn issue_status(status: IssueStatus, resolved_by: Option<Actor>) -> String {

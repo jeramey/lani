@@ -4,6 +4,7 @@
 use crate::error::{Error, Result};
 use crate::git::{BranchDistance, Git};
 use crate::model::{BaseSource, short_ref};
+use crate::text::quoted;
 
 /// How the caller wants the base chosen (`base_mode` in `start_review`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +57,7 @@ pub fn choose_base(
             if full == head_ref {
                 return Err(Error::Invalid(format!(
                     "base and head are both {}; choose a different base, or base_mode \"none\" for a whole-tree review",
-                    short_ref(head_ref)
+                    quoted(short_ref(head_ref))
                 )));
             }
             Ok(BaseChoice {
@@ -74,7 +75,7 @@ pub fn choose_base(
                     source: BaseSource::Auto,
                     reason: format!(
                         "auto: {} is the default branch, so this is a whole-tree review",
-                        short_ref(head_ref)
+                        quoted(short_ref(head_ref))
                     ),
                     other_candidates: Vec::new(),
                 });
@@ -131,7 +132,7 @@ fn nearest_parent(
         return Err(Error::Invalid(format!(
             "no parent branch found for {}: every other local branch already contains all of its commits; \
              use base_mode \"ref\" with an explicit base_ref, or base_mode \"none\" for a whole-tree review",
-            short_ref(head_ref)
+            quoted(short_ref(head_ref))
         )));
     };
     let tied: Vec<&BranchDistance> = candidates
@@ -148,11 +149,11 @@ fn nearest_parent(
     {
         default
     } else {
-        let names: Vec<&str> = tied.iter().map(|c| short_ref(&c.refname)).collect();
+        let names: Vec<String> = tied.iter().map(|c| quoted(short_ref(&c.refname))).collect();
         return Err(Error::Invalid(format!(
             "cannot choose a parent branch for {}: {} are equally close ({} commits); \
              use base_mode \"ref\" with one of them as base_ref",
-            short_ref(head_ref),
+            quoted(short_ref(head_ref)),
             names.join(", "),
             nearest.behind
         )));
@@ -231,7 +232,7 @@ mod tests {
         let error = nearest_parent(&distances, HEAD, MAIN)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("develop, release"), "{error}");
+        assert!(error.contains(r#""develop", "release""#), "{error}");
     }
 
     #[test]

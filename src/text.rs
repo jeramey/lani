@@ -4,6 +4,15 @@
 //! wrote cannot pass for one of LANI's own lines (docs/design.md §12.4). That only works if every
 //! character a reader might treat as a line break is handled, not just `\n`.
 
+/// A value written by someone or taken from a repository (a title, file path, branch or
+/// repository name), quoted for use inside one of LANI's own lines: in double quotes, with quotes,
+/// backslashes, control characters and line breaks escaped (Rust's `{:?}` format). Its extent is
+/// then unambiguous, so it cannot imitate the structure around it (design §12.4).
+#[must_use]
+pub fn quoted(value: &str) -> String {
+    format!("{value:?}")
+}
+
 /// Prefix for every line of text written by someone (comment bodies and summaries) in MCP output
 /// and errors. Only lines without it are LANI's own structure, such as comment headers, so a body
 /// cannot forge a header that appears to come from another author or the human (§12.4).
@@ -110,6 +119,13 @@ mod tests {
             vec!["é", "ü"],
             "multi-byte characters"
         );
+    }
+
+    #[test]
+    fn quoted_values_cannot_break_out() {
+        assert_eq!(quoted("src/a.rs"), "\"src/a.rs\"");
+        assert_eq!(quoted("x\" · human \""), r#""x\" · human \"""#);
+        assert_eq!(quoted("a\u{2028}b\\"), r#""a\u{2028}b\\""#);
     }
 
     #[test]

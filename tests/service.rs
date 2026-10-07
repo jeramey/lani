@@ -293,7 +293,7 @@ fn create_issue_rejects_a_commit_not_on_the_branch() {
         .review
         .id;
     let result = service.create_issue(&issue_request(review_id, &repo, &main_only, 1, 1, "line 1"));
-    expect_invalid(result, "is not on branch feature");
+    expect_invalid(result, "is not on branch \"feature\"");
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn uncommitted_change_inside_the_range_is_rejected() {
     );
     expect_invalid(
         service.create_issue(&issue_request(review_id, &repo, &head, 5, 7, "line 5")),
-        "lines 5-7 of src/lib.rs on disk",
+        "lines 5-7 of \"src/lib.rs\" on disk",
     );
 }
 
@@ -951,7 +951,7 @@ fn only_the_human_renames_rebases_reopens_and_changes_settings() {
     assert_eq!(view.review.base_ref.as_deref(), Some("refs/heads/main"));
     expect_invalid(
         service.change_base(Actor::Human, review_id, &BaseMode::Ref("feature".into())),
-        "base and head are both feature",
+        "base and head are both \"feature\"",
     );
     let candidates = service.base_candidates(review_id).unwrap();
     assert_eq!(

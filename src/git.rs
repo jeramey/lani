@@ -13,6 +13,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
+use crate::text::quoted;
 
 /// Environment variables that could make git operate on a different repository or index than
 /// the one LANI names explicitly.
@@ -245,7 +246,8 @@ impl Git {
         };
         if kind != "blob" {
             return Err(Error::Invalid(format!(
-                "{path} is not a file at commit {commit} (it is a {kind})"
+                "{} is not a file at commit {commit} (it is a {kind})",
+                quoted(path)
             )));
         }
         let mut command = self.command();
@@ -302,7 +304,7 @@ pub fn discover(path: &Path) -> Result<Worktree> {
     if !path.is_absolute() {
         return Err(Error::Invalid(format!(
             "{} is not an absolute path",
-            path.display()
+            quoted(&path.display().to_string())
         )));
     }
     let mut command = git_command();
@@ -316,8 +318,8 @@ pub fn discover(path: &Path) -> Result<Worktree> {
     if !output.status.success() {
         return Err(Error::Invalid(format!(
             "{} is not inside a git worktree: {}",
-            path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            quoted(&path.display().to_string()),
+            quoted(String::from_utf8_lossy(&output.stderr).trim())
         )));
     }
     let text = stdout_text(&output)?;
@@ -410,11 +412,12 @@ fn run(mut command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
                 .get_args()
                 .map(|argument| argument.to_string_lossy().into_owned())
                 .collect();
+            // Arguments and git's message can echo paths and refs from the repository.
             Err(Error::Git(format!(
-                "`git {}` failed ({}): {}",
-                arguments.join(" "),
+                "git command {} failed ({}): {}",
+                quoted(&format!("git {}", arguments.join(" "))),
                 output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
+                quoted(String::from_utf8_lossy(&output.stderr).trim())
             )))
         }
     }

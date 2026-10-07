@@ -48,7 +48,8 @@ impl FileLines {
         let sniffed = &bytes[..bytes.len().min(BINARY_SNIFF_BYTES)];
         if sniffed.contains(&0) {
             return Err(Error::Invalid(format!(
-                "{path} is a binary file; issues can only be anchored to text files"
+                "{} is a binary file; issues can only be anchored to text files",
+                crate::text::quoted(path)
             )));
         }
         let text = String::from_utf8_lossy(bytes);

@@ -19,7 +19,7 @@ use crate::model::{
 };
 use crate::settings::{self, IdleTimeout};
 use crate::store::{self, IssueCounts, NewComment, NewEvent, NewReview};
-use crate::text;
+use crate::text::{self, quoted};
 use crate::time;
 
 /// Longest accepted review title, in characters.
@@ -202,14 +202,14 @@ impl Service {
             None => git::current_branch(&worktree.toplevel)?.ok_or_else(|| {
                 Error::Invalid(format!(
                     "HEAD is detached in {}; check out the branch to review, or pass head_ref",
-                    worktree.toplevel.display()
+                    quoted(&worktree.toplevel.display().to_string())
                 ))
             })?,
         };
         let head_sha = git.resolve_commit(&head_ref)?.ok_or_else(|| {
             Error::Invalid(format!(
                 "branch {} has no commits yet",
-                short_ref(&head_ref)
+                quoted(short_ref(&head_ref))
             ))
         })?;
 
@@ -703,7 +703,7 @@ impl Service {
                     .map_or_else(String::new, |open| format!(" (review {})", open.id));
                 return Err(Error::Invalid(format!(
                     "branch {} already has an open review{other}; close it before reopening review {review_id}",
-                    short_ref(&review.head_ref)
+                    quoted(short_ref(&review.head_ref))
                 )));
             }
             Err(error) => return Err(error),
@@ -936,7 +936,7 @@ impl<'a> Placer<'a> {
                 None => {
                     return Ok(outdated(format!(
                         "head branch {} no longer exists",
-                        short_ref(&self.review.head_ref)
+                        quoted(short_ref(&self.review.head_ref))
                     )));
                 }
             },
@@ -986,7 +986,7 @@ impl<'a> Placer<'a> {
             PathChange::Deleted => {
                 return Ok(outdated(format!(
                     "{} was removed after {}",
-                    anchor.path,
+                    quoted(&anchor.path),
                     short_sha(&anchor.commit)
                 )));
             }
@@ -1098,8 +1098,8 @@ fn discover_in_repo(path: &Path, repo: &Repo, review_id: i64) -> Result<Worktree
     if path_text(&worktree.git_dir)? != repo.git_dir {
         return Err(Error::Invalid(format!(
             "{} belongs to a different repository than review {review_id} ({})",
-            path.display(),
-            repo.name
+            quoted(&path.display().to_string()),
+            quoted(&repo.name)
         )));
     }
     Ok(worktree)
@@ -1139,7 +1139,7 @@ fn validate_anchor(
             "commit {} is not on branch {} (head {}). Either you read a different branch, or the branch \
              was rebased since you read it; re-read the code at the current head and retry.",
             short_sha(&commit),
-            short_ref(&review.head_ref),
+            quoted(short_ref(&review.head_ref)),
             short_sha(head_sha)
         )));
     }
@@ -1151,7 +1151,7 @@ fn validate_anchor(
         .ok_or_else(|| {
             Error::NotFound(format!(
                 "{} does not exist at commit {}",
-                request.path,
+                quoted(request.path),
                 short_sha(&anchor_commit)
             ))
         })?;
@@ -1159,7 +1159,7 @@ fn validate_anchor(
     if request.end_line > file.len() {
         return Err(Error::Invalid(format!(
             "{} has {} lines at commit {}, so lines {}-{} do not exist",
-            request.path,
+            quoted(request.path),
             file.len(),
             short_sha(&anchor_commit),
             request.start_line,
@@ -1205,14 +1205,14 @@ fn anchor_commit(git: &Git, review: &Review, side: Side, commit: &str) -> Result
             let base_sha = git.resolve_commit(base_ref)?.ok_or_else(|| {
                 Error::NotFound(format!(
                     "base branch {} no longer exists",
-                    short_ref(base_ref)
+                    quoted(short_ref(base_ref))
                 ))
             })?;
             git.merge_base(&base_sha, commit)?.ok_or_else(|| {
                 Error::Invalid(format!(
                     "commit {} shares no history with base {}",
                     short_sha(commit),
-                    short_ref(base_ref)
+                    quoted(short_ref(base_ref))
                 ))
             })
         }
@@ -1222,21 +1222,22 @@ fn anchor_commit(git: &Git, review: &Review, side: Side, commit: &str) -> Result
 /// §10.1 step 3: reject anchors that uncommitted changes could have shifted.
 fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &CreateIssue<'_>) -> Result<()> {
     let path = request.path;
+    let shown_path = quoted(path);
     let on_disk = worktree.toplevel.join(path);
     if std::fs::symlink_metadata(&on_disk).is_err() {
         return Err(Error::Invalid(format!(
-            "{path} does not exist on disk in {}; if you read it from git (git show), pass worktree_path: null",
-            worktree.toplevel.display()
+            "{shown_path} does not exist on disk in {}; if you read it from git (git show), pass worktree_path: null",
+            quoted(&worktree.toplevel.display().to_string())
         )));
     }
     let hunks = git::diff_commit_to_disk(&worktree.toplevel, commit, path)?;
     let (start, end) = (request.start_line, request.end_line);
-    let disk = worktree.toplevel.display();
+    let disk = quoted(&worktree.toplevel.display().to_string());
     let commit = short_sha(commit);
     match anchor::check_disk(&hunks, start, end) {
         DiskCheck::Consistent => Ok(()),
         DiskCheck::RangeChanged => Err(Error::Invalid(format!(
-            "create_issue rejected: lines {start}-{end} of {path} on disk in {disk} differ from commit {commit}.\n\
+            "create_issue rejected: lines {start}-{end} of {shown_path} on disk in {disk} differ from commit {commit}.\n\
              Uncommitted changes are not part of the review; they must be committed to be reviewed."
         ))),
         DiskCheck::Shifted { if_read_from_disk } => {
@@ -1253,7 +1254,7 @@ fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &CreateIssue<'
                 }
             };
             Err(Error::Invalid(format!(
-                "create_issue rejected: {path} on disk in {disk} differs from commit {commit}.\n\
+                "create_issue rejected: {shown_path} on disk in {disk} differs from commit {commit}.\n\
                  The differences are above lines {start}-{end}, so LANI cannot tell which version your line numbers came from.\n  \
                  - If you read the file on disk: {from_disk}\n  \
                  - If you read the committed file (git show): resubmit with worktree_path: null.\n\
@@ -1285,7 +1286,7 @@ fn check_start_line_text(
     Err(Error::Invalid(format!(
         "start_line_text does not match line {} of {} at {}.\n  line {}: {:?}\n  expected: {:?}\n{suggestion}",
         request.start_line,
-        request.path,
+        quoted(request.path),
         short_sha(anchor_commit),
         request.start_line,
         actual,
@@ -1300,7 +1301,7 @@ fn repo_exists(repo: &Repo) -> bool {
 fn repo_missing(repo: &Repo) -> String {
     format!(
         "the repository is no longer at {} (it was moved or deleted)",
-        repo.git_dir
+        quoted(&repo.git_dir)
     )
 }
 
@@ -1341,7 +1342,7 @@ fn require_head(git: &Git, review: &Review) -> Result<String> {
     git.resolve_commit(&review.head_ref)?.ok_or_else(|| {
         Error::Invalid(format!(
             "head branch {} of review {} no longer exists",
-            short_ref(&review.head_ref),
+            quoted(short_ref(&review.head_ref)),
             review.id
         ))
     })
@@ -1447,7 +1448,10 @@ fn repo_name(git_dir: &Path) -> String {
 }
 
 fn path_text(path: &Path) -> Result<String> {
-    path.to_str()
-        .map(str::to_string)
-        .ok_or_else(|| Error::Invalid(format!("path {} is not valid UTF-8", path.display())))
+    path.to_str().map(str::to_string).ok_or_else(|| {
+        Error::Invalid(format!(
+            "path {} is not valid UTF-8",
+            quoted(&path.display().to_string())
+        ))
+    })
 }
