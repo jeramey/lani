@@ -957,7 +957,8 @@ Comments and summaries are rendered with **comrak**:
 - Links open in the same tab, and `Referrer-Policy: no-referrer` keeps LANI URLs from leaking to
   linked sites, so no `rel` attributes are needed.
 - One-line previews in lists render the first line of a description as inline Markdown.
-- Rendered HTML is cached per (object, version).
+- Markdown is rendered on every request. A cache keyed by (object, version) is deferred until
+  the M4 benchmarks show rendering matters (§21).
 
 ### 13.8 Frontend technology
 
@@ -1230,6 +1231,7 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Suggested-change blocks that can be applied as patches.
 - Fuzzy file finder and code search.
 - A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
+- Caching rendered Markdown per (object, version), if rendering cost shows up in benchmarks.
 - Relocating a repo (re-pointing `git_dir` after the repo moves on disk).
 - Keeping reviewed commits reachable through `refs/lani/*`. This writes to the repo, so it would
   need an explicit opt-in.
