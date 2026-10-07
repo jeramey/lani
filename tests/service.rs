@@ -1148,3 +1148,33 @@ fn issues_sharing_an_anchor_commit_are_placed_from_one_tree_diff() {
         ]
     );
 }
+
+#[test]
+fn issues_are_listed_by_issue_number() {
+    let home = TestHome::new();
+    let repo = TestRepo::new(&[("a.rs", &numbered(10)), ("b.rs", &numbered(10))]);
+    repo.switch_new("feature");
+    repo.write("a.rs", &numbered(11));
+    let head = repo.commit_all("change");
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    // Created in an order that differs from file-and-line order.
+    let mut created = Vec::new();
+    for (path, line) in [("b.rs", 9), ("a.rs", 7), ("b.rs", 2), ("a.rs", 1)] {
+        let text = format!("line {line}");
+        let mut request = issue_request(review_id, &repo, &head, line, line, &text);
+        request.path = path;
+        created.push(service.create_issue(&request).unwrap().issue.id);
+    }
+    let listed: Vec<i64> = service
+        .list_issues(review_id, None, None, false)
+        .unwrap()
+        .issues
+        .iter()
+        .map(|issue| issue.issue.id)
+        .collect();
+    assert_eq!(listed, created);
+}

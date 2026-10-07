@@ -387,7 +387,7 @@ impl Service {
         self.get_review(review_id, None)
     }
 
-    /// A review's issues ordered by file and line, placed in the current code.
+    /// A review's issues by issue number, oldest first, placed in the current code.
     pub fn list_issues(
         &self,
         review_id: i64,

@@ -361,7 +361,7 @@ pub fn get_issue(conn: &Connection, id: i64) -> Result<Issue> {
     .ok_or_else(|| Error::NotFound(format!("issue {id} does not exist")))
 }
 
-/// List a review's issues ordered by file and line. `None` filters mean "all".
+/// List a review's issues by issue number, oldest first. `None` filters mean "all".
 pub fn list_issues(
     conn: &Connection,
     review_id: i64,
@@ -371,7 +371,7 @@ pub fn list_issues(
     let mut statement = conn.prepare(&format!(
         "SELECT {ISSUE_COLUMNS} FROM issue
          WHERE review_id = ?1 AND (?2 IS NULL OR status = ?2) AND (?3 IS NULL OR path = ?3)
-         ORDER BY path, start_line, id"
+         ORDER BY id"
     ))?;
     let rows = statement.query_map(params![review_id, status, path], issue_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
