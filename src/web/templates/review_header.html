@@ -1,0 +1,12 @@
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="/">Reviews</a> / {{ review.repo }}</p>
+    <h1><a class="plain" href="{{ review.url }}">{{ review.title }}</a> <span class="muted">#{{ review.id }}</span></h1>
+  </div>
+  <span class="badge {{ review.status_class }}">{{ review.status_label }}</span>
+</div>
+<dl class="facts">
+  <dt>Head</dt><dd><code>{{ review.head }}</code></dd>
+  <dt>Base</dt><dd><code>{{ review.base }}</code>{% if let Some(note) = review.base_note %} <span class="note">{{ note }}</span>{% endif %}</dd>
+  <dt>Started</dt><dd>by <span class="author {{ review.created_by.class }}">{{ review.created_by.label }}</span> · {{ review.created }}</dd>
+</dl>

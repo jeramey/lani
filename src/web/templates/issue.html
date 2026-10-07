@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Issue #{{ id }} · {{ review.title }} · LANI{% endblock %}
+{% block content %}
+{% include "review_header.html" %}
+
+<section class="panel issue">
+  <div class="section-head">
+    <h2>Issue #{{ id }}</h2>
+    <span class="badge {{ status_class }}">{{ status_label }}</span>
+  </div>
+  <p class="meta">Opened by <span class="author {{ opened_by.class }}">{{ opened_by.label }}</span> · {{ opened }}</p>
+  <p><code class="location">{{ location }}</code></p>
+  {% if let Some(reason) = outdated_reason %}
+  <p class="notice">Outdated: {{ reason }}. The code below is how it looked when the issue was opened.</p>
+  {% endif %}
+  {% if let Some(excerpt) = code %}
+  <figure class="code">
+    <figcaption>{{ excerpt.label }}</figcaption>
+    <table>
+      {% for line in excerpt.lines %}
+      <tr{% if line.highlighted %} class="hl"{% endif %}><td class="ln">{{ line.number }}</td><td class="src"><pre>{{ line.text }}</pre></td></tr>
+      {% endfor %}
+    </table>
+  </figure>
+  {% endif %}
+</section>
+
+<section class="panel thread">
+  <h2>Discussion</h2>
+  {% for comment in comments %}{% include "comment.html" %}{% endfor %}
+  {% if editable %}
+  <form method="post" action="{{ comment_action }}" class="new-comment">
+    <label for="reply">Reply</label>
+    <textarea id="reply" name="body" rows="5" required placeholder="Markdown is supported"></textarea>
+    <div class="form-actions"><button type="submit">Comment</button></div>
+  </form>
+  <form method="post" action="{{ status_action }}" class="status-change">
+    {% if resolved %}
+    <input type="hidden" name="status" value="open">
+    <label for="status-comment">Reopen, with an optional comment</label>
+    <textarea id="status-comment" name="comment" rows="3"></textarea>
+    <div class="form-actions"><button type="submit" class="secondary">Reopen issue</button></div>
+    {% else %}
+    <input type="hidden" name="status" value="resolved">
+    <label for="status-comment">Resolve, with an optional comment</label>
+    <textarea id="status-comment" name="comment" rows="3"></textarea>
+    <div class="form-actions"><button type="submit">Resolve issue</button></div>
+    {% endif %}
+  </form>
+  {% else %}
+  <p class="muted">This review is closed. Reopen it to comment or to change issues.</p>
+  {% endif %}
+</section>
+{% endblock %}

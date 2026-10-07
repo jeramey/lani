@@ -5,11 +5,15 @@
 
 pub mod anchor;
 pub mod base;
+pub mod daemon;
 pub mod error;
 pub mod git;
+pub mod markdown;
 pub mod mcp;
 pub mod model;
 pub mod paths;
 pub mod service;
+pub mod settings;
 pub mod store;
 pub mod time;
+pub mod web;

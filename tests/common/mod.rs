@@ -6,9 +6,33 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Mutex, PoisonError};
 
 use tempfile::TempDir;
+
+/// Serializes process spawning within a test binary.
+///
+/// On macOS a pipe created by one thread can be inherited by a child that another thread forks
+/// before the pipe is marked close-on-exec. If that child starts a long-lived LANI server, the
+/// server keeps the other thread's pipe open and that thread waits for EOF forever. Spawning one
+/// process at a time closes the window; the processes still run concurrently.
+static SPAWN: Mutex<()> = Mutex::new(());
+
+/// Spawn `command` while holding the spawn lock.
+pub fn spawn(command: &mut Command) -> Child {
+    let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
+    command.spawn().expect("spawn process")
+}
+
+/// Run `command` to completion, capturing stdout and stderr (spawning under the spawn lock).
+pub fn output(command: &mut Command) -> Output {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    spawn(command).wait_with_output().expect("wait for process")
+}
 
 /// A git repository in a temporary directory, with a `main` branch.
 pub struct TestRepo {
@@ -36,14 +60,14 @@ impl TestRepo {
 
     /// Run git in the repository and return its trimmed stdout; panics on failure.
     pub fn git(&self, args: &[&str]) -> String {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&self.path)
-            .args(args)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .output()
-            .expect("run git");
+        let output = output(
+            Command::new("git")
+                .arg("-C")
+                .arg(&self.path)
+                .args(args)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE"),
+        );
         assert!(
             output.status.success(),
             "git {args:?} failed: {}",

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · LANI{% endblock %}
+{% block content %}
+<section class="message">
+  <h1>{{ title }}</h1>
+  <p class="message-text">{{ message }}</p>
+  {% if let Some(text) = submitted %}
+  <p>Your text was not saved. Here it is so you can copy it:</p>
+  <textarea class="submitted" rows="8" readonly>{{ text }}</textarea>
+  {% endif %}
+  {% if let Some(link) = back %}
+  <p><a class="button" href="{{ link.0 }}">{{ link.1 }}</a></p>
+  {% endif %}
+</section>
+{% endblock %}

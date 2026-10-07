@@ -14,14 +14,17 @@ use crate::base::{self, BaseChoice, BaseMode};
 use crate::error::{Error, Result};
 use crate::git::{self, Git, PathChange, Worktree};
 use crate::model::{
-    Actor, Anchor, Comment, EventKind, Issue, IssueStatus, Repo, Review, ReviewStatus, Side,
-    short_ref, short_sha,
+    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
+    ReviewStatus, Side, short_ref, short_sha,
 };
+use crate::settings::{self, IdleTimeout};
 use crate::store::{self, IssueCounts, NewComment, NewEvent, NewReview};
 use crate::time;
 
 /// Longest accepted review title, in characters.
 const MAX_TITLE_CHARS: usize = 200;
+/// How many recent events the activity timeline shows.
+pub const TIMELINE_EVENTS: u32 = 50;
 
 pub struct Service {
     conn: Connection,
@@ -393,6 +396,16 @@ impl Service {
         Ok(IssueList { view, issues })
     }
 
+    /// One comment as stored.
+    pub fn get_comment(&self, comment_id: i64) -> Result<Comment> {
+        store::get_comment(&self.conn, comment_id)
+    }
+
+    /// An issue's stored record, without placing it in the current code (no git work).
+    pub fn issue_record(&self, issue_id: i64) -> Result<Issue> {
+        store::get_issue(&self.conn, issue_id)
+    }
+
     /// One issue with its full thread and code.
     pub fn get_issue(&self, issue_id: i64) -> Result<IssueView> {
         let issue = store::get_issue(&self.conn, issue_id)?;
@@ -644,6 +657,161 @@ impl Service {
         )?;
         tx.commit()?;
         self.review_view(store::get_review(&self.conn, review_id)?, false)
+    }
+
+    /// Reopen a closed review. Only the human may do this (§11.2).
+    pub fn reopen_review(&mut self, actor: Actor, review_id: i64) -> Result<ReviewView> {
+        require_human(actor, "reopen reviews")?;
+        let review = store::get_review(&self.conn, review_id)?;
+        if review.status == ReviewStatus::Open {
+            return Err(Error::Invalid(format!(
+                "review {review_id} is already open"
+            )));
+        }
+        let now = time::now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        match store::reopen_review(&tx, review_id) {
+            Ok(()) => {}
+            Err(error) if is_constraint_violation(&error) => {
+                let other = store::find_open_review(&tx, review.repo_id, &review.head_ref)?
+                    .map_or_else(String::new, |open| format!(" (review {})", open.id));
+                return Err(Error::Invalid(format!(
+                    "branch {} already has an open review{other}; close it before reopening review {review_id}",
+                    short_ref(&review.head_ref)
+                )));
+            }
+            Err(error) => return Err(error),
+        }
+        store::insert_event(
+            &tx,
+            &NewEvent {
+                review_id,
+                issue_id: None,
+                comment_id: None,
+                kind: EventKind::ReviewReopened,
+                actor,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        self.review_view(store::get_review(&self.conn, review_id)?, true)
+    }
+
+    /// Rename a review. Only the human may do this (§11.2).
+    pub fn retitle_review(
+        &mut self,
+        actor: Actor,
+        review_id: i64,
+        title: &str,
+    ) -> Result<ReviewView> {
+        require_human(actor, "rename reviews")?;
+        let title = validate_title(title)?;
+        let review = store::get_review(&self.conn, review_id)?;
+        require_open(&review)?;
+        if review.title == title {
+            return self.review_view(review, true);
+        }
+        let now = time::now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        store::update_review_title(&tx, review_id, &title)?;
+        store::insert_event(
+            &tx,
+            &NewEvent {
+                review_id,
+                issue_id: None,
+                comment_id: None,
+                kind: EventKind::ReviewRetitled,
+                actor,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        self.review_view(store::get_review(&self.conn, review_id)?, true)
+    }
+
+    /// Change a review's base to another ref (`BaseMode::Ref`) or to none, making it a
+    /// whole-tree review (`BaseMode::None`). Only the human may do this, in the web UI (§9.5).
+    /// Issues are anchored to commits, so they need no changes.
+    pub fn change_base(
+        &mut self,
+        actor: Actor,
+        review_id: i64,
+        base: &BaseMode,
+    ) -> Result<ReviewView> {
+        require_human(actor, "change a review's base")?;
+        let review = store::get_review(&self.conn, review_id)?;
+        require_open(&review)?;
+        let repo = store::get_repo(&self.conn, review.repo_id)?;
+        let git = Git::new(&repo.git_dir);
+        let base_ref = match base {
+            BaseMode::Auto => {
+                return Err(Error::Invalid(
+                    "choose a base branch, or none for a whole-tree review".to_string(),
+                ));
+            }
+            BaseMode::None => None,
+            BaseMode::Ref(_) => {
+                let head_sha = require_head(&git, &review)?;
+                base::choose_base(&git, &review.head_ref, &head_sha, base)?.base_ref
+            }
+        };
+        if base_ref == review.base_ref {
+            return self.review_view(review, true);
+        }
+        let now = time::now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        store::set_review_base(&tx, review_id, base_ref.as_deref(), BaseSource::WebUi)?;
+        store::insert_event(
+            &tx,
+            &NewEvent {
+                review_id,
+                issue_id: None,
+                comment_id: None,
+                kind: EventKind::ReviewBaseChanged,
+                actor,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        self.review_view(store::get_review(&self.conn, review_id)?, true)
+    }
+
+    /// Refs a review's base can be changed to: local and remote-tracking branches other than
+    /// the review's head, as full ref names.
+    pub fn base_candidates(&self, review_id: i64) -> Result<Vec<String>> {
+        let review = store::get_review(&self.conn, review_id)?;
+        let repo = store::get_repo(&self.conn, review.repo_id)?;
+        let refs = Git::new(&repo.git_dir).list_refs(&["refs/heads/", "refs/remotes/"])?;
+        Ok(refs
+            .into_iter()
+            .filter(|name| *name != review.head_ref && !name.ends_with("/HEAD"))
+            .collect())
+    }
+
+    /// A review's most recent activity, newest first.
+    pub fn list_events(&self, review_id: i64) -> Result<Vec<Event>> {
+        store::list_events(&self.conn, review_id, TIMELINE_EVENTS)
+    }
+
+    /// The saved idle timeout for the web server.
+    pub fn idle_timeout(&self) -> Result<IdleTimeout> {
+        let value =
+            store::get_setting(&self.conn, settings::IDLE_TIMEOUT_KEY)?.ok_or_else(|| {
+                Error::NotFound("the idle_timeout setting is missing from the database".to_string())
+            })?;
+        IdleTimeout::parse(&value)
+    }
+
+    /// Save the idle timeout. Only the human may change settings.
+    pub fn set_idle_timeout(&mut self, actor: Actor, timeout: IdleTimeout) -> Result<()> {
+        require_human(actor, "change settings")?;
+        store::set_setting(&self.conn, settings::IDLE_TIMEOUT_KEY, &timeout.to_string())
     }
 
     fn review_view(&self, review: Review, with_git: bool) -> Result<ReviewView> {
@@ -1069,6 +1237,16 @@ fn check_start_line_text(
         actual,
         expected
     )))
+}
+
+fn require_human(actor: Actor, what: &str) -> Result<()> {
+    if actor == Actor::Human {
+        Ok(())
+    } else {
+        Err(Error::Forbidden(format!(
+            "only the human can {what}, in the web UI"
+        )))
+    }
 }
 
 fn require_open(review: &Review) -> Result<()> {

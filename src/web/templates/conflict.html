@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Changed by someone else · LANI{% endblock %}
+{% block content %}
+<section class="message">
+  <h1>Someone else changed {{ what }}</h1>
+  <p><strong>{{ current_editor }}</strong> saved a newer version while you were editing. Your text has not been saved. Compare the two, adjust yours if needed, and save it to replace the newer version.</p>
+  <div class="panel">
+    <h2>Current version</h2>
+    <div class="markdown">{{ current_html|safe }}</div>
+  </div>
+  <form method="post" action="{{ action }}" class="panel">
+    <h2>Your version</h2>
+    <input type="hidden" name="version" value="{{ version }}">
+    <textarea name="{{ field }}" rows="10" aria-label="Your version">{{ yours }}</textarea>
+    <div class="form-actions"><button type="submit">Save my version</button> <a href="{{ cancel }}">Discard my version</a></div>
+  </form>
+</section>
+{% endblock %}

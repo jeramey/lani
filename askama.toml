@@ -1,0 +1,3 @@
+# Askama looks for templates here (docs/design.md §17).
+[general]
+dirs = ["src/web/templates"]

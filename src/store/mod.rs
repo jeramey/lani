@@ -13,7 +13,8 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Actor, Anchor, BaseSource, Comment, EventKind, Issue, IssueStatus, Repo, Review, ReviewStatus,
+    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
+    ReviewStatus,
 };
 
 /// Migrations in order; migration `n` (1-based) brings the schema to `user_version = n`.
@@ -237,6 +238,36 @@ pub fn close_review(conn: &Connection, review_id: i64, now: &str) -> Result<()> 
     conn.execute(
         "UPDATE review SET status = 'closed', closed_at = ?1 WHERE id = ?2",
         params![now, review_id],
+    )?;
+    Ok(())
+}
+
+/// Reopen a closed review. Fails with a constraint error if the branch has another open review.
+pub fn reopen_review(conn: &Connection, review_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE review SET status = 'open', closed_at = NULL WHERE id = ?1",
+        [review_id],
+    )?;
+    Ok(())
+}
+
+pub fn update_review_title(conn: &Connection, review_id: i64, title: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE review SET title = ?1 WHERE id = ?2",
+        params![title, review_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_review_base(
+    conn: &Connection,
+    review_id: i64,
+    base_ref: Option<&str>,
+    base_source: BaseSource,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE review SET base_ref = ?1, base_source = ?2 WHERE id = ?3",
+        params![base_ref, base_source, review_id],
     )?;
     Ok(())
 }
@@ -478,6 +509,45 @@ pub fn insert_event(conn: &Connection, event: &NewEvent<'_>) -> Result<()> {
             event.actor,
             event.now
         ],
+    )?;
+    Ok(())
+}
+
+/// A review's most recent events, newest first.
+pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<Event>> {
+    let mut statement = conn.prepare(
+        "SELECT id, review_id, issue_id, comment_id, kind, actor, created_at FROM event
+         WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![review_id, limit], |row| {
+        Ok(Event {
+            id: row.get(0)?,
+            review_id: row.get(1)?,
+            issue_id: row.get(2)?,
+            comment_id: row.get(3)?,
+            kind: row.get(4)?,
+            actor: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+// ── settings ─────────────────────────────────────────────────────────────────────────────────
+
+pub fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row("SELECT value FROM setting WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO setting (key, value) VALUES (?1, ?2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        params![key, value],
     )?;
     Ok(())
 }

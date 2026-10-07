@@ -19,6 +19,12 @@ pub enum Error {
     /// The text was changed by someone else since the caller read it.
     #[error("{0}")]
     Conflict(String),
+    /// The web server could not be started, reached or stopped.
+    #[error("{0}")]
+    Unavailable(String),
+    /// An internal failure that is not the caller's fault, such as a crashed background task.
+    #[error("internal error: {0}")]
+    Internal(String),
     /// A git command failed unexpectedly.
     #[error("git failed: {0}")]
     Git(String),

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}{{ review.title }} · LANI{% endblock %}
+{% block content %}
+{% include "review_header.html" %}
+
+<div class="toolbar">
+  {% if editable %}
+  <details class="inline-edit">
+    <summary>Rename</summary>
+    <form method="post" action="{{ review.url }}/title">
+      <label for="title">Title</label>
+      <input id="title" type="text" name="title" value="{{ review.title }}" maxlength="200" required>
+      <div class="form-actions"><button type="submit">Save title</button></div>
+    </form>
+  </details>
+  <details class="inline-edit">
+    <summary>Change base</summary>
+    <form method="post" action="{{ review.url }}/base">
+      <label for="base">Base</label>
+      <select id="base" name="base">
+        <option value=""{% if review.whole_tree %} selected{% endif %}>None — review the whole tree</option>
+        {% for option in base_options %}
+        <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint">Issues stay attached to the code they were opened on; only the comparison changes.</p>
+      <div class="form-actions"><button type="submit">Save base</button></div>
+    </form>
+  </details>
+  <form method="post" action="{{ review.url }}/close" class="inline">
+    <button type="submit" class="secondary">Close review</button>
+  </form>
+  {% else %}
+  <form method="post" action="{{ review.url }}/reopen" class="inline">
+    <button type="submit">Reopen review</button>
+  </form>
+  {% endif %}
+</div>
+
+<section id="summary" class="panel">
+  <h2>Summary</h2>
+  {% if let Some(html) = summary_html %}
+  <div class="markdown">{{ html|safe }}</div>
+  {% else %}
+  <p class="empty">No summary yet. The summary describes the intent of the change for everyone in the review.</p>
+  {% endif %}
+  {% if let Some(edited) = summary_edited %}<p class="muted small">{{ edited }}</p>{% endif %}
+  {% if editable %}
+  <details class="inline-edit">
+    <summary>Edit summary</summary>
+    <form method="post" action="{{ review.url }}/summary">
+      <input type="hidden" name="version" value="{{ summary_version }}">
+      <textarea name="summary" rows="10" aria-label="Summary">{{ summary_text }}</textarea>
+      <div class="form-actions"><button type="submit">Save summary</button></div>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<section id="issues" class="panel">
+  <div class="section-head">
+    <h2>Issues</h2>
+    <nav class="filters" aria-label="Filter issues">
+      {% for filter in issue_filters %}<a href="{{ filter.url }}"{% if filter.active %} class="active" aria-current="page"{% endif %}>{{ filter.label }}</a>{% endfor %}
+    </nav>
+  </div>
+  {% if issues.is_empty() %}
+  <p class="empty">{{ issues_empty }}</p>
+  {% else %}
+  <ul class="issue-list">
+    {% for issue in issues %}
+    <li>
+      <div class="row-main">
+        <a href="{{ issue.url }}" class="issue-link">#{{ issue.id }}</a>
+        <span class="badge {{ issue.status_class }}">{{ issue.status_label }}</span>
+        <code class="location">{{ issue.location }}</code>
+        {% if issue.outdated %}<span class="badge outdated">Outdated</span>{% endif %}
+      </div>
+      <a href="{{ issue.url }}" class="preview">{{ issue.preview_html|safe }}</a>
+      <p class="meta">{{ issue.comments }}{% if let Some(last) = issue.last_author %} · last by <span class="author {{ last.class }}">{{ last.label }}</span>{% endif %}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section id="conversation" class="panel">
+  <h2>Conversation</h2>
+  {% if summary_comments.is_empty() %}<p class="empty">No comments on the summary yet.</p>{% endif %}
+  {% for comment in summary_comments %}{% include "comment.html" %}{% endfor %}
+  {% if editable %}
+  <form method="post" action="{{ review.url }}/comments" class="new-comment">
+    <label for="new-summary-comment">Add a comment</label>
+    <textarea id="new-summary-comment" name="body" rows="5" required placeholder="Markdown is supported"></textarea>
+    <div class="form-actions"><button type="submit">Comment</button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section id="activity" class="panel">
+  <h2>Activity</h2>
+  <ol class="timeline">
+    {% for event in events %}
+    <li><span class="when">{{ event.when }}</span> <span class="author {{ event.actor.class }}">{{ event.actor.label }}</span> {% if let Some(link) = event.link %}<a href="{{ link }}">{{ event.text }}</a>{% else %}{{ event.text }}{% endif %}</li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}

@@ -23,14 +23,19 @@ struct McpClient {
 
 impl McpClient {
     fn start(home: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_lani"))
-            .arg("mcp")
-            .env("LANI_HOME", home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("spawn lani mcp");
+        Self::start_with_env(home, &[])
+    }
+
+    fn start_with_env(home: &Path, env: &[(&str, &str)]) -> Self {
+        let mut child = common::spawn(
+            Command::new(env!("CARGO_BIN_EXE_lani"))
+                .arg("mcp")
+                .env("LANI_HOME", home)
+                .envs(env.iter().copied())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()),
+        );
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         // Read on a thread so a misbehaving server fails the test instead of hanging it.
@@ -159,6 +164,7 @@ fn initialize_advertises_instructions_and_tools() {
             "get_review",
             "list_issues",
             "list_reviews",
+            "open_web_ui",
             "set_issue_status",
             "start_review",
             "update_review_summary",
@@ -301,5 +307,41 @@ fn invalid_arguments_are_reported() {
     assert!(
         rejected,
         "missing worktree_path must be rejected: {response}"
+    );
+}
+
+#[test]
+fn open_web_ui_starts_the_server_and_opens_the_browser() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    // `true` stands in for the browser: it accepts the redirect file and exits successfully.
+    let mut client = McpClient::start_with_env(&home.path, &[("BROWSER", "true")]);
+    client.ok(
+        "start_review",
+        json!({"repo_path": repo.path.to_str().unwrap(), "title": "t", "author": "reviewer",
+               "base_mode": "auto"}),
+    );
+    let missing = client.err("open_web_ui", json!({"review_id": 99}));
+    assert!(missing.contains("review 99 does not exist"), "{missing}");
+
+    let opened = client.ok("open_web_ui", json!({"review_id": 1}));
+    let stop = common::output(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .arg("stop")
+            .env("LANI_HOME", &home.path),
+    );
+    assert!(opened.starts_with("Opened http://127.0.0.1:"), "{opened}");
+    assert!(
+        opened.contains("/reviews/1 in the human's browser."),
+        "{opened}"
+    );
+    assert!(opened.contains("Started the LANI web server."), "{opened}");
+    assert!(
+        !opened.contains("token"),
+        "the token must not reach Claude: {opened}"
+    );
+    assert!(
+        String::from_utf8_lossy(&stop.stdout).starts_with("Stopped"),
+        "server was running"
     );
 }

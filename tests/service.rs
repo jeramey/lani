@@ -905,3 +905,99 @@ fn reopening_the_database_keeps_the_schema() {
         .unwrap();
     assert_eq!(timeout, "3h");
 }
+
+// ── human-only operations (M2) ───────────────────────────────────────────────────────────────
+
+#[test]
+fn only_the_human_renames_rebases_reopens_and_changes_settings() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    for claude in [Actor::Reviewer, Actor::Implementer] {
+        assert!(matches!(
+            service.retitle_review(claude, review_id, "x"),
+            Err(Error::Forbidden(_))
+        ));
+        assert!(matches!(
+            service.change_base(claude, review_id, &BaseMode::None),
+            Err(Error::Forbidden(_))
+        ));
+        assert!(matches!(
+            service.reopen_review(claude, review_id),
+            Err(Error::Forbidden(_))
+        ));
+        assert!(matches!(
+            service.set_idle_timeout(claude, lani::settings::IdleTimeout::Never),
+            Err(Error::Forbidden(_))
+        ));
+    }
+
+    let view = service
+        .retitle_review(Actor::Human, review_id, "  Better title ")
+        .unwrap();
+    assert_eq!(view.review.title, "Better title");
+    let view = service
+        .change_base(Actor::Human, review_id, &BaseMode::None)
+        .unwrap();
+    assert_eq!(view.review.base_ref, None);
+    assert_eq!(view.review.base_source, lani::model::BaseSource::WebUi);
+    let view = service
+        .change_base(Actor::Human, review_id, &BaseMode::Ref("main".into()))
+        .unwrap();
+    assert_eq!(view.review.base_ref.as_deref(), Some("refs/heads/main"));
+    expect_invalid(
+        service.change_base(Actor::Human, review_id, &BaseMode::Ref("feature".into())),
+        "base and head are both feature",
+    );
+    let candidates = service.base_candidates(review_id).unwrap();
+    assert_eq!(
+        candidates,
+        vec!["refs/heads/main".to_string()],
+        "the head is not a candidate"
+    );
+
+    let kinds: Vec<_> = service
+        .list_events(review_id)
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            lani::model::EventKind::ReviewBaseChanged,
+            lani::model::EventKind::ReviewBaseChanged,
+            lani::model::EventKind::ReviewRetitled,
+            lani::model::EventKind::ReviewCreated,
+        ],
+        "newest first"
+    );
+}
+
+#[test]
+fn reopening_is_refused_while_the_branch_has_another_open_review() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let first = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    service.close_review(Actor::Human, first).unwrap();
+    let second = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let message = expect_invalid(
+        service.reopen_review(Actor::Human, first),
+        "already has an open review",
+    );
+    assert!(message.contains(&format!("(review {second})")), "{message}");
+    service.close_review(Actor::Human, second).unwrap();
+    let view = service.reopen_review(Actor::Human, first).unwrap();
+    assert_eq!(view.review.status, ReviewStatus::Open);
+}

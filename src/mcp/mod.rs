@@ -5,7 +5,7 @@
 
 pub mod render;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -16,6 +16,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Deserialize;
 
 use crate::base::BaseMode;
+use crate::daemon;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, StartReview};
 
@@ -31,7 +32,8 @@ update_review_summary without discarding what others wrote.
 Reviewer: call start_review (base_mode \"auto\" unless the human names a base or asks for a whole-tree \
 review), then create_issue once per finding, anchored to the lines concerned. Pass commit = the commit \
 whose files you read (normally `git rev-parse HEAD`; it should equal the review head) and worktree_path = \
-where you read them. Only committed code can be reviewed: if start_review reports uncommitted changes, \
+where you read them. Then call open_web_ui so the human can read and edit. Only committed code can \
+be reviewed: if start_review reports uncommitted changes, \
 tell the human. In a whole-tree review there is no diff; review the files the human asked about.
 
 Implementer: call list_reviews for this repo, then list_issues with status \"open\". Validate each issue, \
@@ -42,7 +44,8 @@ Reviewer follow-up: call list_issues with status \"open\" and verify each reply 
 `git diff <anchor commit> HEAD`). Call set_issue_status with \"resolved\" if satisfied; otherwise reply. \
 Open new issues for new findings.
 
-Use status \"all\" only when history is needed. Never call close_review unless the human asks.";
+Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \
+human asks to see a review or issue, call open_web_ui.";
 
 // ── parameter types ──────────────────────────────────────────────────────────────────────────
 
@@ -246,6 +249,17 @@ pub struct CloseReviewParams {
     pub author: Role,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OpenWebUiParams {
+    /// Show this review's page. Give at most one of `review_id` and `issue_id`; with neither, the
+    /// list of open reviews is shown.
+    #[serde(default)]
+    pub review_id: Option<i64>,
+    /// Show this issue's page.
+    #[serde(default)]
+    pub issue_id: Option<i64>,
+}
+
 /// Schema for a field that must be present but may be null.
 fn nullable_string(_generator: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": ["string", "null"] })
@@ -256,6 +270,8 @@ fn nullable_string(_generator: &mut SchemaGenerator) -> Schema {
 #[derive(Clone)]
 pub struct LaniServer {
     service: Arc<Mutex<Service>>,
+    /// The LANI data directory, where the web server's `server.json` lives.
+    home: PathBuf,
     /// The role this session acts in, fixed by the first call that passes `author` (§11.3).
     role: Arc<Mutex<Option<Actor>>>,
     tool_router: ToolRouter<Self>,
@@ -263,9 +279,10 @@ pub struct LaniServer {
 
 impl LaniServer {
     #[must_use]
-    pub fn new(service: Service) -> Self {
+    pub fn new(service: Service, home: PathBuf) -> Self {
         Self {
             service: Arc::new(Mutex::new(service)),
+            home,
             role: Arc::new(Mutex::new(None)),
             tool_router: Self::tool_router(),
         }
@@ -502,6 +519,53 @@ impl LaniServer {
             issue.issue.id,
             render::location_text(&issue)
         ))
+    }
+
+    #[tool(
+        description = "Open the LANI web UI in the human's browser at a review or issue (or the review \
+                       list), starting the web server if needed. Returns the page's URL without credentials."
+    )]
+    fn open_web_ui(&self, Parameters(p): Parameters<OpenWebUiParams>) -> Result<String, String> {
+        let path = match (p.review_id, p.issue_id) {
+            (Some(_), Some(_)) => {
+                return Err("give at most one of review_id and issue_id".to_string());
+            }
+            (Some(review_id), None) => {
+                self.with_service(|service| service.get_review(review_id, None).map(|_| ()))?;
+                format!("/reviews/{review_id}")
+            }
+            (None, Some(issue_id)) => {
+                let issue = self.with_service(|service| service.issue_record(issue_id))?;
+                format!("/reviews/{}/issues/{issue_id}", issue.review_id)
+            }
+            (None, None) => "/".to_string(),
+        };
+        // Blocks this session's runtime for at most a few seconds while a server starts.
+        let (server, started) =
+            daemon::ensure_running(&self.home).map_err(|error| error.to_string())?;
+        let url = server.file.public_url(&path);
+        let mut message = match daemon::open_in_browser(&self.home, &server.file, &path) {
+            Ok(()) => format!("Opened {url} in the human's browser."),
+            Err(error) => {
+                let flag = match (p.review_id, p.issue_id) {
+                    (Some(review_id), _) => format!(" --review {review_id}"),
+                    (_, Some(issue_id)) => format!(" --issue {issue_id}"),
+                    (None, None) => String::new(),
+                };
+                format!(
+                    "Could not open a browser ({error}). Ask the human to run `lani open{flag} --print-url` \
+                     in a terminal and open the printed URL."
+                )
+            }
+        };
+        if started {
+            message.push_str(" Started the LANI web server.");
+        }
+        if let Some(warning) = server.version_warning() {
+            message.push(' ');
+            message.push_str(&warning);
+        }
+        Ok(message)
     }
 
     #[tool(

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Settings · LANI{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Settings</h1></div>
+
+<section class="panel">
+  <h2>Idle shutdown</h2>
+  <p>The LANI server stops itself after this long without activity. Open it again with <code>lani open</code>, or by asking Claude.</p>
+  <form method="post" action="/settings" class="settings">
+    <label for="idle-timeout">Stop after</label>
+    <input id="idle-timeout" type="text" name="idle_timeout" value="{{ saved }}" required>
+    <p class="hint">A whole number of minutes, hours or days, such as <code>30m</code>, <code>3h</code> or <code>2d</code> (at least <code>5m</code>), or <code>never</code>. Saving applies it now and to future starts.</p>
+    <div class="form-actions"><button type="submit">Save</button></div>
+  </form>
+  <dl class="facts">
+    <dt>In effect now</dt><dd>{{ effective }} ({{ source }})</dd>
+    {% if let Some(left) = remaining %}<dt>Stops in</dt><dd>{{ left }} without activity</dd>{% endif %}
+  </dl>
+</section>
+
+<section class="panel">
+  <h2>Server</h2>
+  <dl class="facts">
+    <dt>Version</dt><dd>{{ version }}</dd>
+    <dt>Process</dt><dd>pid {{ pid }} · port {{ port }}</dd>
+    <dt>Started</dt><dd>{{ started }}</dd>
+  </dl>
+</section>
+{% endblock %}

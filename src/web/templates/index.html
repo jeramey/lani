@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Reviews · LANI{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Reviews</h1>
+  <nav class="filters" aria-label="Filter reviews">
+    {% for filter in filters %}<a href="{{ filter.url }}"{% if filter.active %} class="active" aria-current="page"{% endif %}>{{ filter.label }}</a>{% endfor %}
+  </nav>
+</div>
+{% if groups.is_empty() %}
+<p class="empty">{{ empty_message }}</p>
+{% endif %}
+{% for group in groups %}
+<section class="repo">
+  <h2>{{ group.repo }}</h2>
+  <ul class="review-list">
+    {% for row in group.reviews %}
+    <li>
+      <div class="row-main">
+        <a class="review-title" href="{{ row.url }}">{{ row.title }}</a>
+        <span class="badge {{ row.status_class }}">{{ row.status_label }}</span>
+      </div>
+      <p class="meta">#{{ row.id }} · <code>{{ row.refs }}</code> · {{ row.open_issues }} open, {{ row.resolved_issues }} resolved · started by <span class="author {{ row.created_by.class }}">{{ row.created_by.label }}</span> · {{ row.created }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,276 @@
+/* LANI web UI. Light and dark themes follow the system setting. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1c2024;
+  --muted: #5d6670;
+  --border: #d8dde3;
+  --link: #0b5cad;
+  --accent: #0b5cad;
+  --accent-text: #ffffff;
+  --code-bg: #f0f2f5;
+  --highlight: #fff4c2;
+  --notice-bg: #fff4e0;
+  --notice-border: #e8b24a;
+  --open: #1a7f37;
+  --resolved: #6e40c9;
+  --closed: #6b7280;
+  --outdated: #9a6700;
+  --human: #0b5cad;
+  --reviewer: #8250df;
+  --implementer: #b35900;
+  --radius: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --text: #e3e7ec;
+    --muted: #9aa4af;
+    --border: #2c333c;
+    --link: #6cb6ff;
+    --accent: #3b8eea;
+    --accent-text: #0b0e12;
+    --code-bg: #1f252d;
+    --highlight: #3d3514;
+    --notice-bg: #33280f;
+    --notice-border: #a87b1f;
+    --open: #4ac26b;
+    --resolved: #a98bf5;
+    --closed: #8b949e;
+    --outdated: #d4a72c;
+    --human: #6cb6ff;
+    --reviewer: #b392f0;
+    --implementer: #f0a35c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a.plain { color: inherit; }
+
+code, pre, textarea { font-family: var(--mono); font-size: 13px; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; letter-spacing: 0.08em; color: var(--text); }
+.topbar nav { display: flex; gap: 16px; }
+
+main { max-width: 1000px; margin: 0 auto; padding: 20px 24px 64px; }
+
+h1 { font-size: 24px; margin: 4px 0; }
+h2 { font-size: 17px; margin: 0 0 12px; }
+
+.page-head, .section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.page-head { margin-bottom: 12px; }
+.crumbs { margin: 0; color: var(--muted); font-size: 13px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.empty { color: var(--muted); font-style: italic; }
+.hint { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.note {
+  font-size: 12px;
+  color: var(--outdated);
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  padding: 0 7px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 16px 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+}
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 1px 9px;
+  color: var(--surface);
+  white-space: nowrap;
+}
+.badge.open { background: var(--open); }
+.badge.resolved { background: var(--resolved); }
+.badge.closed { background: var(--closed); }
+.badge.outdated { background: var(--outdated); }
+
+/* Who wrote what must be obvious at a glance (design §11.1). */
+.author { font-weight: 600; }
+.author.author-human { color: var(--human); }
+.author.author-reviewer { color: var(--reviewer); }
+.author.author-implementer { color: var(--implementer); }
+
+.filters { display: flex; gap: 4px; }
+.filters a {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.filters a.active { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+.repo h2 { margin-top: 24px; color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.review-list, .issue-list, .timeline { list-style: none; margin: 0; padding: 0; }
+.review-list li, .issue-list li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+}
+.issue-list li { background: transparent; }
+.row-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.review-title { font-weight: 600; font-size: 16px; }
+.issue-link { font-weight: 600; }
+.preview { display: block; color: var(--text); margin: 4px 0 2px; }
+.meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+
+.toolbar { display: flex; gap: 8px 20px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; }
+.toolbar details[open] { flex-basis: 100%; order: 1; }
+.toolbar form.inline { margin-left: auto; }
+
+details.inline-edit > summary {
+  cursor: pointer;
+  color: var(--link);
+  font-size: 14px;
+  display: inline-block;
+  padding: 3px 0;
+}
+details.inline-edit[open] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+label { display: block; font-weight: 600; font-size: 14px; margin: 8px 0 4px; }
+input[type="text"], select, textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  font-size: 14px;
+}
+textarea { resize: vertical; line-height: 1.45; }
+textarea.submitted { margin: 8px 0; }
+input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.form-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+form.inline { display: inline; }
+button, .button {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+.button:hover { text-decoration: none; }
+
+.comment {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 12px 0;
+  background: var(--surface);
+}
+.comment.author-human { border-left-color: var(--human); }
+.comment.author-reviewer { border-left-color: var(--reviewer); }
+.comment.author-implementer { border-left-color: var(--implementer); }
+.comment header { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 13px; }
+.comment .when { color: var(--muted); }
+.comment .ident { margin-left: auto; }
+.edited {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.markdown { overflow-wrap: anywhere; }
+.markdown pre { background: var(--code-bg); padding: 10px; border-radius: var(--radius); overflow-x: auto; }
+.markdown pre code { background: none; padding: 0; }
+.markdown table { border-collapse: collapse; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; }
+.markdown blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+
+.notice {
+  background: var(--notice-bg);
+  border: 1px solid var(--notice-border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+figure.code { margin: 12px 0 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+figure.code figcaption { font-size: 12px; color: var(--muted); padding: 4px 10px; border-bottom: 1px solid var(--border); }
+figure.code table { width: 100%; border-collapse: collapse; background: var(--code-bg); }
+figure.code td { vertical-align: top; padding: 0 10px; }
+figure.code td.ln {
+  width: 1%;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+figure.code pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+figure.code tr.hl { background: var(--highlight); }
+
+.timeline li { padding: 3px 0; font-size: 14px; }
+.timeline .when { color: var(--muted); font-size: 13px; margin-right: 6px; }
+
+.message { max-width: 720px; }
+.message-text { white-space: pre-wrap; }
+.status-change { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }

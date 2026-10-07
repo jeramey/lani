@@ -164,6 +164,18 @@ pub struct Comment {
     pub version: i64,
 }
 
+/// One entry in a review's append-only activity log.
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub id: i64,
+    pub review_id: i64,
+    pub issue_id: Option<i64>,
+    pub comment_id: Option<i64>,
+    pub kind: EventKind,
+    pub actor: Actor,
+    pub created_at: String,
+}
+
 /// Shorten a full ref name for display: `refs/heads/main` → `main`,
 /// `refs/remotes/origin/main` → `origin/main`. Other refs are shown in full.
 #[must_use]

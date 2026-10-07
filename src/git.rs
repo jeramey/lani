@@ -204,6 +204,19 @@ impl Git {
         parse_branch_distances(&stdout_text(&output)?)
     }
 
+    /// Full names of the refs under the given prefixes, e.g. `refs/heads/`.
+    pub fn list_refs(&self, prefixes: &[&str]) -> Result<Vec<String>> {
+        let mut command = self.command();
+        command.args(["for-each-ref", "--format=%(refname)"]);
+        command.args(prefixes);
+        let output = run(command, &[0])?;
+        Ok(stdout_text(&output)?
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
     /// The content of `path` at `commit`, or `None` if no such path exists there.
     /// Fails if the path names something other than a regular file (a directory or submodule).
     pub fn read_file(&self, commit: &str, path: &str) -> Result<Option<Vec<u8>>> {

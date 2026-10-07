@@ -683,7 +683,7 @@ role (§11.3).
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
-| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that view; with no arguments, the review list. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open --print-url …`. |
+| `open_web_ui`           | `review_id?`, `issue_id?`; from M3 also `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that view; with no arguments, the review list. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open --print-url …`. |
 
 ### 12.4 Output format
 
@@ -838,7 +838,8 @@ not isolate cookies by port.
 **Request checks.** Every route except `/login` requires all of the following:
 
 - A valid cookie or `Authorization: Bearer <token>`.
-- A `Host` of `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS rebinding.
+- A `Host` of `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS rebinding. Any other
+  `Host` gets 421 Misdirected Request.
 - For state-changing methods, an `Origin` matching the server, or `Sec-Fetch-Site: same-origin`.
   This is CSRF defense in depth.
 
@@ -864,10 +865,12 @@ not isolate cookies by port.
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
 | `/reviews/{id}/issues/{issue_id}`           | **Issue.** Code context (current or outdated snippet), full thread, and links to the file and diff views. This is the deep-link target for `open_web_ui(issue_id)`. |
 | `/reviews/{id}/events`                      | Server-Sent Events stream (§13.5). |
+| `/issues/{issue_id}`                        | Redirects to the issue's page under its review, so `lani open --issue` and other links need only the issue ID. |
 | `/settings`                                 | Idle timeout (§13.1); server version, pid, port and uptime. |
 | `/login`, `/api/health`, `/api/shutdown`    | §13.1, §13.2. |
 
-The page handlers are backed by state-changing HTML-fragment endpoints, used by htmx:
+The pages are backed by state-changing endpoints. In M2 they are plain HTML form posts that
+redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inline updates:
 
 - Create an issue.
 - Add a comment, on an issue or on the summary.
@@ -937,8 +940,10 @@ Comments and summaries are rendered with **comrak**:
 - GitHub-flavored extensions are on: tables, task lists, strikethrough and autolinks.
 - Raw HTML is disabled, which is comrak's default. That setting also drops dangerous link schemes
   such as `javascript:`.
-- Fenced code blocks use the same syntect highlighter.
-- Links get `rel="noopener noreferrer"`.
+- Fenced code blocks use the same syntect highlighter (from M3; plain until then).
+- Links open in the same tab, and `Referrer-Policy: no-referrer` keeps LANI URLs from leaking to
+  linked sites, so no `rel` attributes are needed.
+- One-line previews in lists render the first line of a description as inline Markdown.
 - Rendered HTML is cached per (object, version).
 
 ### 13.8 Frontend technology
@@ -952,6 +957,9 @@ Comments and summaries are rendered with **comrak**:
 - One small vanilla JS file handles line selection, SSE-driven refresh and editor protection.
 - One hand-written CSS file covers light and dark themes.
 - **No Node toolchain.** `cargo build` is the whole build.
+- **M2 ships no JavaScript.** Every action is a plain form post that redirects back, and inline
+  editors are `<details>` elements. htmx and the JS file arrive with M3 (line selection) and M4
+  (live updates).
 
 ---
 
@@ -959,8 +967,9 @@ Comments and summaries are rendered with **comrak**:
 
 ```
 lani mcp                                    MCP server on stdio (spawned by Claude Code)
-lani open [--review ID] [--issue ID] [--view overview|changes|files] [--file PATH[:LINE]]
-          [--print-url] [--no-browser]      open the web UI, starting the server if needed
+lani open [--review ID | --issue ID] [--print-url] [--no-browser]
+                                            open the web UI, starting the server if needed
+                                            (M3 adds --view overview|changes|files and --file PATH[:LINE])
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach)
 lani status                                 server pid, port, version, uptime, idle timeout and time left
@@ -1061,8 +1070,8 @@ tests/               integration tests (temp git repos, MCP client, HTTP)
 | SQLite             | `rusqlite` with `bundled`; STRICT tables need SQLite ≥ 3.37 |
 | MCP                | `rmcp` (official SDK; stdio transport, tool macros) + `schemars` |
 | Async runtime      | `tokio`: current-thread runtime for `mcp`, multi-thread for `serve` |
-| HTTP server        | `axum`, plus `tower-http` for headers |
-| HTTP client        | `hyper-util` legacy client, already in the dependency tree (health checks, shutdown) |
+| HTTP server        | `axum`, with LANI's own middleware for auth and security headers |
+| HTTP client        | A small blocking HTTP/1.1 client over `std::net::TcpStream` (`daemon.rs`), used only for LANI's own fixed-length health and shutdown responses |
 | Templates          | `askama` |
 | Highlighting       | `syntect` + `two-face` |
 | Markdown           | `comrak` |
@@ -1159,6 +1168,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - Concurrent `open` calls produce exactly one server.
   - A crashed server (lock released, stale `server.json`) is replaced.
 - **Concurrency:** two processes writing simultaneously, with no `SQLITE_BUSY` surfacing.
+- **Test harness:** every process spawn in a test binary goes through one mutex. On macOS a pipe
+  created by one thread can leak into a child forked concurrently by another thread; a
+  long-lived LANI server inheriting such a pipe makes the first thread wait for EOF forever.
 - **Coverage:** `cargo llvm-cov`.
 
 ---

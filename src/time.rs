@@ -19,6 +19,20 @@ pub fn to_minutes(timestamp: &str) -> String {
     }
 }
 
+/// A stored timestamp in the machine's local time zone, e.g. `2026-10-07 07:02`.
+/// The web server runs as the user on their own machine, so this is the user's local time.
+/// Unparseable input is returned unchanged.
+#[must_use]
+pub fn to_local(timestamp: &str) -> String {
+    match timestamp.parse::<jiff::Timestamp>() {
+        Ok(parsed) => parsed
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => timestamp.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,5 +47,14 @@ mod tests {
     #[test]
     fn to_minutes_truncates() {
         assert_eq!(to_minutes("2026-10-07T14:02:11.482Z"), "2026-10-07T14:02Z");
+    }
+
+    #[test]
+    fn to_local_formats_or_passes_through() {
+        assert_eq!(
+            to_local("2026-10-07T14:02:11.482Z").len(),
+            "2026-10-07 14:02".len()
+        );
+        assert_eq!(to_local("garbage"), "garbage");
     }
 }

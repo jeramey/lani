@@ -1,0 +1,20 @@
+<article class="comment {{ comment.author.class }}" id="{{ comment.anchor }}">
+  <header>
+    <span class="author {{ comment.author.class }}">{{ comment.author.label }}</span>
+    <a class="when" href="#{{ comment.anchor }}">{{ comment.created }}</a>
+    <span class="muted">at <code>{{ comment.at_sha }}</code></span>
+    {% if let Some(edited) = comment.edited %}<span class="edited">{{ edited }}</span>{% endif %}
+    <span class="muted ident">{{ comment.anchor }} · v{{ comment.version }}</span>
+  </header>
+  <div class="markdown">{{ comment.body_html|safe }}</div>
+  {% if editable %}
+  <details class="inline-edit">
+    <summary>Edit</summary>
+    <form method="post" action="{{ comment.edit_action }}">
+      <input type="hidden" name="version" value="{{ comment.version }}">
+      <textarea name="body" rows="8" required>{{ comment.body }}</textarea>
+      <div class="form-actions"><button type="submit">Save</button></div>
+    </form>
+  </details>
+  {% endif %}
+</article>
