@@ -363,7 +363,7 @@ Commands used (all read-only):
 | Changed files               | `git diff --name-status -z -M <merge-base> <head>` |
 | Unified diff                | `git diff -M -U3 <merge-base> <head> -- <paths…>` |
 | Line relocation             | `git diff -M -U0 <anchor_commit> <head> -- <old path> <new path>` |
-| File on disk vs commit      | `git -C <worktree> diff -U0 <commit> -- <path>` |
+| File on disk vs commit      | `git -C <worktree> diff-index -p -U0 <commit> -- <path>` |
 | Worktree state              | `git -C <worktree> status --porcelain=v2 -z --untracked-files=no` |
 | Directory listing           | `git ls-tree -z <commit>:<dir>` |
 | File content                | `git cat-file blob <blob-sha>` |
@@ -372,9 +372,16 @@ Rules for every invocation:
 
 - **No worktree dependence.** Repo reads use `git --git-dir=<common git dir>`. The exceptions are
   the worktree checks (§10.1, `start_review`, `get_review`), which run with `-C <worktree>`.
-- **No index writes.** Every call passes `--no-optional-locks`. Otherwise `git status` and
-  `git diff` may refresh and rewrite a worktree's index.
-- **No option injection.** User-supplied refs and paths always follow `--end-of-options` or `--`.
+- **No index writes.** Every call passes `--no-optional-locks`, which stops `git status` from
+  refreshing and rewriting a worktree's index. Porcelain `git diff` against the working tree
+  rewrites the index even with that flag (verified with git 2.54), so comparisons with files on
+  disk use plumbing `git diff-index`, which never writes it. A test checks that the index is
+  byte-identical afterwards.
+- **No option injection.** User-supplied refs are passed only to `rev-parse`, after
+  `--end-of-options`; every other command receives the full SHAs `rev-parse` returned. Paths
+  always follow `--`, and `GIT_LITERAL_PATHSPECS=1` stops them being read as glob patterns.
+- **No redirection.** Environment variables that would point git at another repository or index
+  (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and similar) are removed from every invocation.
 - **Stable output.** These overrides make output independent of user config: `-c
   core.quotePath=false`, `--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/`,
   and `LC_ALL=C`. The diff parser still handles C-quoted paths, and `-z` name-status output is
@@ -502,17 +509,18 @@ Validation runs in this order, and the first failure is reported:
 3. **The file on disk matches the commit.** This applies to side `head` when `worktree_path` is
    given. The worktree must belong to the review's repo.
    - LANI diffs the file on disk against the commit with
-     `git -C <worktree> diff -U0 <commit> -- <path>`. That one diff catches uncommitted edits,
-     staged or not, and a `HEAD` that moved after `commit`.
+     `git -C <worktree> diff-index -p -U0 <commit> -- <path>`. That one diff catches uncommitted
+     edits, staged or not, and a `HEAD` that moved after `commit`.
    - LANI then walks the resulting hunks as in §10.2:
      - **No differences:** accepted.
-     - **Differences only after `end_line`:** accepted. The region has the same line numbers in
-       both versions.
+     - **Differences that leave the region's line numbers unchanged:** accepted. This covers
+       changes after `end_line` and same-size edits above the region; either way the region has
+       the same numbers and content in both versions.
      - **A difference overlapping the region:** rejected. The marked code is not what was
        committed, and it must be committed before it can be reviewed.
-     - **Differences only before the region:** rejected. LANI cannot tell which version the line
-       numbers came from. The error gives the region's line numbers in both versions so Claude can
-       resubmit with explicit values (§12.4 has an example).
+     - **Differences above the region that shift its line numbers:** rejected. LANI cannot tell
+       which version the line numbers came from. The error gives the region's line numbers in
+       both versions so Claude can resubmit with explicit values (§12.4 has an example).
      - **File missing on disk:** rejected.
 4. **The first line matches.** `start_line_text` must equal line `start_line` in the anchor commit
    after trimming whitespace.
@@ -962,8 +970,11 @@ lani version
 
 - `--print-url` writes the full tokenized URL to stdout. This is useful over SSH with port
   forwarding.
-- There is no config file. The environment variables are `LANI_HOME` and `BROWSER`, and the only
-  persisted setting is the idle timeout (§13.1).
+- There is no config file. The environment variables are `LANI_HOME`, `BROWSER`, and `LANI_LOG`
+  (a `tracing` filter for stderr logging, e.g. `debug`; default `warn`). The only persisted
+  setting is the idle timeout (§13.1).
+- An existing `$LANI_HOME` that other users can access is refused with a `chmod 700` hint rather
+  than silently changed.
 
 ---
 
@@ -1067,6 +1078,11 @@ Linting and safety rules:
 
 - **Formatting and lints.** `cargo fmt`, plus `cargo clippy --all-targets -- -D warnings` with
   `clippy::pedantic` enabled in the `[lints]` table. Every `#[allow]` carries a justification.
+  Two exceptions so far:
+  - `missing_errors_doc` is allowed crate-wide. Every fallible function returns the crate's single
+    `Error` type, so per-function `# Errors` sections would add nothing.
+  - `unused_async_trait_impl` is allowed on the `ServerHandler` impl, because rmcp's
+    `#[tool_handler]` macro generates those functions.
 - **No unsafe code.** `unsafe_code = "forbid"` holds without exceptions:
   - Detaching uses `CommandExt::process_group(0)` and ignores SIGHUP.
   - Locking uses `std::fs::File::try_lock` (Rust ≥ 1.89).

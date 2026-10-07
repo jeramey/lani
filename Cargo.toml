@@ -1,0 +1,39 @@
+[package]
+name = "lani"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Local Annotations, No Internet: a local code-review loop for Claude Code"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+jiff = "0.2.38"
+rmcp = { version = "3.5.1", features = ["server", "transport-io", "macros"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["rt", "macros", "io-std"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Every fallible function returns the crate's single `Error` type, whose variants carry complete
+# messages; per-function `# Errors` sections would restate that without adding information.
+missing_errors_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
