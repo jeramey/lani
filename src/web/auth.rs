@@ -85,8 +85,16 @@ pub fn allowed_host(host: Option<&str>, port: u16) -> bool {
 
 /// Whether a state-changing request came from one of this server's own pages.
 #[must_use]
+///
+/// A matching `Origin` header is enough. `Origin: null` (which browsers send in some contexts,
+/// for example under a `no-referrer` policy) carries no information, so it is treated like a
+/// missing header: then the browser-set `Sec-Fetch-Site: same-origin`, which pages cannot forge,
+/// is required.
 pub fn same_origin(headers: &HeaderMap, port: u16) -> bool {
-    if let Some(origin) = headers.get(header::ORIGIN) {
+    let origin = headers
+        .get(header::ORIGIN)
+        .filter(|origin| origin.as_bytes() != b"null");
+    if let Some(origin) = origin {
         return origin.to_str().is_ok_and(|origin| {
             origin == format!("http://127.0.0.1:{port}")
                 || origin == format!("http://localhost:{port}")
@@ -153,7 +161,10 @@ fn add_security_headers(headers: &mut HeaderMap) {
     );
     headers.insert(
         header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
+        // `same-origin`, not `no-referrer`: under `no-referrer` browsers send `Origin: null` on
+        // form posts, which the same-origin check cannot use. `same-origin` still sends no
+        // referrer to other sites, so LANI URLs do not leak.
+        HeaderValue::from_static("same-origin"),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
@@ -251,6 +262,15 @@ mod tests {
             header::ORIGIN,
             HeaderValue::from_static("http://localhost:4242"),
         );
+        assert!(same_origin(&headers, 4242));
+
+        // `Origin: null` is no evidence either way; Sec-Fetch-Site decides.
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("null"));
+        assert!(!same_origin(&headers, 4242));
+        headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        assert!(!same_origin(&headers, 4242));
+        headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
         assert!(same_origin(&headers, 4242));
     }
 

@@ -260,6 +260,30 @@ async fn state_changes_need_a_same_origin_request_unless_using_the_bearer_token(
     no_origin.headers_mut().remove(header::ORIGIN);
     assert_eq!(send(&f.app, no_origin).await.0, StatusCode::FORBIDDEN);
 
+    // What a browser may send for a form post: `Origin: null`. Sec-Fetch-Site decides.
+    let mut null_origin_cross_site = post(&url, "body=hi");
+    null_origin_cross_site
+        .headers_mut()
+        .insert(header::ORIGIN, "null".parse().unwrap());
+    null_origin_cross_site
+        .headers_mut()
+        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+    assert_eq!(
+        send(&f.app, null_origin_cross_site).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let mut null_origin_same_origin = post(&url, "body=hi");
+    null_origin_same_origin
+        .headers_mut()
+        .insert(header::ORIGIN, "null".parse().unwrap());
+    null_origin_same_origin
+        .headers_mut()
+        .insert("sec-fetch-site", "same-origin".parse().unwrap());
+    assert_eq!(
+        send(&f.app, null_origin_same_origin).await.0,
+        StatusCode::SEE_OTHER
+    );
+
     let mut fetch_metadata = post(&url, "body=hi");
     fetch_metadata.headers_mut().remove(header::ORIGIN);
     fetch_metadata
@@ -315,7 +339,7 @@ async fn pages_render_with_security_headers() {
         csp.contains("script-src 'self'") && csp.contains("img-src 'self' data:"),
         "{csp}"
     );
-    assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+    assert_eq!(headers.get(header::REFERRER_POLICY).unwrap(), "same-origin");
     assert_eq!(
         headers.get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
         "nosniff"

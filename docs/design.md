@@ -859,7 +859,8 @@ by port.
 - A `Host` of `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS rebinding. Any other
   `Host` gets 421 Misdirected Request.
 - For state-changing methods, an `Origin` matching the server, or `Sec-Fetch-Site: same-origin`.
-  This is CSRF defense in depth.
+  This is CSRF defense in depth. `Origin: null` counts as no `Origin`, so `Sec-Fetch-Site`
+  decides.
 
 **Response headers.**
 
@@ -867,8 +868,11 @@ by port.
   data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`.
   This forbids inline scripts and styles. It also blocks remote images in comment Markdown, which
   keeps the "No Internet" promise in the browser too.
-- `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`
+- `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and `Cache-Control: no-store`
   on HTML.
+- `Referrer-Policy` is `same-origin`, not `no-referrer`. Under `no-referrer`, browsers send
+  `Origin: null` on form posts, and LANI's own forms were refused (found in the first LANI
+  review). `same-origin` still sends no referrer to other sites.
 
 **Logging.** Query strings are never logged, so the `/login` token never appears in logs.
 
@@ -959,7 +963,7 @@ Comments and summaries are rendered with **comrak**:
 - Raw HTML is disabled, which is comrak's default. That setting also drops dangerous link schemes
   such as `javascript:`.
 - Fenced code blocks use the same syntect highlighter (from M3; plain until then).
-- Links open in the same tab, and `Referrer-Policy: no-referrer` keeps LANI URLs from leaking to
+- Links open in the same tab, and `Referrer-Policy: same-origin` keeps LANI URLs from leaking to
   linked sites, so no `rel` attributes are needed.
 - One-line previews in lists render the first line of a description as inline Markdown.
 - Markdown is rendered on every request. A cache keyed by (object, version) is deferred until
