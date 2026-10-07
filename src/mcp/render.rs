@@ -137,6 +137,9 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     );
     let _ = writeln!(out, "{} · {}", head_text(view), base_text(view));
     let _ = writeln!(out, "{}", counts_text(view));
+    if let Some(reason) = &view.repo_unavailable {
+        let _ = writeln!(out, "Repository not available: {reason}");
+    }
     if let Some(worktree) = &detail.worktree {
         let _ = writeln!(out, "{}", worktree_text(worktree));
     }
@@ -209,6 +212,9 @@ pub fn issue_list(list: &IssueList, status_label: &str, full: bool, path: Option
         _ => {}
     }
     let _ = writeln!(out, "{}", position.join(" · "));
+    if let Some(reason) = &view.repo_unavailable {
+        let _ = writeln!(out, "Repository not available: {reason}");
+    }
 
     if list.issues.is_empty() {
         out.push_str("\n(no issues)\n");

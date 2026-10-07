@@ -22,7 +22,7 @@ const ORIGIN: &str = "http://127.0.0.1:4242";
 
 struct Fixture {
     _home: TestHome,
-    _repo: TestRepo,
+    repo: TestRepo,
     state: AppState,
     app: Router,
     review_id: i64,
@@ -99,7 +99,7 @@ fn fixture() -> Fixture {
         issue_id: issue.issue.id,
         issue_comment_id: issue.comments[0].id,
         _home: home,
-        _repo: repo,
+        repo,
     }
 }
 
@@ -594,4 +594,34 @@ async fn browser_line_endings_do_not_count_as_edits() {
     assert_eq!(comment.edited_by, None);
     let last = detail.summary_comments.last().unwrap();
     assert_eq!(last.body, "first\nsecond", "stored with LF line endings");
+}
+
+#[tokio::test]
+async fn pages_still_render_when_the_repository_is_gone() {
+    let f = fixture();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let moved = elsewhere.path().join("moved");
+    std::fs::rename(&f.repo.path, &moved).unwrap();
+
+    let (status, _, body) = send(&f.app, get(&format!("/reviews/{}", f.review_id))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Repository not available"), "{body}");
+    assert!(
+        body.contains("Close review"),
+        "the review can still be closed"
+    );
+    let (status, _, body) = send(
+        &f.app,
+        get(&format!("/reviews/{}/issues/{}", f.review_id, f.issue_id)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains("Original code"),
+        "the stored snippet is shown: {body}"
+    );
+    let (status, _, _) = send(&f.app, post(&format!("/reviews/{}/close", f.review_id), "")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    std::fs::rename(&moved, &f.repo.path).unwrap();
 }

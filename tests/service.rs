@@ -1055,3 +1055,57 @@ fn line_endings_are_normalized_and_unchanged_saves_are_not_edits() {
         "single line",
     );
 }
+
+#[test]
+fn a_moved_repository_degrades_to_stored_data() {
+    let (_home, repo, mut service, issue_id) = repo_with_issue(10, 11);
+    let review_id = service.get_issue(issue_id).unwrap().issue.review_id;
+    let elsewhere = tempfile::tempdir().unwrap();
+    let moved = elsewhere.path().join("moved");
+    std::fs::rename(&repo.path, &moved).unwrap();
+
+    let detail = service.get_review(review_id, None).unwrap();
+    assert!(detail.view.git.is_none());
+    let reason = detail.view.repo_unavailable.clone().unwrap();
+    assert!(reason.contains("no longer at"), "{reason}");
+
+    let list = service.list_issues(review_id, None, None, true).unwrap();
+    match &list.issues[0].location {
+        Location::Outdated { reason } => assert!(reason.contains("no longer at"), "{reason}"),
+        Location::Current { .. } => panic!("cannot be current without the repository"),
+    }
+    assert_eq!(
+        list.issues[0].code.as_ref().unwrap().first_line,
+        7,
+        "stored snippet"
+    );
+    assert!(service.get_issue(issue_id).is_ok());
+
+    // Operations that need the repository fail clearly; the rest still work.
+    expect_invalid(
+        service.add_comment(Actor::Human, CommentTarget::Issue(issue_id), "x"),
+        "no longer at",
+    );
+    expect_invalid(
+        service.set_issue_status(Actor::Human, issue_id, IssueStatus::Resolved, Some("done")),
+        "no longer at",
+    );
+    expect_invalid(service.base_candidates(review_id), "no longer at");
+    let view = service
+        .set_issue_status(Actor::Reviewer, issue_id, IssueStatus::Resolved, None)
+        .unwrap();
+    assert_eq!(view.issue.status, IssueStatus::Resolved);
+    service.close_review(Actor::Human, review_id).unwrap();
+    let view = service.reopen_review(Actor::Human, review_id).unwrap();
+    assert!(view.repo_unavailable.is_some());
+
+    std::fs::rename(&moved, &repo.path).unwrap();
+    assert!(
+        service
+            .get_review(review_id, None)
+            .unwrap()
+            .view
+            .git
+            .is_some()
+    );
+}

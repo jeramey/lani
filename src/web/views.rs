@@ -119,6 +119,8 @@ pub struct ReviewHeader {
     pub whole_tree: bool,
     pub created_by: AuthorView,
     pub created: String,
+    /// Why current code cannot be shown, e.g. the repository was moved or deleted.
+    pub repo_notice: Option<String>,
 }
 
 #[must_use]
@@ -168,6 +170,7 @@ pub fn review_header(view: &ReviewView) -> ReviewHeader {
         whole_tree: review.base_ref.is_none(),
         created_by: author(review.created_by),
         created: time::to_local(&review.created_at),
+        repo_notice: view.repo_unavailable.clone(),
     }
 }
 

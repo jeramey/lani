@@ -167,7 +167,9 @@ pub async fn review(
             let detail = service.get_review(review_id, None)?;
             let issues = service.list_issues(review_id, status, None, false)?;
             let events = service.list_events(review_id)?;
-            let candidates = if detail.view.review.status == ReviewStatus::Open {
+            let candidates = if detail.view.review.status == ReviewStatus::Open
+                && detail.view.repo_unavailable.is_none()
+            {
                 service.base_candidates(review_id)?
             } else {
                 Vec::new()

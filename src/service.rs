@@ -95,8 +95,12 @@ pub struct ReviewView {
     pub review: Review,
     pub repo: Repo,
     pub counts: IssueCounts,
-    /// Present when the caller needs current git state (not in review lists).
+    /// Present when the caller needs current git state (not in review lists) and the
+    /// repository still exists.
     pub git: Option<ReviewGitState>,
+    /// Why git state is missing although it was requested: the repository is no longer where
+    /// LANI recorded it. Everything stored in the database is still shown.
+    pub repo_unavailable: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -425,6 +429,7 @@ impl Service {
         require_open(&review)?;
         let body = require_text("body", request.body)?;
         let repo = store::get_repo(&self.conn, review.repo_id)?;
+        require_repo(&repo)?;
         let git = Git::new(&repo.git_dir);
         let head_sha = require_head(&git, &review)?;
         let anchor = validate_anchor(&git, &repo, &review, &head_sha, request)?;
@@ -478,6 +483,7 @@ impl Service {
         let review = store::get_review(&self.conn, review_id)?;
         require_open(&review)?;
         let repo = store::get_repo(&self.conn, review.repo_id)?;
+        require_repo(&repo)?;
         let head_sha = require_head(&Git::new(&repo.git_dir), &review)?;
 
         let now = time::now();
@@ -588,14 +594,22 @@ impl Service {
                 "reopening an issue needs a comment explaining why".to_string(),
             ));
         }
-        let repo = store::get_repo(&self.conn, review.repo_id)?;
-        let head_sha = require_head(&Git::new(&repo.git_dir), &review)?;
+        // Only a comment records the head commit; changing the status needs no git, so issues
+        // can still be resolved after the repository is moved or deleted.
+        let head_sha = match &comment {
+            Some(_) => {
+                let repo = store::get_repo(&self.conn, review.repo_id)?;
+                require_repo(&repo)?;
+                Some(require_head(&Git::new(&repo.git_dir), &review)?)
+            }
+            None => None,
+        };
 
         let now = time::now();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(body) = &comment {
+        if let (Some(body), Some(head_sha)) = (&comment, &head_sha) {
             let comment_id = store::insert_comment(
                 &tx,
                 &NewComment {
@@ -603,7 +617,7 @@ impl Service {
                     issue_id: Some(issue_id),
                     author: actor,
                     body,
-                    head_sha: &head_sha,
+                    head_sha,
                     now: &now,
                 },
             )?;
@@ -764,6 +778,7 @@ impl Service {
             }
             BaseMode::None => None,
             BaseMode::Ref(_) => {
+                require_repo(&repo)?;
                 let head_sha = require_head(&git, &review)?;
                 base::choose_base(&git, &review.head_ref, &head_sha, base)?.base_ref
             }
@@ -796,6 +811,7 @@ impl Service {
     pub fn base_candidates(&self, review_id: i64) -> Result<Vec<String>> {
         let review = store::get_review(&self.conn, review_id)?;
         let repo = store::get_repo(&self.conn, review.repo_id)?;
+        require_repo(&repo)?;
         let refs = Git::new(&repo.git_dir).list_refs(&["refs/heads/", "refs/remotes/"])?;
         Ok(refs
             .into_iter()
@@ -826,16 +842,24 @@ impl Service {
     fn review_view(&self, review: Review, with_git: bool) -> Result<ReviewView> {
         let repo = store::get_repo(&self.conn, review.repo_id)?;
         let counts = store::issue_counts(&self.conn, review.id)?;
-        let git = if with_git {
-            Some(review_git_state(&Git::new(&repo.git_dir), &review)?)
+        // A missing repository is expected (moved or deleted) and degrades to stored data;
+        // any other git failure is a real error and is reported.
+        let (git, repo_unavailable) = if !with_git {
+            (None, None)
+        } else if repo_exists(&repo) {
+            (
+                Some(review_git_state(&Git::new(&repo.git_dir), &review)?),
+                None,
+            )
         } else {
-            None
+            (None, Some(repo_missing(&repo)))
         };
         Ok(ReviewView {
             review,
             repo,
             counts,
             git,
+            repo_unavailable,
         })
     }
 
@@ -868,6 +892,8 @@ struct Placer<'a> {
     git: Git,
     review: &'a Review,
     state: Option<&'a ReviewGitState>,
+    /// Set when the repository is gone, so every anchor is shown from its stored snippet.
+    repo_unavailable: Option<&'a str>,
     path_changes: HashMap<(String, String, String), PathChange>,
     files: HashMap<(String, String), Option<FileLines>>,
 }
@@ -878,6 +904,7 @@ impl<'a> Placer<'a> {
             git: Git::new(&view.repo.git_dir),
             review: &view.review,
             state: view.git.as_ref(),
+            repo_unavailable: view.repo_unavailable.as_deref(),
             path_changes: HashMap::new(),
             files: HashMap::new(),
         }
@@ -891,6 +918,9 @@ impl<'a> Placer<'a> {
     }
 
     fn try_place(&mut self, anchor: &Anchor) -> Result<Location> {
+        if let Some(reason) = self.repo_unavailable {
+            return Ok(outdated(reason.to_string()));
+        }
         let target = match anchor.side {
             Side::Head => match self.state.and_then(|s| s.head_sha.clone()) {
                 Some(head) => head,
@@ -1246,6 +1276,29 @@ fn check_start_line_text(
         actual,
         expected
     )))
+}
+
+fn repo_exists(repo: &Repo) -> bool {
+    Path::new(&repo.git_dir).is_dir()
+}
+
+fn repo_missing(repo: &Repo) -> String {
+    format!(
+        "the repository is no longer at {} (it was moved or deleted)",
+        repo.git_dir
+    )
+}
+
+/// Fail with a clear message when an operation needs the repository and it is gone.
+fn require_repo(repo: &Repo) -> Result<()> {
+    if repo_exists(repo) {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!(
+            "{}; this needs the repository's current commits",
+            repo_missing(repo)
+        )))
+    }
 }
 
 fn require_human(actor: Actor, what: &str) -> Result<()> {
