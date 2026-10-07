@@ -34,7 +34,8 @@ pub const MIN_GIT_VERSION: (u32, u32) = (2, 41);
 /// The result of checking the `git` on PATH, computed once per process.
 static GIT_CHECK: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
-/// A line-range change from a unified diff hunk header `@@ -old_start,old_count +new_start,new_count @@`.
+/// A line-range change from a unified diff hunk header
+/// `@@ -old_start,old_count +new_start,new_count @@`.
 ///
 /// When `old_count` is 0 the hunk inserts lines *after* old line `old_start`
 /// (and likewise for `new_count`).

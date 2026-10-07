@@ -1,7 +1,8 @@
 //! Error type shared by every LANI module.
 //!
 //! The user-facing variants (`Invalid`, `NotFound`, `Forbidden`, `Conflict`) carry complete,
-//! actionable messages: they are shown verbatim to Claude through MCP and to the human in the web UI.
+//! actionable messages: they are shown verbatim to Claude through MCP and to the human in the web
+//! UI.
 
 use thiserror::Error;
 

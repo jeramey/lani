@@ -122,9 +122,11 @@ pub enum SideParam {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StartReviewParams {
-    /// Absolute path of your worktree (normally your current working directory). Pass the plain value, without the quotes that tool output shows around it.
+    /// Absolute path of your worktree (normally your current working directory). Pass the plain
+    /// value, without the quotes that tool output shows around it.
     pub repo_path: String,
-    /// Short title for the review, like a PR title. Pass the plain value, without the quotes that tool output shows around it.
+    /// Short title for the review, like a PR title. Pass the plain value, without the quotes that
+    /// tool output shows around it.
     pub title: String,
     /// Your role in this session.
     pub author: Role,
@@ -139,7 +141,8 @@ pub struct StartReviewParams {
     /// `│ ` prefixes that tool output adds.
     #[serde(default)]
     pub summary: Option<String>,
-    /// Branch to review. Defaults to the branch checked out at `repo_path`. Pass the plain value, without the quotes that tool output shows around it.
+    /// Branch to review. Defaults to the branch checked out at `repo_path`. Pass the plain value,
+    /// without the quotes that tool output shows around it.
     #[serde(default)]
     pub head_ref: Option<String>,
 }
@@ -149,7 +152,8 @@ pub struct ListReviewsParams {
     /// Which reviews to list.
     pub status: ReviewStatusFilter,
     /// Absolute path of a worktree; lists only that repo's reviews and marks the review of the
-    /// branch checked out there. Pass the plain value, without the quotes that tool output shows around it.
+    /// branch checked out there. Pass the plain value, without the quotes that tool output shows
+    /// around it.
     #[serde(default)]
     pub repo_path: Option<String>,
 }
@@ -171,7 +175,8 @@ pub struct UpdateSummaryParams {
     /// The complete new summary (Markdown). Keep what others wrote unless it is wrong. Plain text:
     /// leave out the `│ ` prefixes that tool output shows on every line.
     pub summary: String,
-    /// The summary version you read (shown by `get_review`); the update is rejected if it changed since.
+    /// The summary version you read (shown by `get_review`); the update is rejected if it changed
+    /// since.
     pub expected_version: i64,
 }
 
@@ -182,7 +187,8 @@ pub struct ListIssuesParams {
     pub status: IssueStatusFilter,
     /// "summary": one line per issue. "full": location, code and every comment.
     pub detail: Detail,
-    /// Only issues in this file (path relative to the repository root). Pass the plain value, without the quotes that tool output shows around it.
+    /// Only issues in this file (path relative to the repository root). Pass the plain value,
+    /// without the quotes that tool output shows around it.
     #[serde(default)]
     pub path: Option<String>,
 }
@@ -200,9 +206,11 @@ pub struct CreateIssueParams {
     /// The issue description (Markdown). Its first line is used as the issue's label in lists. If
     /// you quote text from tool output, leave out its `│ ` prefixes.
     pub body: String,
-    /// File path relative to the repository root, e.g. "src/main.rs". Pass the plain value, without the quotes that tool output shows around it.
+    /// File path relative to the repository root, e.g. "src/main.rs". Pass the plain value, without
+    /// the quotes that tool output shows around it.
     pub path: String,
-    /// "head" for lines in the branch's version of the file (normal); "base" for lines the branch deleted.
+    /// "head" for lines in the branch's version of the file (normal); "base" for lines the branch
+    /// deleted.
     pub side: SideParam,
     /// First line of the range (1-based).
     pub start_line: u32,
@@ -214,7 +222,8 @@ pub struct CreateIssueParams {
     /// The commit whose files you read, normally `git rev-parse HEAD`.
     pub commit: String,
     /// Absolute path of the worktree you read the file from, or null if you read it from git
-    /// (`git show <commit>:<path>`). Must be null for side "base". Pass the plain value, without the quotes that tool output shows around it.
+    /// (`git show <commit>:<path>`). Must be null for side "base". Pass the plain value, without
+    /// the quotes that tool output shows around it.
     #[serde(deserialize_with = "Option::deserialize")]
     #[schemars(schema_with = "nullable_string")]
     pub worktree_path: Option<String>,
@@ -262,7 +271,8 @@ pub struct SetIssueStatusParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CloseReviewParams {
     pub review_id: i64,
-    /// Your role in this session. Only the reviewer may close a review, and only when the human asks.
+    /// Your role in this session. Only the reviewer may close a review, and only when the human
+    /// asks.
     pub author: Role,
 }
 
@@ -448,7 +458,10 @@ impl LaniServer {
                 message.trim_end()
             );
         }
-        if let Some(summary) = &p.summary {
+        // Only a newly created review stored the summary; an existing one is returned unchanged.
+        if started.created
+            && let Some(summary) = &p.summary
+        {
             message = with_prefix_note(message, summary);
         }
         reply(&message)

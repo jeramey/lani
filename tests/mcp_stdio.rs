@@ -632,6 +632,14 @@ fn values_copied_with_display_formatting_get_a_note() {
         started.contains("Note: every line you sent starts with"),
         "{started}"
     );
+    // The branch's open review is returned unchanged, so nothing was stored and no note applies.
+    let again = reviewer.ok(
+        "start_review",
+        json!({"repo_path": worktree, "title": "\"Again\"", "author": "reviewer",
+               "base_mode": "auto", "summary": "│ Copied again."}),
+    );
+    assert!(again.contains("was returned unchanged"), "{again}");
+    assert!(!again.contains("Note:"), "{again}");
 
     let error = reviewer.err(
         "create_issue",
