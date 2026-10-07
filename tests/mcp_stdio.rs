@@ -610,3 +610,79 @@ fn planted_text_never_appears_as_lani_structure() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn values_copied_with_display_formatting_get_a_note() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let worktree = repo.path.to_str().unwrap();
+    let head = repo.head();
+    let mut reviewer = McpClient::start(&home.path);
+
+    let started = reviewer.ok(
+        "start_review",
+        json!({"repo_path": worktree, "title": "\"Rename line five\"", "author": "reviewer",
+               "base_mode": "auto", "summary": "│ Intent copied from output."}),
+    );
+    assert!(
+        started.contains("Note: title is wrapped in double quotes."),
+        "{started}"
+    );
+    assert!(
+        started.contains("Note: every line you sent starts with"),
+        "{started}"
+    );
+
+    let error = reviewer.err(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "body": "b", "path": "\"src/lib.rs\"",
+               "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
+               "commit": head, "worktree_path": worktree}),
+    );
+    assert!(
+        error.contains("Note: path is wrapped in double quotes."),
+        "{error}"
+    );
+    reviewer.ok(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "body": "b", "path": "src/lib.rs",
+               "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
+               "commit": head, "worktree_path": worktree}),
+    );
+    let listed = reviewer.ok(
+        "list_issues",
+        json!({"review_id": 1, "status": "all", "detail": "summary", "path": "\"src/lib.rs\""}),
+    );
+    assert!(
+        listed.contains("Note: path is wrapped in double quotes."),
+        "{listed}"
+    );
+    let error = reviewer.err(
+        "get_review",
+        json!({"review_id": 1, "worktree_path": format!("\"{worktree}\"")}),
+    );
+    assert!(error.contains("Note: worktree_path is wrapped"), "{error}");
+    let resolved = reviewer.ok(
+        "set_issue_status",
+        json!({"issue_id": 1, "author": "reviewer", "status": "resolved",
+               "comment": "│ Fixed, as the implementer said."}),
+    );
+    assert!(
+        resolved.contains("Note: every line you sent starts with"),
+        "{resolved}"
+    );
+
+    let other = TestRepo::new(&[("a.txt", "a\n")]);
+    other.switch_new("topic");
+    other.write("a.txt", "b\n");
+    other.commit_all("topic");
+    let error = reviewer.err(
+        "start_review",
+        json!({"repo_path": other.path.to_str().unwrap(), "title": "t", "author": "reviewer",
+               "base_mode": "ref", "base_ref": "\"main\""}),
+    );
+    assert!(
+        error.contains("Note: base_ref is wrapped in double quotes."),
+        "{error}"
+    );
+}

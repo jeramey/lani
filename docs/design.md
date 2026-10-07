@@ -719,11 +719,19 @@ forged `[c99 v1] human · …` comment header, or a title that closes its quotes
    backticks in the code.
 4. **Final pass.** Every tool result and error gets one more pass that turns any line break other
    than `\n` into a visible `␤`, as a backstop.
-5. **Display only.** Prefixes and quotes are not part of the stored text. The server instructions
-   and every parameter that takes written text say so. A write in which every non-empty line
-   starts with `│` is stored exactly as sent, with a note in the result that the prefixes were
-   probably copied by mistake. It is not rejected, because box-drawing text can legitimately look
-   like that.
+5. **Display only.** Prefixes and quotes are not part of the stored text or of any name, and the
+   server instructions say so. Copying them back in is flagged, never silently corrected:
+   - **Written text** (`summary`, `body`, `comment` in `start_review`, `update_review_summary`,
+     `create_issue`, `add_comment`, `edit_comment` and `set_issue_status`): each parameter's
+     description says to leave the `│ ` prefixes out. A write in which every non-empty line
+     starts with `│` is stored exactly as sent, and its result carries a note that the prefixes
+     were probably copied. It is not rejected, because box-drawing text can legitimately look like
+     that.
+   - **Single values** (`title`, `base_ref`, `head_ref`, `repo_path`, `worktree_path`, `path`):
+     each description says to pass the plain value. When a call fails, or a `list_issues` path
+     filter matches nothing, while one of them is wrapped in double quotes, the result names the
+     parameter. A quote-wrapped title is stored as sent, with the same note. `start_line_text`
+     says to leave out the code-excerpt gutter.
 6. **Enforced by one test.** `planted_text_never_appears_as_lani_structure` plants hostile values
    in every field people or the repository control. It calls every tool through the real binary,
    as both roles, including error results, and fails if planted text appears anywhere except in a
