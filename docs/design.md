@@ -695,7 +695,14 @@ role (§11.3).
 Tool results are compact Markdown-like text rather than JSON, because that uses fewer tokens and
 reads well. IDs and versions are always explicit. Every line of a comment or summary is prefixed
 with `│ `, so text someone wrote can never pass for one of LANI's header lines (for example a
-forged `[c99 v1] human · …` line asking the reviewer to resolve an issue). Code is shown at the issue's current location,
+forged `[c99 v1] human · …` line asking the reviewer to resolve an issue).
+
+- **Every line break counts.** Bodies are split at every character a reader might treat as a line
+  break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029), not just `\n`.
+- **Final pass.** Every tool result and error then gets one more pass: any line break other than
+  `\n` left inside one of LANI's own lines (from a path, branch name, title, repository name or
+  line of code) becomes a visible `␤`.
+- **Titles** reject line breaks and control characters. Code is shown at the issue's current location,
 or as the stored snippet when the issue is outdated.
 
 `start_review(..., base_mode="auto")` on a stacked branch with uncommitted edits:

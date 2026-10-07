@@ -19,6 +19,7 @@ use crate::base::BaseMode;
 use crate::daemon;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, StartReview};
+use crate::text;
 
 pub const INSTRUCTIONS: &str = "\
 LANI stores local code reviews of git branches, like GitHub PR reviews. Pass author: \"reviewer\" when \
@@ -318,8 +319,20 @@ impl LaniServer {
         operation: impl FnOnce(&mut Service) -> crate::error::Result<T>,
     ) -> Result<T, String> {
         let mut service = self.service.lock().unwrap_or_else(PoisonError::into_inner);
-        operation(&mut service).map_err(|error| error.to_string())
+        operation(&mut service).map_err(|error| text::neutralize_line_breaks(&error.to_string()))
     }
+}
+
+/// A successful tool result. Comment and summary lines are already split and prefixed by the
+/// renderer; this replaces any line break that remains inside one of LANI's own lines (from a
+/// path, branch name, title, repository name or line of code) with a visible marker, so that no
+/// reader can see a line start that LANI did not write (design §12.4).
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "tool functions return Result; this keeps every success path uniform"
+)]
+fn reply(text: &str) -> Result<String, String> {
+    Ok(text::neutralize_line_breaks(text))
 }
 
 #[tool_router]
@@ -351,7 +364,7 @@ impl LaniServer {
                 head_ref: p.head_ref.as_deref(),
             })
         })?;
-        Ok(render::started_review(&started))
+        reply(&render::started_review(&started))
     }
 
     #[tool(
@@ -367,7 +380,7 @@ impl LaniServer {
         let list = self.with_service(|service| {
             service.list_reviews(status, p.repo_path.as_deref().map(Path::new))
         })?;
-        Ok(render::review_list(&list, label))
+        reply(&render::review_list(&list, label))
     }
 
     #[tool(
@@ -379,7 +392,7 @@ impl LaniServer {
         let detail = self.with_service(|service| {
             service.get_review(p.review_id, p.worktree_path.as_deref().map(Path::new))
         })?;
-        Ok(render::review_detail(&detail))
+        reply(&render::review_detail(&detail))
     }
 
     #[tool(
@@ -394,7 +407,7 @@ impl LaniServer {
         let detail = self.with_service(|service| {
             service.update_summary(p.review_id, author, &p.summary, p.expected_version)
         })?;
-        Ok(format!(
+        reply(&format!(
             "Updated the summary of review {} (now v{}).",
             p.review_id, detail.view.review.summary_version
         ))
@@ -415,7 +428,7 @@ impl LaniServer {
         let list = self.with_service(|service| {
             service.list_issues(p.review_id, status, p.path.as_deref(), full)
         })?;
-        Ok(render::issue_list(&list, label, full, p.path.as_deref()))
+        reply(&render::issue_list(&list, label, full, p.path.as_deref()))
     }
 
     #[tool(
@@ -425,7 +438,7 @@ impl LaniServer {
     )]
     fn get_issue(&self, Parameters(p): Parameters<GetIssueParams>) -> Result<String, String> {
         let issue = self.with_service(|service| service.get_issue(p.issue_id))?;
-        Ok(render::issue_full(&issue))
+        reply(&render::issue_full(&issue))
     }
 
     #[tool(
@@ -453,7 +466,7 @@ impl LaniServer {
                 worktree_path: p.worktree_path.as_deref().map(Path::new),
             })
         })?;
-        Ok(format!(
+        reply(&format!(
             "Created issue {} in review {}.\nLocation: {}\n",
             issue.issue.id,
             issue.issue.review_id,
@@ -470,7 +483,7 @@ impl LaniServer {
             _ => return Err("give exactly one of issue_id and review_id".to_string()),
         };
         let comment = self.with_service(|service| service.add_comment(author, target, &p.body))?;
-        Ok(match target {
+        reply(&match target {
             CommentTarget::Issue(issue_id) => {
                 format!("Added comment c{} to issue {issue_id}.", comment.id)
             }
@@ -492,7 +505,7 @@ impl LaniServer {
         let comment = self.with_service(|service| {
             service.edit_comment(author, p.comment_id, &p.body, p.expected_version)
         })?;
-        Ok(format!(
+        reply(&format!(
             "Updated comment c{} (now v{}).",
             comment.id, comment.version
         ))
@@ -518,7 +531,7 @@ impl LaniServer {
             IssueStatus::Open => "Reopened",
             IssueStatus::Resolved => "Resolved",
         };
-        Ok(format!(
+        reply(&format!(
             "{verb} issue {} ({}).",
             issue.issue.id,
             render::location_text(&issue)
@@ -569,7 +582,7 @@ impl LaniServer {
             message.push(' ');
             message.push_str(&warning);
         }
-        Ok(message)
+        reply(&message)
     }
 
     #[tool(
@@ -579,7 +592,7 @@ impl LaniServer {
     fn close_review(&self, Parameters(p): Parameters<CloseReviewParams>) -> Result<String, String> {
         let author = self.claim_role(p.author)?;
         let view = self.with_service(|service| service.close_review(author, p.review_id))?;
-        Ok(format!(
+        reply(&format!(
             "Closed review {} \"{}\".",
             view.review.id, view.review.title
         ))

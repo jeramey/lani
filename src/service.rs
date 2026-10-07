@@ -19,6 +19,7 @@ use crate::model::{
 };
 use crate::settings::{self, IdleTimeout};
 use crate::store::{self, IssueCounts, NewComment, NewEvent, NewReview};
+use crate::text;
 use crate::time;
 
 /// Longest accepted review title, in characters.
@@ -1368,8 +1369,13 @@ fn validate_title(title: &str) -> Result<String> {
     if title.is_empty() {
         return Err(Error::Invalid("title must not be empty".to_string()));
     }
-    if title.contains(['\n', '\r']) {
-        return Err(Error::Invalid("title must be a single line".to_string()));
+    if title
+        .chars()
+        .any(|c| text::is_line_break(c) || c.is_control())
+    {
+        return Err(Error::Invalid(
+            "title must be a single line without control characters".to_string(),
+        ));
     }
     if title.chars().count() > MAX_TITLE_CHARS {
         return Err(Error::Invalid(format!(

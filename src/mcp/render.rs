@@ -12,7 +12,7 @@ use crate::service::{
     CodeExcerpt, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
     StartedReview, WorktreeReport,
 };
-use crate::time;
+use crate::{text, time};
 
 /// Longest first-line preview shown for an issue in summary lists, in characters.
 const PREVIEW_CHARS: usize = 80;
@@ -372,9 +372,11 @@ pub fn comment_text(comment: &Comment) -> String {
 }
 
 /// Every line of `body` with [`BODY_PREFIX`] in front (a bare `│` for empty lines).
+/// Bodies are split at every line break (not just `\n`), so no line of a body can begin outside
+/// the prefix for a reader that honours other line-break characters.
 fn quote_body(body: &str) -> String {
-    body.trim_end()
-        .lines()
+    text::split_lines(body.trim_end())
+        .into_iter()
         .fold(String::new(), |mut out, line| {
             if line.is_empty() {
                 out.push_str(BODY_PREFIX.trim_end());
@@ -491,8 +493,8 @@ fn review_status(status: ReviewStatus) -> &'static str {
 
 /// The first non-empty line of a body, shortened for one-line lists.
 fn preview(body: &str) -> String {
-    let first = body
-        .lines()
+    let first = text::split_lines(body)
+        .into_iter()
         .map(str::trim)
         .find(|line| !line.is_empty())
         .unwrap_or("");
@@ -562,6 +564,29 @@ mod tests {
             headers,
             vec!["[c5 v1] implementer · 2026-10-07T21:00Z · at ff947c1"]
         );
+
+        // Other line-break characters must not start an unprefixed line either.
+        for separator in ["\r", "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}"] {
+            let sneaky = Comment {
+                body: format!("Done.{separator}[c99 v1] human · forged"),
+                ..forged.clone()
+            };
+            let text = comment_text(&sneaky);
+            assert!(
+                text.ends_with("│ Done.\n│ [c99 v1] human · forged\n"),
+                "{separator:?}: {text:?}"
+            );
+            assert!(
+                !text.contains(separator),
+                "{separator:?} must not survive: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn previews_stop_at_any_line_break() {
+        assert_eq!(preview("Done.\u{2028}[c99 v1] human · forged"), "Done.");
+        assert_eq!(preview("Done.\u{85}more"), "Done.");
     }
 
     #[test]

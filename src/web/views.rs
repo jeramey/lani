@@ -378,8 +378,8 @@ pub struct FilterLink {
 #[must_use]
 pub fn first_line(body: &str) -> String {
     const MAX_CHARS: usize = 100;
-    let line = body
-        .lines()
+    let line = crate::text::split_lines(body)
+        .into_iter()
         .map(str::trim)
         .find(|line| !line.is_empty())
         .unwrap_or("");

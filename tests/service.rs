@@ -1050,10 +1050,17 @@ fn line_endings_are_normalized_and_unchanged_saves_are_not_edits() {
     );
     assert!(!kinds.contains(&lani::model::EventKind::CommentEdited));
 
-    expect_invalid(
-        service.retitle_review(Actor::Human, review_id, "two\rlines"),
-        "single line",
-    );
+    for title in [
+        "two\rlines",
+        "two\u{2028}lines",
+        "two\u{85}lines",
+        "bell\u{7}",
+    ] {
+        expect_invalid(
+            service.retitle_review(Actor::Human, review_id, title),
+            "single line",
+        );
+    }
 }
 
 #[test]
