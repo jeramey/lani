@@ -195,7 +195,7 @@ pub async fn review(
         active: value == active,
     })
     .collect();
-    let base_options = candidates
+    let mut base_options: Vec<BaseOption> = candidates
         .into_iter()
         .map(|name| BaseOption {
             label: short_ref(&name).to_string(),
@@ -203,6 +203,31 @@ pub async fn review(
             value: name,
         })
         .collect();
+    // A base that is not a branch candidate (a tag, or a branch that was deleted) still has to be
+    // shown as selected; otherwise the browser shows the first option, "None", and saving
+    // without looking would turn the review into a whole-tree review.
+    if let Some(base) = &review.base_ref
+        && !base_options.iter().any(|option| option.selected)
+    {
+        let missing = detail
+            .view
+            .git
+            .as_ref()
+            .is_some_and(|git| git.base_sha.is_none());
+        let note = if missing {
+            "current; ref no longer exists"
+        } else {
+            "current"
+        };
+        base_options.insert(
+            0,
+            BaseOption {
+                label: format!("{} ({note})", short_ref(base)),
+                value: base.clone(),
+                selected: true,
+            },
+        );
+    }
     let summary_edited = match (review.summary_updated_by, &review.summary_updated_at) {
         (Some(editor), Some(at)) => Some(format!(
             "Last edited by {} · {}",

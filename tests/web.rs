@@ -699,3 +699,52 @@ async fn repositories_with_the_same_name_are_listed_separately() {
         assert!(body.contains(&shown), "{shown} missing from {body}");
     }
 }
+
+#[tokio::test]
+async fn the_base_picker_shows_a_base_that_is_not_a_branch() {
+    let f = fixture();
+    f.repo.git(&["tag", "v1.0", "main"]);
+    let review_id = f.review_id;
+    f.state
+        .call(move |service| {
+            service.change_base(Actor::Human, review_id, &BaseMode::Ref("v1.0".into()))
+        })
+        .await
+        .unwrap();
+
+    let page = format!("/reviews/{review_id}");
+    let (_, _, body) = send(&f.app, get(&page)).await;
+    assert!(
+        body.contains(
+            r#"<option value="refs/tags/v1.0" selected>refs/tags/v1.0 (current)</option>"#
+        ),
+        "{body}"
+    );
+    assert!(
+        !body.contains(r#"<option value="" selected>"#),
+        "None must not look selected"
+    );
+
+    // Saving the shown base unchanged keeps it, even after the tag is deleted.
+    f.repo.git(&["tag", "-d", "v1.0"]);
+    let (_, _, body) = send(&f.app, get(&page)).await;
+    assert!(
+        body.contains("refs/tags/v1.0 (current; ref no longer exists)"),
+        "{body}"
+    );
+    let (status, _, _) = send(
+        &f.app,
+        post(&format!("{page}/base"), "base=refs%2Ftags%2Fv1.0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let detail = f
+        .state
+        .call(move |service| service.get_review(review_id, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        detail.view.review.base_ref.as_deref(),
+        Some("refs/tags/v1.0")
+    );
+}

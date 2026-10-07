@@ -777,6 +777,10 @@ impl Service {
                 ));
             }
             BaseMode::None => None,
+            // Re-saving the current base is a no-op, even when its ref no longer resolves.
+            BaseMode::Ref(name) if review.base_ref.as_deref() == Some(name.as_str()) => {
+                return self.review_view(review, true);
+            }
             BaseMode::Ref(_) => {
                 require_repo(&repo)?;
                 let head_sha = require_head(&git, &review)?;
