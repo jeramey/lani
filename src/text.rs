@@ -4,6 +4,11 @@
 //! wrote cannot pass for one of LANI's own lines (docs/design.md §12.4). That only works if every
 //! character a reader might treat as a line break is handled, not just `\n`.
 
+/// Prefix for every line of text written by someone (comment bodies and summaries) in MCP output
+/// and errors. Only lines without it are LANI's own structure, such as comment headers, so a body
+/// cannot forge a header that appears to come from another author or the human (§12.4).
+pub const BODY_PREFIX: &str = "│ ";
+
 /// The character shown in place of a line break inside one of LANI's own single-line fields.
 pub const LINE_BREAK_MARKER: char = '␤';
 
@@ -39,6 +44,25 @@ pub fn split_lines(text: &str) -> Vec<&str> {
         lines.push(&text[start..]);
     }
     lines
+}
+
+/// Every line of `body` with [`BODY_PREFIX`] in front (a bare `│` for empty lines), each ending
+/// in `\n`. Bodies are split at every line break, not just `\n`, so no line of a body can begin
+/// outside the prefix for a reader that honours other line-break characters.
+#[must_use]
+pub fn quote_body(body: &str) -> String {
+    split_lines(body.trim_end())
+        .into_iter()
+        .fold(String::new(), |mut out, line| {
+            if line.is_empty() {
+                out.push_str(BODY_PREFIX.trim_end());
+            } else {
+                out.push_str(BODY_PREFIX);
+                out.push_str(line);
+            }
+            out.push('\n');
+            out
+        })
 }
 
 /// Replace every line break other than `\n` with [`LINE_BREAK_MARKER`], so that the lines LANI
@@ -86,6 +110,12 @@ mod tests {
             vec!["é", "ü"],
             "multi-byte characters"
         );
+    }
+
+    #[test]
+    fn quotes_every_line() {
+        assert_eq!(quote_body("a\n\nb\u{2028}c\n"), "│ a\n│\n│ b\n│ c\n");
+        assert_eq!(quote_body(""), "");
     }
 
     #[test]

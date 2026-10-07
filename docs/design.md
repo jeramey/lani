@@ -620,7 +620,9 @@ Comment bodies and the summary each carry a `version`. Every save states the ver
 on. A stale save is rejected rather than silently overwriting someone else's change:
 
 - In the web UI, the server returns 409, and the form shows the newer text next to yours.
-- Over MCP, the tool returns an error that includes the current text and version.
+- Over MCP, the tool returns an error that includes the current text and version. The text is
+  quoted line by line with the `│ ` prefix, like comments in tool output (§12.4), so it cannot pass
+  for LANI's own lines or a message from the human.
 
 ---
 

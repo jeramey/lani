@@ -17,11 +17,6 @@ use crate::{text, time};
 /// Longest first-line preview shown for an issue in summary lists, in characters.
 const PREVIEW_CHARS: usize = 80;
 
-/// Prefix for every line of text written by someone (comment bodies and summaries). Only lines
-/// without it are LANI's own structure, such as comment headers, so a body cannot forge a header
-/// that appears to come from another author or the human (design §12.4).
-pub const BODY_PREFIX: &str = "│ ";
-
 #[must_use]
 pub fn started_review(started: &StartedReview) -> String {
     let view = &started.view;
@@ -171,7 +166,7 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     if review.summary.trim().is_empty() {
         out.push_str("(empty)\n");
     } else {
-        out.push_str(&quote_body(&review.summary));
+        out.push_str(&text::quote_body(&review.summary));
     }
 
     out.push_str("\n## Summary comments\n");
@@ -367,26 +362,8 @@ pub fn comment_text(comment: &Comment) -> String {
         comment.author.as_str(),
         time::to_minutes(&comment.created_at),
         short_sha(&comment.head_sha),
-        quote_body(&comment.body)
+        text::quote_body(&comment.body)
     )
-}
-
-/// Every line of `body` with [`BODY_PREFIX`] in front (a bare `│` for empty lines).
-/// Bodies are split at every line break (not just `\n`), so no line of a body can begin outside
-/// the prefix for a reader that honours other line-break characters.
-fn quote_body(body: &str) -> String {
-    text::split_lines(body.trim_end())
-        .into_iter()
-        .fold(String::new(), |mut out, line| {
-            if line.is_empty() {
-                out.push_str(BODY_PREFIX.trim_end());
-            } else {
-                out.push_str(BODY_PREFIX);
-                out.push_str(line);
-            }
-            out.push('\n');
-            out
-        })
 }
 
 /// A fenced code block with line numbers; lines in `highlighted` are flagged with `>`.

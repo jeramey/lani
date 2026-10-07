@@ -1388,19 +1388,38 @@ fn validate_title(title: &str) -> Result<String> {
 fn summary_conflict(current: &Review, expected_version: i64) -> Error {
     let editor = current.summary_updated_by.map_or("nobody", Actor::as_str);
     Error::Conflict(format!(
-        "the summary changed after version {expected_version}: it is now version {} (last edited by {editor}). \
-         Current text:\n\n{}\n\nApply your change to this text and pass expected_version {}.",
-        current.summary_version, current.summary, current.summary_version
+        "the summary changed after version {expected_version}: it is now version {} (last edited by {editor}).\n\
+         {}Apply your change to this text (without the prefixes) and pass expected_version {}.",
+        current.summary_version,
+        quoted_current_text(&current.summary),
+        current.summary_version
     ))
 }
 
 fn comment_conflict(current: &Comment, expected_version: i64) -> Error {
     let editor = current.edited_by.unwrap_or(current.author).as_str();
     Error::Conflict(format!(
-        "comment c{} changed after version {expected_version}: it is now version {} (last edited by {editor}). \
-         Current text:\n\n{}\n\nApply your change to this text and pass expected_version {}.",
-        current.id, current.version, current.body, current.version
+        "comment c{} changed after version {expected_version}: it is now version {} (last edited by {editor}).\n\
+         {}Apply your change to this text (without the prefixes) and pass expected_version {}.",
+        current.id,
+        current.version,
+        quoted_current_text(&current.body),
+        current.version
     ))
+}
+
+/// Text someone wrote, embedded in a conflict error. It is quoted line by line like comments in
+/// MCP output, so it cannot pass for LANI's own lines or a message from the human (§12.4).
+fn quoted_current_text(current: &str) -> String {
+    if current.trim().is_empty() {
+        "The current text is empty.\n".to_string()
+    } else {
+        format!(
+            "Current text, each line shown after a `{}` prefix that is not part of it:\n{}",
+            text::BODY_PREFIX.trim_end(),
+            text::quote_body(current)
+        )
+    }
 }
 
 fn is_constraint_violation(error: &Error) -> bool {
