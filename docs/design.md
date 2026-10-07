@@ -838,10 +838,15 @@ anything else becomes `/`. The port is in the cookie name because browsers do no
 by port.
 
 - **Why Strict, not Lax.** Browsers send 127.0.0.1 cookies to every port on that host. A Lax
-  cookie travels with any cross-site top-level navigation, so any website could send the browser
-  to `http://127.0.0.1:<another port>/`, and whatever listens there (another local user's server,
-  say) would receive the token. A Strict cookie travels only with same-site navigations. M2
-  briefly used Lax; the first LANI review caught this and it was reverted.
+  cookie travels with any cross-site top-level navigation, so a website that sends the browser to
+  `http://127.0.0.1:<another port>/` delivers the token to whatever listens there on the very
+  first request. Strict withholds the cookie from that first, cross-site request, but it does
+  **not** keep the cookie away from other loopback ports. SameSite compares sites, and the port is
+  not part of a site. Once a page from another loopback port is showing, its own requests are
+  same-site and carry the cookie: a reload, a second navigation, an image, even the browser's
+  automatic favicon fetch. Strict only stops a listener that logs the first request; a hostile
+  server defeats it with one more request. The remaining exposure is accepted (§15). M2 briefly
+  used Lax, and the first LANI review caught that.
 - **Why a sign-in page instead of a redirect.** `lani open` reaches `/login` from a local redirect
   file, which browsers treat as a cross-site origin. They withhold Strict cookies for that whole
   navigation, including any HTTP redirect, so a 303 to `next` would arrive signed out. The
@@ -1018,12 +1023,20 @@ lani version
 
 Accepted residual risks:
 
-- **Cookie sent to another local server.** Browsers send 127.0.0.1 cookies to every port, and
-  `SameSite=Strict` still allows same-site navigations. If you open a page served on another
-  loopback port, by typing its address or by clicking a link to it on a LANI page, your
-  `lani_<port>` cookie goes with the request, and whoever runs that server gets the token.
-  Websites cannot trigger this, and the cookie becomes useless when the server stops. Jupyter has
-  the same exposure.
+- **The token can reach another server on loopback.** The `lani_<port>` cookie holds the token,
+  and browsers send 127.0.0.1 cookies to every port. `SameSite=Strict` withholds it only from
+  cross-site requests (§13.2). Whenever the browser shows a page served from another loopback
+  port, that page's own requests carry the cookie, and whoever runs that server gets the token.
+  - **Triggers:** any website can arrange this in two hops: it navigates the browser to the
+    hostile port, and the hostile page makes one more request to itself. Opening such a page
+    directly, or following a link to it from a LANI page, also works.
+  - **Who can exploit it:** a process that can listen on a loopback port but cannot read
+    `server.json`. That means other users on a shared machine, or sandboxed or containerised
+    local processes.
+  - **Who cannot gain from it:** on a single-user machine without such sandboxes, anything that
+    can listen on loopback can already read `server.json`, so this adds no exposure there.
+  - **Limits:** the cookie stops working when the server stops. Jupyter has the same exposure.
+    Hardening is deferred (§21).
 - **Token in browser history.** The `/login?token=…` URL may be recorded in your browser history,
   which is private to your OS user.
 
@@ -1232,6 +1245,14 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Fuzzy file finder and code search.
 - A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
 - Caching rendered Markdown per (object, version), if rendering cost shows up in benchmarks.
+- Keeping the session cookie away from other loopback ports, for shared machines (§15). Two
+  candidates; neither is tested:
+  - A per-server secret hostname (`http://lani-<random>.localhost:<port>/`) with a host-only
+    cookie. This depends on the browser resolving `*.localhost` to loopback, which is unconfirmed
+    for Safari.
+  - A per-server secret path prefix (`/s/<random>/…`) with the cookie's `Path` set to it. This
+    should work in every browser, because a hostile page cannot request a path it does not know.
+    The cost is a secret segment in every LANI URL.
 - Relocating a repo (re-pointing `git_dir` after the repo moves on disk).
 - Keeping reviewed commits reachable through `refs/lani/*`. This writes to the repo, so it would
   need an explicit opt-in.

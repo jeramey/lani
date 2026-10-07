@@ -182,8 +182,11 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
         .filter(|next| is_safe_next(next))
         .unwrap_or_else(|| "/".to_string());
     // SameSite=Strict, because browsers send 127.0.0.1 cookies to every port on the host: a Lax
-    // cookie would travel with any website's navigation to another local port, handing the token
-    // to whatever listens there. Strict cookies travel only with same-site navigations.
+    // cookie would travel with any website's first navigation to another local port, handing the
+    // token to whatever listens there. Strict reduces that exposure but does not close it.
+    // SameSite compares sites, not ports, so once a page from another loopback port is showing,
+    // its own requests (a reload, an image, the favicon) carry the cookie. That remaining
+    // exposure is accepted and documented (design §13.2, §15).
     //
     // `lani open` reaches /login from a local redirect file, which browsers treat as cross-site,
     // and they withhold Strict cookies for the rest of that navigation, including any HTTP
