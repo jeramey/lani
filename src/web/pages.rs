@@ -41,7 +41,10 @@ struct ReviewRow {
 }
 
 struct RepoGroup {
-    repo: String,
+    repo_id: i64,
+    name: String,
+    /// Where the repository lives, so repositories with the same directory name are told apart.
+    location: String,
     reviews: Vec<ReviewRow>,
 }
 
@@ -92,13 +95,13 @@ pub async fn index(
             created_by: author(review.created_by),
             created: time::to_local(&review.created_at),
         };
-        match groups
-            .iter_mut()
-            .find(|group| group.repo == item.view.repo.name)
-        {
+        let repo = &item.view.repo;
+        match groups.iter_mut().find(|group| group.repo_id == repo.id) {
             Some(group) => group.reviews.push(row),
             None => groups.push(RepoGroup {
-                repo: item.view.repo.name.clone(),
+                repo_id: repo.id,
+                name: repo.name.clone(),
+                location: views::repo_location(&repo.git_dir),
                 reviews: vec![row],
             }),
         }

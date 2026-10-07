@@ -43,9 +43,22 @@ pub struct TestRepo {
 impl TestRepo {
     /// A repository whose `main` branch has one commit containing `files`.
     pub fn new(files: &[(&str, &str)]) -> Self {
+        Self::create(None, files)
+    }
+
+    /// Like [`TestRepo::new`], but in a directory with the given name.
+    pub fn named(name: &str, files: &[(&str, &str)]) -> Self {
+        Self::create(Some(name), files)
+    }
+
+    fn create(name: Option<&str>, files: &[(&str, &str)]) -> Self {
         let dir = tempfile::tempdir().expect("create temp dir");
         // Canonicalize so paths match what git reports (macOS /var → /private/var).
-        let path = std::fs::canonicalize(dir.path()).expect("canonicalize temp dir");
+        let mut path = std::fs::canonicalize(dir.path()).expect("canonicalize temp dir");
+        if let Some(name) = name {
+            path.push(name);
+            std::fs::create_dir(&path).expect("create named repo dir");
+        }
         let repo = Self { _dir: dir, path };
         repo.git(&["init", "-q", "-b", "main"]);
         repo.git(&["config", "user.name", "Test"]);

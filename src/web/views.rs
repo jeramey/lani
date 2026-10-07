@@ -40,6 +40,25 @@ pub fn comment_url(comment: &Comment) -> String {
     format!("{page}#c{}", comment.id)
 }
 
+/// Where a repository lives, for display: its main worktree (the parent of a `.git` directory)
+/// or the git directory of a bare repository, with the home directory shown as `~`.
+#[must_use]
+pub fn repo_location(git_dir: &str) -> String {
+    let path = std::path::Path::new(git_dir);
+    let location = if path.file_name().is_some_and(|name| name == ".git") {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    let location = location.to_string_lossy();
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && location.starts_with(&format!("{home}/")) => {
+            format!("~{}", &location[home.len()..])
+        }
+        _ => location.into_owned(),
+    }
+}
+
 // ── shared pieces ────────────────────────────────────────────────────────────────────────────
 
 /// How an author is shown: "You" for the human, "Claude · <role>" otherwise.
@@ -475,6 +494,15 @@ impl IntoResponse for PageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_locations() {
+        assert_eq!(repo_location("/srv/repos/api/.git"), "/srv/repos/api");
+        assert_eq!(repo_location("/srv/repos/api.git"), "/srv/repos/api.git");
+        if let Ok(home) = std::env::var("HOME") {
+            assert_eq!(repo_location(&format!("{home}/src/api/.git")), "~/src/api");
+        }
+    }
 
     #[test]
     fn first_line_skips_blank_lines_and_truncates() {

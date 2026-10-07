@@ -646,3 +646,32 @@ async fn pages_still_render_when_the_repository_is_gone() {
 
     std::fs::rename(&moved, &f.repo.path).unwrap();
 }
+
+#[tokio::test]
+async fn repositories_with_the_same_name_are_listed_separately() {
+    let f = fixture();
+    let first = TestRepo::named("api", &[("a.txt", "a\n")]);
+    let second = TestRepo::named("api", &[("b.txt", "b\n")]);
+    for repo in [&first, &second] {
+        let path = repo.path.clone();
+        f.state
+            .call(move |service| {
+                service.start_review(&StartReview {
+                    repo_path: &path,
+                    title: "Audit",
+                    author: Actor::Reviewer,
+                    base_mode: BaseMode::None,
+                    summary: None,
+                    head_ref: None,
+                })
+            })
+            .await
+            .unwrap();
+    }
+    let (_, _, body) = send(&f.app, get("/")).await;
+    assert_eq!(body.matches("<h2>api <span").count(), 2, "{body}");
+    for repo in [&first, &second] {
+        let shown = lani::web::repo_location(&format!("{}/.git", repo.path.display()));
+        assert!(body.contains(&shown), "{shown} missing from {body}");
+    }
+}

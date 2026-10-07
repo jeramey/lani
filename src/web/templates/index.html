@@ -12,7 +12,7 @@
 {% endif %}
 {% for group in groups %}
 <section class="repo">
-  <h2>{{ group.repo }}</h2>
+  <h2>{{ group.name }} <span class="repo-path">{{ group.location }}</span></h2>
   <ul class="review-list">
     {% for row in group.reviews %}
     <li>
