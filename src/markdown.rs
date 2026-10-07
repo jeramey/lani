@@ -4,11 +4,10 @@
 //! dangerous link schemes such as `javascript:`. Remote images are additionally blocked by the
 //! web server's Content-Security-Policy.
 
-use comrak::{Options, markdown_to_html};
+use comrak::nodes::NodeValue;
+use comrak::{Arena, Options, format_html, markdown_to_html, parse_document};
 
-/// Render GitHub-flavored Markdown to HTML that is safe to embed in a page.
-#[must_use]
-pub fn render(markdown: &str) -> String {
+fn options() -> Options<'static> {
     let mut options = Options::default();
     options.extension.strikethrough = true;
     options.extension.table = true;
@@ -16,14 +15,39 @@ pub fn render(markdown: &str) -> String {
     options.extension.tasklist = true;
     // Explicitly keep comrak's safe default: escape raw HTML and drop dangerous URLs.
     options.render.r#unsafe = false;
-    markdown_to_html(markdown, &options)
+    options
 }
 
-/// Render a single line of Markdown as inline HTML, for one-line previews in lists. A line
-/// that does not form a plain paragraph (a heading or a code fence, say) is shown as escaped text.
+/// Render GitHub-flavored Markdown to HTML that is safe to embed in a page.
+#[must_use]
+pub fn render(markdown: &str) -> String {
+    markdown_to_html(markdown, &options())
+}
+
+/// Render a single line of Markdown as inline HTML, for one-line previews in lists. Links are
+/// reduced to their text, because previews sit inside a link to the issue and HTML links cannot
+/// nest. A line that does not form a plain paragraph (a heading or a code fence, say) is shown as
+/// escaped text.
 #[must_use]
 pub fn render_inline(line: &str) -> String {
-    let html = render(line);
+    let options = options();
+    let arena = Arena::new();
+    let root = parse_document(&arena, line, &options);
+    let links: Vec<_> = root
+        .descendants()
+        .filter(|node| matches!(node.data.borrow().value, NodeValue::Link(_)))
+        .collect();
+    for link in links {
+        let children: Vec<_> = link.children().collect();
+        for child in children {
+            link.insert_before(child);
+        }
+        link.detach();
+    }
+    let mut html = String::new();
+    if format_html(root, &options, &mut html).is_err() {
+        return escape(line);
+    }
     match html
         .trim_end()
         .strip_prefix("<p>")
@@ -66,6 +90,19 @@ mod tests {
             render_inline("<script>x</script>"),
             "&lt;script&gt;x&lt;/script&gt;"
         );
+    }
+
+    #[test]
+    fn inline_rendering_flattens_links() {
+        assert_eq!(
+            render_inline("See https://docs.rs/foo for the API"),
+            "See https://docs.rs/foo for the API"
+        );
+        assert_eq!(
+            render_inline("Read the [**spec**](https://example.com) first"),
+            "Read the <strong>spec</strong> first"
+        );
+        assert!(!render_inline("<https://example.com> and www.example.com").contains("<a"));
     }
 
     #[test]
