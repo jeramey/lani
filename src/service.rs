@@ -894,7 +894,10 @@ struct Placer<'a> {
     state: Option<&'a ReviewGitState>,
     /// Set when the repository is gone, so every anchor is shown from its stored snippet.
     repo_unavailable: Option<&'a str>,
-    path_changes: HashMap<(String, String, String), PathChange>,
+    /// Changed paths per (anchor commit, target): one whole-tree diff per pair of commits.
+    path_changes: HashMap<(String, String), HashMap<String, PathChange>>,
+    /// Whether each anchor commit still exists.
+    commits_exist: HashMap<String, bool>,
     files: HashMap<(String, String), Option<FileLines>>,
 }
 
@@ -906,6 +909,7 @@ impl<'a> Placer<'a> {
             state: view.git.as_ref(),
             repo_unavailable: view.repo_unavailable.as_deref(),
             path_changes: HashMap::new(),
+            commits_exist: HashMap::new(),
             files: HashMap::new(),
         }
     }
@@ -948,22 +952,28 @@ impl<'a> Placer<'a> {
         if anchor.commit == target {
             return Ok(current(&anchor.path, anchor.start_line, anchor.end_line));
         }
-        if self.git.resolve_commit(&anchor.commit)?.is_none() {
+        let exists = if let Some(exists) = self.commits_exist.get(&anchor.commit) {
+            *exists
+        } else {
+            let exists = self.git.resolve_commit(&anchor.commit)?.is_some();
+            self.commits_exist.insert(anchor.commit.clone(), exists);
+            exists
+        };
+        if !exists {
             return Ok(outdated(format!(
                 "commit {} is no longer in the repository",
                 short_sha(&anchor.commit)
             )));
         }
-        let key = (anchor.commit.clone(), target.clone(), anchor.path.clone());
-        let change = if let Some(change) = self.path_changes.get(&key) {
-            change.clone()
-        } else {
-            let change = self
-                .git
-                .path_change(&anchor.commit, &target, &anchor.path)?;
-            self.path_changes.insert(key, change.clone());
-            change
-        };
+        let pair = (anchor.commit.clone(), target.clone());
+        if !self.path_changes.contains_key(&pair) {
+            let changes = self.git.path_changes(&anchor.commit, &target)?;
+            self.path_changes.insert(pair.clone(), changes);
+        }
+        let change = self.path_changes[&pair]
+            .get(&anchor.path)
+            .cloned()
+            .unwrap_or(PathChange::Unchanged);
         let new_path = match change {
             PathChange::Unchanged => {
                 return Ok(current(&anchor.path, anchor.start_line, anchor.end_line));

@@ -1109,3 +1109,42 @@ fn a_moved_repository_degrades_to_stored_data() {
             .is_some()
     );
 }
+
+#[test]
+fn issues_sharing_an_anchor_commit_are_placed_from_one_tree_diff() {
+    let home = TestHome::new();
+    let repo = TestRepo::new(&[
+        ("a.rs", &numbered(10)),
+        ("b.rs", &numbered(10)),
+        ("c.rs", &numbered(10)),
+    ]);
+    repo.switch_new("feature");
+    repo.write("a.rs", &numbered(11));
+    let anchor = repo.commit_all("touch a");
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    for path in ["a.rs", "b.rs", "c.rs"] {
+        let mut request = issue_request(review_id, &repo, &anchor, 5, 5, "line 5");
+        request.path = path;
+        service.create_issue(&request).unwrap();
+    }
+    // One later commit renames b.rs, inserts a line at the top of a.rs and leaves c.rs alone.
+    repo.git(&["mv", "b.rs", "renamed.rs"]);
+    repo.write("a.rs", &format!("top\n{}", numbered(11)));
+    repo.commit_all("rename b, insert into a");
+
+    let list = service.list_issues(review_id, None, None, false).unwrap();
+    let mut placed: Vec<(String, u32, u32)> = list.issues.iter().map(current).collect();
+    placed.sort();
+    assert_eq!(
+        placed,
+        vec![
+            ("a.rs".to_string(), 6, 6),
+            ("c.rs".to_string(), 5, 5),
+            ("renamed.rs".to_string(), 5, 5),
+        ]
+    );
+}

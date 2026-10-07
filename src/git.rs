@@ -7,6 +7,7 @@
 //!   every other command receives full SHAs that `rev-parse` produced, plus paths after `--`.
 //! - Environment variables that would redirect git to another repository are removed.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
@@ -252,8 +253,10 @@ impl Git {
         Ok(Some(run(command, &[0])?.stdout))
     }
 
-    /// What happened to `path` between two commits, following renames.
-    pub fn path_change(&self, from: &str, to: &str, path: &str) -> Result<PathChange> {
+    /// What happened to every changed path between two commits, following renames, keyed by
+    /// the path at `from`. Paths missing from the map are unchanged. Rename detection needs the
+    /// whole tree, so callers should ask once per pair of commits, not once per path.
+    pub fn path_changes(&self, from: &str, to: &str) -> Result<HashMap<String, PathChange>> {
         let mut command = self.command();
         command.args([
             "diff",
@@ -265,7 +268,7 @@ impl Git {
             to,
         ]);
         let output = run(command, &[0])?;
-        parse_path_change(&stdout_text(&output)?, path)
+        parse_path_changes(&stdout_text(&output)?)
     }
 
     /// The `-U0` hunks between `old_path` at `from` and `new_path` at `to`.
@@ -557,7 +560,8 @@ fn parse_branch_distances(text: &str) -> Result<Vec<BranchDistance>> {
 }
 
 /// Find what happened to `path` in `diff --name-status -z -M` output.
-fn parse_path_change(text: &str, path: &str) -> Result<PathChange> {
+fn parse_path_changes(text: &str) -> Result<HashMap<String, PathChange>> {
+    let mut changes = HashMap::new();
     let mut fields = text.split('\0').filter(|field| !field.is_empty());
     while let Some(status) = fields.next() {
         let invalid = || Error::Git(format!("unexpected name-status output near {status:?}"));
@@ -569,17 +573,18 @@ fn parse_path_change(text: &str, path: &str) -> Result<PathChange> {
         } else {
             None
         };
-        // A copy leaves its source in place, so it says nothing about `path`.
-        if source != path || kind == 'C' {
+        // A copy leaves its source in place, so it says nothing about the source path.
+        if kind == 'C' {
             continue;
         }
-        return Ok(match (kind, destination) {
+        let change = match (kind, destination) {
             ('R', Some(destination)) => PathChange::Renamed(destination.to_string()),
             ('D', _) => PathChange::Deleted,
             _ => PathChange::Modified,
-        });
+        };
+        changes.insert(source.to_string(), change);
     }
-    Ok(PathChange::Unchanged)
+    Ok(changes)
 }
 
 /// Parse `git status --porcelain=v2 -z --branch` output.
@@ -698,26 +703,17 @@ mod tests {
     #[test]
     fn path_changes() {
         let text = "M\0a.rs\0R087\0old.rs\0new.rs\0D\0gone.rs\0C075\0src.rs\0copy.rs\0";
+        let changes = parse_path_changes(text).unwrap();
         assert_eq!(
-            parse_path_change(text, "a.rs").unwrap(),
-            PathChange::Modified
+            changes,
+            HashMap::from([
+                ("a.rs".to_string(), PathChange::Modified),
+                ("old.rs".to_string(), PathChange::Renamed("new.rs".into())),
+                ("gone.rs".to_string(), PathChange::Deleted),
+            ]),
+            "copies leave their source unchanged, and unlisted paths are unchanged"
         );
-        assert_eq!(
-            parse_path_change(text, "old.rs").unwrap(),
-            PathChange::Renamed("new.rs".into())
-        );
-        assert_eq!(
-            parse_path_change(text, "gone.rs").unwrap(),
-            PathChange::Deleted
-        );
-        assert_eq!(
-            parse_path_change(text, "src.rs").unwrap(),
-            PathChange::Unchanged
-        );
-        assert_eq!(
-            parse_path_change(text, "other.rs").unwrap(),
-            PathChange::Unchanged
-        );
+        assert!(parse_path_changes("R100\0only-source\0").is_err());
     }
 
     #[test]
