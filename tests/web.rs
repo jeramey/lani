@@ -554,3 +554,44 @@ async fn closing_and_reopening_a_review() {
     let (_, _, body) = send(&f.app, get(&review_url)).await;
     assert!(body.contains("Close review"));
 }
+
+#[tokio::test]
+async fn browser_line_endings_do_not_count_as_edits() {
+    let f = fixture();
+    // Browsers submit textarea newlines as CRLF (%0D%0A); saving Claude's unchanged text must not
+    // mark it "edited by you".
+    let unchanged = "Use a digit.%0D%0A%0D%0A%3Cscript%3Ealert('pwned')%3C/script%3E";
+    let (status, _, _) = send(
+        &f.app,
+        post(
+            &format!("/comments/{}/edit", f.issue_comment_id),
+            &format!("version=1&body={unchanged}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    send(
+        &f.app,
+        post(
+            &format!("/reviews/{}/comments", f.review_id),
+            "body=first%0D%0Asecond",
+        ),
+    )
+    .await;
+
+    let (review_id, comment_id) = (f.review_id, f.issue_comment_id);
+    let (comment, detail) = f
+        .state
+        .call(move |service| {
+            Ok((
+                service.get_comment(comment_id)?,
+                service.get_review(review_id, None)?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!(comment.version, 1);
+    assert_eq!(comment.edited_by, None);
+    let last = detail.summary_comments.last().unwrap();
+    assert_eq!(last.body, "first\nsecond", "stored with LF line endings");
+}

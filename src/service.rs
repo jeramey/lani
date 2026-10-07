@@ -226,7 +226,7 @@ impl Service {
         }
 
         let base_choice = base::choose_base(&git, &head_ref, &head_sha, &request.base_mode)?;
-        let summary = request.summary.unwrap_or("");
+        let summary = normalize_newlines(request.summary.unwrap_or(""));
         let now = time::now();
         let tx = self
             .conn
@@ -240,7 +240,7 @@ impl Service {
                 base_ref: base_choice.base_ref.as_deref(),
                 base_source: base_choice.source,
                 created_by: request.author,
-                summary,
+                summary: &summary,
                 now: &now,
             },
         );
@@ -355,11 +355,16 @@ impl Service {
     ) -> Result<ReviewDetail> {
         let review = store::get_review(&self.conn, review_id)?;
         require_open(&review)?;
+        let summary = normalize_newlines(summary);
+        if summary == review.summary {
+            // Saving unchanged text is not an edit: no new version, event or "edited" marker.
+            return self.get_review(review_id, None);
+        }
         let now = time::now();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if !store::update_summary(&tx, review_id, summary, actor, &now, expected_version)? {
+        if !store::update_summary(&tx, review_id, &summary, actor, &now, expected_version)? {
             let current = store::get_review(&tx, review_id)?;
             return Err(summary_conflict(&current, expected_version));
         }
@@ -435,7 +440,7 @@ impl Service {
                 review_id: review.id,
                 issue_id: Some(issue_id),
                 author: request.author,
-                body,
+                body: &body,
                 head_sha: &head_sha,
                 now: &now,
             },
@@ -485,7 +490,7 @@ impl Service {
                 review_id,
                 issue_id,
                 author: actor,
-                body,
+                body: &body,
                 head_sha: &head_sha,
                 now: &now,
             },
@@ -523,12 +528,16 @@ impl Service {
             )));
         }
         require_open(&store::get_review(&self.conn, comment.review_id)?)?;
+        if body == comment.body {
+            // Saving unchanged text is not an edit: no new version, event or "edited" marker.
+            return Ok(comment);
+        }
 
         let now = time::now();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if !store::update_comment_body(&tx, comment_id, body, actor, &now, expected_version)? {
+        if !store::update_comment_body(&tx, comment_id, &body, actor, &now, expected_version)? {
             let current = store::get_comment(&tx, comment_id)?;
             return Err(comment_conflict(&current, expected_version));
         }
@@ -586,7 +595,7 @@ impl Service {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(body) = comment {
+        if let Some(body) = &comment {
             let comment_id = store::insert_comment(
                 &tx,
                 &NewComment {
@@ -1270,7 +1279,9 @@ fn require_head(git: &Git, review: &Review) -> Result<String> {
     })
 }
 
-fn require_text<'t>(field: &str, text: &'t str) -> Result<&'t str> {
+/// Normalize line endings to `\n` and require some non-blank text.
+fn require_text(field: &str, text: &str) -> Result<String> {
+    let text = normalize_newlines(text);
     if text.trim().is_empty() {
         Err(Error::Invalid(format!("{field} must not be empty")))
     } else {
@@ -1278,12 +1289,19 @@ fn require_text<'t>(field: &str, text: &'t str) -> Result<&'t str> {
     }
 }
 
+/// Convert `\r\n` and lone `\r` line endings to `\n`. Browsers submit `<textarea>` text with
+/// `\r\n` line endings, so without this every web edit would change the stored text even when
+/// the human changed nothing, and Claude would read the `\r`s back.
+fn normalize_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 fn validate_title(title: &str) -> Result<String> {
     let title = title.trim();
     if title.is_empty() {
         return Err(Error::Invalid("title must not be empty".to_string()));
     }
-    if title.contains('\n') {
+    if title.contains(['\n', '\r']) {
         return Err(Error::Invalid("title must be a single line".to_string()));
     }
     if title.chars().count() > MAX_TITLE_CHARS {

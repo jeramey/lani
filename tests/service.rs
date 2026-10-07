@@ -1001,3 +1001,57 @@ fn reopening_is_refused_while_the_branch_has_another_open_review() {
     let view = service.reopen_review(Actor::Human, first).unwrap();
     assert_eq!(view.review.status, ReviewStatus::Open);
 }
+
+#[test]
+fn line_endings_are_normalized_and_unchanged_saves_are_not_edits() {
+    let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
+    let review_id = service.get_issue(issue_id).unwrap().issue.review_id;
+
+    let comment = service
+        .add_comment(
+            Actor::Reviewer,
+            CommentTarget::Issue(issue_id),
+            "one\r\ntwo\rthree",
+        )
+        .unwrap();
+    assert_eq!(comment.body, "one\ntwo\nthree");
+
+    // A browser re-submits unchanged text with CRLF line endings: nothing changes.
+    let saved = service
+        .edit_comment(Actor::Human, comment.id, "one\r\ntwo\r\nthree", 1)
+        .unwrap();
+    assert_eq!(saved.version, 1);
+    assert_eq!(saved.edited_by, None, "not marked as edited");
+
+    let detail = service
+        .update_summary(review_id, Actor::Human, "Intent:\r\n- a\r\n", 1)
+        .unwrap();
+    assert_eq!(detail.view.review.summary, "Intent:\n- a\n");
+    assert_eq!(detail.view.review.summary_version, 2);
+    let detail = service
+        .update_summary(review_id, Actor::Human, "Intent:\r\n- a\r\n", 2)
+        .unwrap();
+    assert_eq!(
+        detail.view.review.summary_version, 2,
+        "unchanged summary is not a new version"
+    );
+    let kinds: Vec<_> = service
+        .list_events(review_id)
+        .unwrap()
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == lani::model::EventKind::SummaryUpdated)
+            .count(),
+        1
+    );
+    assert!(!kinds.contains(&lani::model::EventKind::CommentEdited));
+
+    expect_invalid(
+        service.retitle_review(Actor::Human, review_id, "two\rlines"),
+        "single line",
+    );
+}
