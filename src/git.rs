@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
 
@@ -23,6 +24,13 @@ const REDIRECTING_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
 ];
+
+/// The oldest git LANI supports: 2.41 added the `%(ahead-behind:…)` format atom used for
+/// parent-branch detection; 2.31 added `rev-parse --path-format` (design §8).
+pub const MIN_GIT_VERSION: (u32, u32) = (2, 41);
+
+/// The result of checking the `git` on PATH, computed once per process.
+static GIT_CHECK: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
 /// A line-range change from a unified diff hunk header `@@ -old_start,old_count +new_start,new_count @@`.
 ///
@@ -388,6 +396,7 @@ fn git_command() -> Command {
 
 /// Run `command`, accepting only the listed exit codes.
 fn run(mut command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
+    require_supported_git()?;
     let output = command
         .output()
         .map_err(|error| Error::Git(format!("could not run git: {error}")))?;
@@ -406,6 +415,82 @@ fn run(mut command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
             )))
         }
     }
+}
+
+/// Fail with an actionable message if the `git` on PATH is missing or older than
+/// [`MIN_GIT_VERSION`], instead of letting a newer git feature fail with a raw error later.
+fn require_supported_git() -> Result<()> {
+    GIT_CHECK
+        .get_or_init(check_git_version)
+        .clone()
+        .map_err(Error::Unavailable)
+}
+
+fn check_git_version() -> std::result::Result<(), String> {
+    let (min_major, min_minor) = MIN_GIT_VERSION;
+    let output = Command::new("git")
+        .arg("version")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            format!(
+                "LANI needs git {min_major}.{min_minor} or newer, but could not run `git`: {error}"
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "`git version` failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    evaluate_git_version(&String::from_utf8_lossy(&output.stdout), &git_location())
+}
+
+/// Accept `git version` output for a supported git, or explain what is wrong.
+fn evaluate_git_version(output: &str, location: &str) -> std::result::Result<(), String> {
+    let (min_major, min_minor) = MIN_GIT_VERSION;
+    let found = output
+        .trim()
+        .strip_prefix("git version ")
+        .unwrap_or(output.trim());
+    match parse_git_version(output) {
+        Some(version) if version >= MIN_GIT_VERSION => Ok(()),
+        Some(_) => Err(format!(
+            "LANI needs git {min_major}.{min_minor} or newer; found git {found} at {location}"
+        )),
+        None => Err(format!(
+            "LANI needs git {min_major}.{min_minor} or newer, but could not read the version of the git at \
+             {location} from {output:?}"
+        )),
+    }
+}
+
+/// Major and minor version from `git version` output, e.g. `git version 2.50.1 (Apple Git-155)`.
+fn parse_git_version(output: &str) -> Option<(u32, u32)> {
+    let number = output
+        .trim()
+        .strip_prefix("git version ")?
+        .split_whitespace()
+        .next()?;
+    let mut parts = number.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Where the `git` on PATH lives, for messages.
+fn git_location() -> String {
+    std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|directory| directory.join("git"))
+                .find(|candidate| candidate.is_file())
+        })
+        .map_or_else(
+            || "`git` on PATH".to_string(),
+            |path| path.display().to_string(),
+        )
 }
 
 fn stdout_text(output: &Output) -> Result<String> {
@@ -535,6 +620,33 @@ fn parse_status(text: &str) -> Result<WorktreeState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_versions() {
+        assert_eq!(parse_git_version("git version 2.54.0\n"), Some((2, 54)));
+        assert_eq!(
+            parse_git_version("git version 2.50.1 (Apple Git-155)"),
+            Some((2, 50))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.45.1.windows.1"),
+            Some((2, 45))
+        );
+        assert_eq!(parse_git_version("hub version 2.14.2"), None);
+        assert_eq!(parse_git_version("git version x.y"), None);
+
+        assert!(evaluate_git_version("git version 2.41.0", "/usr/bin/git").is_ok());
+        assert!(evaluate_git_version("git version 3.0.0", "/usr/bin/git").is_ok());
+        assert_eq!(
+            evaluate_git_version("git version 2.39.2\n", "/usr/bin/git").unwrap_err(),
+            "LANI needs git 2.41 or newer; found git 2.39.2 at /usr/bin/git"
+        );
+        assert!(
+            evaluate_git_version("garbage", "/usr/bin/git")
+                .unwrap_err()
+                .contains("could not read the version")
+        );
+    }
 
     #[test]
     fn hunk_headers_with_and_without_counts() {

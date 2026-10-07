@@ -346,7 +346,9 @@ LANI shells out to the `git` CLI rather than using a git library, so worktrees, 
 SHA-256 repos and `safe.directory` all behave exactly as you already experience them. **Minimum
 git version: 2.41**, the release that added the `%(ahead-behind:…)` format atom used for parent
 detection (§9.4). The installed version is 2.54. Some LTS distributions still ship older git; for
-example, Debian 12 ships 2.39. Supporting those would need a slower per-branch fallback.
+example, Debian 12 ships 2.39. Supporting those would need a slower per-branch fallback. LANI
+runs `git version` once per process before its first git command, and a missing or older git
+fails with a message such as "LANI needs git 2.41 or newer; found git 2.39.2 at /usr/bin/git".
 
 Commands used (all read-only):
 

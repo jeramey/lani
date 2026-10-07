@@ -19,7 +19,8 @@ pub enum Error {
     /// The text was changed by someone else since the caller read it.
     #[error("{0}")]
     Conflict(String),
-    /// The web server could not be started, reached or stopped.
+    /// Something LANI depends on is unavailable: the web server could not be started, reached or
+    /// stopped, or the `git` on PATH is missing or too old.
     #[error("{0}")]
     Unavailable(String),
     /// An internal failure that is not the caller's fault, such as a crashed background task.
