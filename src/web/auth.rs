@@ -1,9 +1,10 @@
 //! Authentication and browser-security checks (docs/design.md §13.2).
 
+use askama::Template;
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
@@ -96,13 +97,20 @@ pub fn same_origin(headers: &HeaderMap, port: u16) -> bool {
         .is_some_and(|site| site.as_bytes() == b"same-origin")
 }
 
-/// Whether `next` is a local path that is safe to redirect to after login.
+/// Whether `next` is a local path that is safe to continue to after login. It is embedded in
+/// the sign-in page's meta refresh, so only a small character set is allowed: letters, digits
+/// and `-._~/?=&#%+`. That covers every path LANI links to.
 #[must_use]
 pub fn is_safe_next(next: &str) -> bool {
     next.starts_with('/')
         && !next.starts_with("//")
-        && !next.starts_with("/\\")
-        && !next.chars().any(char::is_control)
+        && next.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'-' | b'.' | b'_' | b'~' | b'/' | b'?' | b'=' | b'&' | b'#' | b'%' | b'+'
+                )
+        })
 }
 
 fn credential(headers: &HeaderMap, token: &str, port: u16) -> Option<Credential> {
@@ -173,29 +181,40 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
         .next
         .filter(|next| is_safe_next(next))
         .unwrap_or_else(|| "/".to_string());
-    // SameSite=Lax, not Strict: `lani open` reaches /login from a local redirect file, which
-    // browsers treat as a cross-site origin, and they withhold Strict cookies for the rest of that
-    // navigation, including the redirect below. Lax cookies are still never sent on cross-site
-    // POSTs, every state change is a POST that must also pass the same-origin check in `check`,
-    // and no GET has side effects (design §13.2).
+    // SameSite=Strict, because browsers send 127.0.0.1 cookies to every port on the host: a Lax
+    // cookie would travel with any website's navigation to another local port, handing the token
+    // to whatever listens there. Strict cookies travel only with same-site navigations.
+    //
+    // `lani open` reaches /login from a local redirect file, which browsers treat as cross-site,
+    // and they withhold Strict cookies for the rest of that navigation, including any HTTP
+    // redirect. So instead of a 303 this answers with a page that moves on to `next` itself; that
+    // navigation starts from a 127.0.0.1 page, so it is same-site and carries the cookie
+    // (design §13.2).
     let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/",
+        "{}={}; HttpOnly; SameSite=Strict; Path=/",
         cookie_name(instance.port),
         instance.token
     );
-    match (HeaderValue::from_str(&next), HeaderValue::from_str(&cookie)) {
-        (Ok(location), Ok(cookie)) => (
-            StatusCode::SEE_OTHER,
-            [(header::LOCATION, location), (header::SET_COOKIE, cookie)],
-        )
-            .into_response(),
-        _ => PageError::new(
-            StatusCode::BAD_REQUEST,
-            "Bad link",
-            "The link's target is not valid.",
+    let page = SignInPage { next: &next };
+    match (HeaderValue::from_str(&cookie), page.render()) {
+        (Ok(cookie), Ok(html)) => {
+            (StatusCode::OK, [(header::SET_COOKIE, cookie)], Html(html)).into_response()
+        }
+        (Err(_), _) => PageError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            "could not build the session cookie",
         )
         .into_response(),
+        (_, Err(error)) => PageError::from(error).into_response(),
     }
+}
+
+/// Sent by `/login` with the session cookie; continues to `next` with a same-site navigation.
+#[derive(Template)]
+#[template(path = "signin.html")]
+struct SignInPage<'a> {
+    next: &'a str,
 }
 
 #[cfg(test)]
@@ -236,12 +255,16 @@ mod tests {
     fn next_paths() {
         assert!(is_safe_next("/reviews/3"));
         assert!(is_safe_next("/"));
+        assert!(is_safe_next("/reviews/3/issues/7?status=all#c2"));
         for unsafe_next in [
             "https://evil.example",
             "//evil.example",
             "/\\evil.example",
             "reviews",
             "/a\r\nSet-Cookie: x",
+            "/x\"><script>",
+            "/x;url=https://evil.example",
+            "/x y",
         ] {
             assert!(!is_safe_next(unsafe_next), "{unsafe_next:?}");
         }

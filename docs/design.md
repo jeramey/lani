@@ -830,18 +830,23 @@ instead:
 2. Open *that file* with `$BROWSER` if set, otherwise `open` (macOS) or `xdg-open` (Linux).
 3. The server deletes `open-*.html` files older than 60 s, and all of them when it stops.
 
-**Session.** `/login` validates the token, sets the cookie, and redirects with 303 to `next`. The
-cookie is `lani_<port>=<token>` with `HttpOnly`, `SameSite=Lax` and `Path=/`.
+**Session.** `/login` validates the token, sets the cookie, and answers with a small sign-in page
+that continues to `next` by itself (a meta refresh, plus a "Continue" link as a fallback). The
+cookie is `lani_<port>=<token>` with `HttpOnly`, `SameSite=Strict` and `Path=/`. `next` must be a
+local path that starts with `/` and not `//`, using only letters, digits and `-._~/?=&#%+`;
+anything else becomes `/`. The port is in the cookie name because browsers do not isolate cookies
+by port.
 
-- **Why Lax, not Strict.** `lani open` reaches `/login` from a local redirect file, which browsers
-  treat as cross-site. They withhold Strict cookies for that whole navigation, including the
-  redirect to `next`, so a Strict cookie leaves the user signed out (found in M2 testing).
-- **What Lax gives up.** Only that a cross-site *top-level GET* carries the cookie. That is
-  harmless here: no GET has side effects (every state change is a POST), the other site cannot
-  read the response, and `frame-ancestors 'none'` stops framing. Cross-site POSTs never carry a
-  Lax cookie, and they must also pass the `Origin` check below. `next` must be a
-local path that starts with `/` and not `//`. The port is in the cookie name because browsers do
-not isolate cookies by port.
+- **Why Strict, not Lax.** Browsers send 127.0.0.1 cookies to every port on that host. A Lax
+  cookie travels with any cross-site top-level navigation, so any website could send the browser
+  to `http://127.0.0.1:<another port>/`, and whatever listens there (another local user's server,
+  say) would receive the token. A Strict cookie travels only with same-site navigations. M2
+  briefly used Lax; the first LANI review caught this and it was reverted.
+- **Why a sign-in page instead of a redirect.** `lani open` reaches `/login` from a local redirect
+  file, which browsers treat as a cross-site origin. They withhold Strict cookies for that whole
+  navigation, including any HTTP redirect, so a 303 to `next` would arrive signed out. The
+  sign-in page's own navigation starts from a 127.0.0.1 page, so it is same-site and carries the
+  cookie.
 
 **Request checks.** Every route except `/login` requires all of the following:
 
@@ -1003,7 +1008,7 @@ lani version
 | Token read from another process's arguments (`ps`)       | The token never appears on a command line; the browser opens a 0600 redirect file instead. |
 | Token read from disk                                     | `server.json` is mode 0600 inside the 0700 `$LANI_HOME`; the DB is also 0600. |
 | DNS rebinding from a malicious website                   | `Host` header allowlist; the server binds 127.0.0.1 only. |
-| CSRF from a malicious website                            | `SameSite=Lax` cookie (never sent on cross-site POSTs), plus an `Origin` or `Sec-Fetch-Site` check on every POST; GETs have no side effects. |
+| CSRF from a malicious website                            | `SameSite=Strict` cookie, plus an `Origin` or `Sec-Fetch-Site` check on every POST; GETs have no side effects. |
 | XSS via comment text written by Claude or pasted content | Autoescaping templates, raw HTML disabled in Markdown, dangerous URL schemes dropped, strict CSP with no inline scripts. |
 | Git option injection via refs or paths                   | `--end-of-options` or `--` before all user-supplied values; refs verified with `rev-parse --verify`. |
 | Path traversal in the file browser                       | Files are read only through git objects (`<commit>:<path>`), never from the filesystem. |
@@ -1012,10 +1017,12 @@ lani version
 
 Accepted residual risks:
 
-- **Cookie sent to another user's server.** Browsers send 127.0.0.1 cookies to every port. If you
-  browse to another local user's server, your `lani_<port>` cookie goes with the request.
-  Exploiting this requires you to visit a hostile local service, and the cookie becomes useless
-  when the server stops. Jupyter has the same exposure.
+- **Cookie sent to another local server.** Browsers send 127.0.0.1 cookies to every port, and
+  `SameSite=Strict` still allows same-site navigations. If you open a page served on another
+  loopback port, by typing its address or by clicking a link to it on a LANI page, your
+  `lani_<port>` cookie goes with the request, and whoever runs that server gets the token.
+  Websites cannot trigger this, and the cookie becomes useless when the server stops. Jupyter has
+  the same exposure.
 - **Token in browser history.** The `/login?token=…` URL may be recorded in your browser history,
   which is private to your OS user.
 

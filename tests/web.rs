@@ -199,7 +199,7 @@ async fn requests_need_the_token_and_the_right_host() {
 }
 
 #[tokio::test]
-async fn login_sets_a_port_scoped_cookie_and_redirects_only_locally() {
+async fn login_sets_a_strict_port_scoped_cookie_and_continues_only_locally() {
     let f = fixture();
     let login = |query: &str| {
         Request::builder()
@@ -208,17 +208,38 @@ async fn login_sets_a_port_scoped_cookie_and_redirects_only_locally() {
             .body(Body::empty())
             .unwrap()
     };
-    let (status, headers, _) = send(&f.app, login(&format!("token={TOKEN}&next=/reviews/1"))).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(location(&headers), "/reviews/1");
+    // A page, not a redirect: Strict cookies are withheld on redirects in a navigation that
+    // started cross-site (from the local redirect file), but sent on the page's own navigation.
+    let (status, headers, body) =
+        send(&f.app, login(&format!("token={TOKEN}&next=/reviews/1"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!headers.contains_key(header::LOCATION));
     let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
     assert_eq!(
         cookie,
-        format!("lani_{PORT}={TOKEN}; HttpOnly; SameSite=Lax; Path=/")
+        format!("lani_{PORT}={TOKEN}; HttpOnly; SameSite=Strict; Path=/")
+    );
+    assert!(
+        body.contains(r#"<meta http-equiv="refresh" content="0;url=/reviews/1">"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"href="/reviews/1""#),
+        "a manual fallback link: {body}"
     );
 
-    let (_, headers, _) = send(&f.app, login(&format!("token={TOKEN}&next=//evil.example"))).await;
-    assert_eq!(location(&headers), "/", "off-site redirects are replaced");
+    for hostile in [
+        "//evil.example",
+        "https://evil.example",
+        "/x%22%3E%3Cscript%3E",
+        "/x;url=//evil.example",
+    ] {
+        let (_, _, body) = send(&f.app, login(&format!("token={TOKEN}&next={hostile}"))).await;
+        assert!(
+            body.contains(r#"content="0;url=/""#),
+            "{hostile} is replaced by /: {body}"
+        );
+    }
 
     let (status, headers, _) = send(&f.app, login("token=wrong&next=/")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

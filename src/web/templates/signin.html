@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Signing in · LANI{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="0;url={{ next }}">{% endblock %}
+{% block content %}
+<section class="message">
+  <h1>Signed in</h1>
+  <p><a class="button" href="{{ next }}">Continue to LANI</a></p>
+</section>
+{% endblock %}

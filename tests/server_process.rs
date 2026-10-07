@@ -145,12 +145,16 @@ fn the_login_url_signs_the_browser_in() {
     let path = url.split_once(&format!(":{port}")).unwrap().1;
 
     let response = http_get(port, path);
-    assert!(response.starts_with("HTTP/1.1 303"), "{response}");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(
         response.contains(&format!("set-cookie: lani_{port}=")),
         "{response}"
     );
-    assert!(response.contains("location: /issues/7"), "{response}");
+    assert!(response.contains("SameSite=Strict"), "{response}");
+    assert!(
+        response.contains("content=\"0;url=/issues/7\""),
+        "{response}"
+    );
 
     let without_cookie = http_get(port, "/");
     assert!(
