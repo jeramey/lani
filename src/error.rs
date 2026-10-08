@@ -1,6 +1,6 @@
 //! Error type shared by every LANI module.
 //!
-//! The user-facing variants (`Invalid`, `NotFound`, `Forbidden`, `Conflict`) carry complete,
+//! The user-facing variants (`Invalid`, `NotFound`, `Forbidden`, `Conflict`, `Outdated`) carry complete,
 //! actionable messages: they are shown verbatim to Claude through MCP and to the human in the web
 //! UI.
 
@@ -24,6 +24,10 @@ pub enum Error {
     /// stopped, or the `git` on PATH is missing or too old.
     #[error("{0}")]
     Unavailable(String),
+    /// A newer lani has upgraded the database since this process opened it, so this process stops
+    /// rather than misread or damage it (docs/design.md §7.4).
+    #[error("{0}")]
+    Outdated(String),
     /// An internal failure that is not the caller's fault, such as a crashed background task.
     #[error("internal error: {0}")]
     Internal(String),

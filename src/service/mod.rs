@@ -14,7 +14,7 @@ pub use code::{
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::Connection;
 
 use crate::anchor::{self, DiskCheck, FileLines, Relocation};
 use crate::base::{self, BaseChoice, BaseMode};
@@ -239,6 +239,13 @@ impl Service {
         })
     }
 
+    /// Fail with [`Error::Outdated`] once a newer lani has upgraded the database since this
+    /// process opened it. Long-running processes call this before each request; every write also
+    /// checks again inside its transaction (§7.4).
+    pub fn check_schema(&self) -> Result<()> {
+        store::check_schema(&self.conn)
+    }
+
     /// Start a review of a branch, or return the branch's open review if it has one.
     pub fn start_review(&mut self, request: &StartReview<'_>) -> Result<StartedReview> {
         let title = validate_title(request.title)?;
@@ -253,12 +260,14 @@ impl Service {
             ))
         })?;
 
+        let tx = store::write_transaction(&mut self.conn)?;
         let repo = store::upsert_repo(
-            &self.conn,
+            &tx,
             &path_text(&worktree.git_dir)?,
             &repo_name(&worktree.git_dir),
             &time::now(),
         )?;
+        tx.commit()?;
         let worktree_report = worktree_report(&worktree, Some(&head_sha))?;
 
         if let Some(existing) = store::find_open_review(&self.conn, repo.id, &head_ref)? {
@@ -273,9 +282,7 @@ impl Service {
         let base_choice = base::choose_base(&git, &head_ref, &head_sha, &request.base_mode)?;
         let summary = normalize_newlines(request.summary.unwrap_or(""));
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         let inserted = store::insert_review(
             &tx,
             &NewReview {
@@ -406,9 +413,7 @@ impl Service {
             return self.get_review(review_id, None);
         }
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         if !store::update_summary(&tx, review_id, &summary, actor, &now, expected_version)? {
             let current = store::get_review(&tx, review_id)?;
             return Err(summary_conflict(&current, expected_version));
@@ -506,9 +511,7 @@ impl Service {
         let anchors = validate_anchors(&git, &repo, &review, &head_sha, request)?;
 
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         let issue_id = store::insert_issue(
             &tx,
             &store::NewIssue {
@@ -590,9 +593,7 @@ impl Service {
         let head_sha = require_head(&Git::new(&repo.git_dir), &review)?;
 
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         let comment_id = store::insert_comment(
             &tx,
             &NewComment {
@@ -655,9 +656,7 @@ impl Service {
         }
 
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         if !store::update_comment_body(&tx, comment_id, &body, actor, &now, expected_version)? {
             let current = store::get_comment(&tx, comment_id)?;
             return Err(comment_conflict(&current, expected_version));
@@ -697,9 +696,7 @@ impl Service {
         }
 
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         if !store::update_issue_details(
             &tx,
             issue_id,
@@ -778,9 +775,7 @@ impl Service {
         };
 
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         if let (Some(body), Some(head_sha)) = (&comment, &head_sha) {
             let comment_id = store::insert_comment(
                 &tx,
@@ -848,9 +843,7 @@ impl Service {
             .filter(|note| !note.trim().is_empty());
         // Everything the change depends on is read inside the write transaction, so a hand-off
         // made meanwhile by another session or the web UI is seen, not overwritten.
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         let review = store::get_review(&tx, review_id)?;
         require_open(&review)?;
         if actor == Actor::Human {
@@ -935,7 +928,9 @@ impl Service {
     pub fn set_round_limit(&mut self, actor: Actor, limit: u32) -> Result<()> {
         require_human(actor, "change settings")?;
         let limit = settings::parse_round_limit(&limit.to_string())?;
-        store::set_setting(&self.conn, settings::ROUND_LIMIT_KEY, &limit.to_string())
+        let tx = store::write_transaction(&mut self.conn)?;
+        store::set_setting(&tx, settings::ROUND_LIMIT_KEY, &limit.to_string())?;
+        Ok(tx.commit()?)
     }
 
     /// Wait until it is `role`'s turn on a review, checking every `poll`. Returns early when the
@@ -949,6 +944,7 @@ impl Service {
     ) -> Result<WaitOutcome> {
         let deadline = timeout.map(|timeout| std::time::Instant::now() + timeout);
         loop {
+            store::check_schema(&self.conn)?;
             let review = store::get_review(&self.conn, review_id)?;
             if review.status == ReviewStatus::Closed {
                 return Ok(WaitOutcome::Closed(review));
@@ -975,9 +971,7 @@ impl Service {
         let review = store::get_review(&self.conn, review_id)?;
         require_open(&review)?;
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         store::close_review(&tx, review_id, &now)?;
         store::insert_event(
             &tx,
@@ -1004,9 +998,7 @@ impl Service {
             )));
         }
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         match store::reopen_review(&tx, review_id) {
             Ok(()) => {}
             Err(error) if is_constraint_violation(&error) => {
@@ -1049,9 +1041,7 @@ impl Service {
             return self.review_view(review, true);
         }
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         store::update_review_title(&tx, review_id, &title)?;
         store::insert_event(
             &tx,
@@ -1103,9 +1093,7 @@ impl Service {
             return self.review_view(review, true);
         }
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = store::write_transaction(&mut self.conn)?;
         store::set_review_base(&tx, review_id, base_ref.as_deref(), BaseSource::WebUi)?;
         store::insert_event(
             &tx,
@@ -1152,7 +1140,9 @@ impl Service {
     /// Save the idle timeout. Only the human may change settings.
     pub fn set_idle_timeout(&mut self, actor: Actor, timeout: IdleTimeout) -> Result<()> {
         require_human(actor, "change settings")?;
-        store::set_setting(&self.conn, settings::IDLE_TIMEOUT_KEY, &timeout.to_string())
+        let tx = store::write_transaction(&mut self.conn)?;
+        store::set_setting(&tx, settings::IDLE_TIMEOUT_KEY, &timeout.to_string())?;
+        Ok(tx.commit()?)
     }
 
     fn review_view(&self, review: Review, with_git: bool) -> Result<ReviewView> {

@@ -133,6 +133,7 @@ impl AppState {
         let inner = Arc::clone(&self.inner);
         tokio::task::spawn_blocking(move || {
             let mut service = inner.service.lock().unwrap_or_else(PoisonError::into_inner);
+            service.check_schema()?;
             operation(&mut service)
         })
         .await

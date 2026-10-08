@@ -1292,6 +1292,78 @@ fn databases_from_before_the_baseline_or_from_newer_lani_are_refused() {
     assert!(error.contains("upgrade lani"), "{error}");
 }
 
+/// Set the schema version as a newer lani's migration would, from another connection.
+fn set_schema_version(home: &TestHome, version: i64) {
+    let conn = rusqlite::Connection::open(home.db_path()).unwrap();
+    conn.pragma_update(None, "user_version", version).unwrap();
+}
+
+#[test]
+fn a_running_lani_stops_once_a_newer_lani_upgrades_the_database() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    service.check_schema().unwrap();
+    set_schema_version(&home, 99);
+
+    let outdated = |error: Error| match error {
+        Error::Outdated(message) => {
+            assert!(
+                message.contains("schema version 99") && message.contains("up to 3"),
+                "{message}"
+            );
+        }
+        other => panic!("expected an outdated error, got {other:?}"),
+    };
+    outdated(service.check_schema().unwrap_err());
+    // Every write checks again under the write lock, so nothing is written.
+    outdated(service.set_round_limit(Actor::Human, 3).unwrap_err());
+    outdated(
+        service
+            .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+            .unwrap_err(),
+    );
+    outdated(
+        service
+            .wait_for_turn(
+                review_id,
+                Actor::Implementer,
+                Some(std::time::Duration::from_millis(50)),
+                std::time::Duration::from_millis(10),
+            )
+            .unwrap_err(),
+    );
+    set_schema_version(&home, 3);
+    assert_eq!(service.round_limit().unwrap(), 5, "the limit was not saved");
+    let review = service.get_review(review_id, None).unwrap().view.review;
+    assert_eq!(review.turn, None, "the hand-off was not saved");
+}
+
+#[test]
+fn a_write_waiting_for_a_newer_lanis_migration_is_refused() {
+    let home = TestHome::new();
+    let mut service = service(&home);
+    // A newer lani migrates in another process; its transaction is open.
+    let newer = rusqlite::Connection::open(home.db_path()).unwrap();
+    newer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    newer.pragma_update(None, "user_version", 99).unwrap();
+    // Meanwhile this process saves a setting. It must wait for the migration, then refuse.
+    let racing = std::thread::spawn(move || {
+        let result = service.set_round_limit(Actor::Human, 3);
+        (result, service)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    newer.execute_batch("COMMIT").unwrap();
+    let (result, service) = racing.join().unwrap();
+    assert!(matches!(result, Err(Error::Outdated(_))), "{result:?}");
+    set_schema_version(&home, 3);
+    assert_eq!(service.round_limit().unwrap(), 5);
+}
+
 // ── human-only operations (M2) ───────────────────────────────────────────────────────────────
 
 #[test]

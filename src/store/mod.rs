@@ -9,7 +9,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use crate::error::{Error, Result};
 use crate::model::{
@@ -53,9 +53,14 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
+/// The schema version this binary's migrations bring a database to.
+fn known_version() -> i64 {
     let count = i64::try_from(MIGRATIONS.len()).expect("migration count fits in i64");
-    let known = BASELINE_VERSION + count - 1;
+    BASELINE_VERSION + count - 1
+}
+
+fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
+    let known = known_version();
     if schema_version(conn)? == known {
         return Ok(());
     }
@@ -93,6 +98,28 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
 
 fn schema_version(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+/// Refuse to go on once a newer lani has upgraded the schema since this process opened the
+/// database: this process's code would misread the new schema, or write rows it no longer fits.
+pub fn check_schema(conn: &Connection) -> Result<()> {
+    let (current, known) = (schema_version(conn)?, known_version());
+    if current > known {
+        return Err(Error::Outdated(format!(
+            "a newer lani has upgraded the LANI database to schema version {current}, and this lani \
+             process only knows versions up to {known}, so it stops rather than misread or damage \
+             the data; restart it to run the installed lani"
+        )));
+    }
+    Ok(())
+}
+
+/// Begin a write transaction. The schema is checked after the write lock is taken, so no write
+/// from this process can reach a schema that a newer lani upgraded meanwhile.
+pub fn write_transaction(conn: &mut Connection) -> Result<Transaction<'_>> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    check_schema(&tx)?;
+    Ok(tx)
 }
 
 // ── repos ────────────────────────────────────────────────────────────────────────────────────

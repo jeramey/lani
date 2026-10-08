@@ -206,6 +206,14 @@ fn home() -> anyhow::Result<PathBuf> {
 
 fn run_mcp() -> anyhow::Result<()> {
     init_logging();
+    // Taken first, so that any reinstall after this process started is noticed (§12.5).
+    let executable = lani::mcp::Executable::current()
+        .inspect_err(|error| {
+            tracing::warn!(
+                "cannot find this lani executable, so a reinstall goes unnoticed: {error}"
+            );
+        })
+        .ok();
     let home = home()?;
     let db_path = paths::db_path(&home);
     let service = Service::open(&db_path)
@@ -215,7 +223,7 @@ fn run_mcp() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let running = LaniServer::new(service, home)
+        let running = LaniServer::new(service, home, executable)
             .serve(rmcp::transport::stdio())
             .await
             .context("starting the MCP server")?;

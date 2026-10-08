@@ -942,11 +942,19 @@ impl From<Error> for PageError {
             Error::Forbidden(_) => (StatusCode::FORBIDDEN, "Not allowed"),
             Error::Conflict(_) => (StatusCode::CONFLICT, "Changed by someone else"),
             Error::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable"),
+            Error::Outdated(_) => (StatusCode::SERVICE_UNAVAILABLE, "Restart needed"),
             Error::Internal(_) | Error::Git(_) | Error::Db(_) | Error::Io(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
             }
         };
-        Self::new(status, title, &error.to_string())
+        let message = match &error {
+            Error::Outdated(message) => format!(
+                "This web server is out of date: {message}. Restart it: run lani stop, then lani \
+                 open."
+            ),
+            _ => error.to_string(),
+        };
+        Self::new(status, title, &message)
     }
 }
 

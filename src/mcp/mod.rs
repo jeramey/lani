@@ -1,23 +1,31 @@
 //! The MCP server Claude Code talks to over stdio (docs/design.md §12).
 //!
 //! Each Claude Code session spawns its own `lani mcp` process, so per-process state is
-//! per-session state. The only such state is the role lock (§11.3).
+//! per-session state: the role lock (§11.3), and the executable the process started from, to
+//! notice an update (§12.5).
 
 pub mod render;
 
 use std::fmt::Write as _;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerConfig};
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    IntoContents, ServerCapabilities, ServerConfig,
+};
+use rmcp::service::RequestContext;
+use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Deserialize;
 
 use crate::base::BaseMode;
 use crate::daemon;
+use crate::error::Error;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use crate::text;
@@ -443,6 +451,56 @@ fn nullable_string(_generator: &mut SchemaGenerator) -> Schema {
 
 // ── server ───────────────────────────────────────────────────────────────────────────────────
 
+/// Added to every tool result while this process is older than the installed lani or the
+/// database (§12.5).
+const UPDATE_NOTICE: &str = "Note: lani has been reinstalled since this session's LANI MCP server \
+started, so this session is still running the older LANI. Tell the human, and ask them to \
+reconnect LANI in Claude Code (run /mcp, select lani, choose Reconnect); that starts the installed \
+version without restarting the session.";
+
+/// The `lani` executable a process started from, to notice when it is replaced on disk, as
+/// `cargo install` does (§12.5).
+#[derive(Clone, Debug)]
+pub struct Executable {
+    path: PathBuf,
+    identity: FileIdentity,
+}
+
+/// What changes when a file is replaced or rewritten.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+}
+
+impl FileIdentity {
+    fn of(path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.size(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+        })
+    }
+}
+
+impl Executable {
+    /// This process's executable, as it is on disk now. Call it at startup.
+    pub fn current() -> std::io::Result<Self> {
+        let path = std::env::current_exe()?;
+        let identity = FileIdentity::of(&path)?;
+        Ok(Self { path, identity })
+    }
+
+    /// Whether the file this process started from has been replaced, rewritten or removed.
+    fn replaced(&self) -> bool {
+        FileIdentity::of(&self.path).ok().as_ref() != Some(&self.identity)
+    }
+}
+
 #[derive(Clone)]
 pub struct LaniServer {
     service: Arc<Mutex<Service>>,
@@ -450,18 +508,32 @@ pub struct LaniServer {
     home: PathBuf,
     /// The role this session acts in, fixed by the first call that passes `author` (§11.3).
     role: Arc<Mutex<Option<Actor>>>,
+    /// The executable this process started from; `None` if it could not be found, in which case
+    /// a reinstalled lani is noticed only through the database (§12.5).
+    executable: Option<Executable>,
     tool_router: ToolRouter<Self>,
 }
 
 impl LaniServer {
     #[must_use]
-    pub fn new(service: Service, home: PathBuf) -> Self {
+    pub fn new(service: Service, home: PathBuf, executable: Option<Executable>) -> Self {
         Self {
             service: Arc::new(Mutex::new(service)),
             home,
             role: Arc::new(Mutex::new(None)),
+            executable,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Whether this process is older than what is installed: its executable was replaced, or a
+    /// newer lani upgraded the database.
+    fn outdated(&self) -> bool {
+        if self.executable.as_ref().is_some_and(Executable::replaced) {
+            return true;
+        }
+        let service = self.service.lock().unwrap_or_else(PoisonError::into_inner);
+        matches!(service.check_schema(), Err(Error::Outdated(_)))
     }
 
     /// Lock this session's role on first use and reject any later attempt to switch.
@@ -490,7 +562,10 @@ impl LaniServer {
         operation: impl FnOnce(&mut Service) -> crate::error::Result<T>,
     ) -> Result<T, String> {
         let mut service = self.service.lock().unwrap_or_else(PoisonError::into_inner);
-        operation(&mut service).map_err(|error| error.to_string())
+        service
+            .check_schema()
+            .and_then(|()| operation(&mut service))
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -567,6 +642,18 @@ impl From<&str> for ToolError {
 impl IntoContents for ToolError {
     fn into_contents(self) -> Vec<ContentBlock> {
         vec![ContentBlock::text(text::neutralize_line_breaks(&self.0))]
+    }
+}
+
+/// Append `notice` to a tool result's text, as a line of its own: clients that show only the
+/// first content block still show it.
+fn add_notice(result: &mut CallToolResult, notice: &str) {
+    match result.content.first_mut() {
+        Some(ContentBlock::Text(text)) => {
+            text.text.push('\n');
+            text.text.push_str(notice);
+        }
+        _ => result.content.push(ContentBlock::text(notice)),
     }
 }
 
@@ -1002,6 +1089,25 @@ impl LaniServer {
 )]
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for LaniServer {
+    /// Every tool call: the router runs the tool, and while this process is outdated the result
+    /// carries [`UPDATE_NOTICE`]. Written out here, `#[tool_handler]` does not generate it.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let mut response = self
+            .tool_router
+            .call(ToolCallContext::new(self, request, context))
+            .await?;
+        if let CallToolResponse::Complete(result) = &mut response
+            && self.outdated()
+        {
+            add_notice(result, UPDATE_NOTICE);
+        }
+        Ok(response)
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("lani", env!("CARGO_PKG_VERSION")))

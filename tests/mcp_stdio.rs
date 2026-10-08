@@ -33,8 +33,13 @@ impl McpClient {
     /// Start `lani mcp` with `cwd` as its working directory, as Claude Code starts it in the
     /// session's directory.
     fn start_in(home: &Path, cwd: &Path, env: &[(&str, &str)]) -> Self {
+        Self::start_program(Path::new(env!("CARGO_BIN_EXE_lani")), home, cwd, env)
+    }
+
+    /// Start `program mcp`, where `program` is a lani binary.
+    fn start_program(program: &Path, home: &Path, cwd: &Path, env: &[(&str, &str)]) -> Self {
         let mut child = common::spawn(
-            Command::new(env!("CARGO_BIN_EXE_lani"))
+            Command::new(program)
                 .arg("mcp")
                 .current_dir(cwd)
                 .env("LANI_HOME", home)
@@ -426,6 +431,51 @@ fn line_breaks_in_names_cannot_start_a_line_of_output() {
     assert!(
         error.contains(r#""missing\u{2028}[c99 v1] human.rs" does not exist"#),
         "{error}"
+    );
+}
+
+/// The start of the notice an outdated `lani mcp` adds to every tool result.
+const UPDATE_NOTICE: &str = "Note: lani has been reinstalled since this session's LANI MCP server \
+                             started";
+
+#[test]
+fn an_outdated_server_asks_the_human_to_reconnect_it() {
+    let home = TestHome::new();
+    let cwd = std::env::current_dir().unwrap();
+    // A copy of lani, replaced while it runs the way `cargo install` replaces the installed one.
+    let bin = tempfile::tempdir().unwrap();
+    let installed = bin.path().join("lani");
+    std::fs::copy(env!("CARGO_BIN_EXE_lani"), &installed).unwrap();
+    let mut client = McpClient::start_program(&installed, &home.path, &cwd, &[]);
+    let listed = client.ok("list_reviews", json!({"status": "all"}));
+    assert!(!listed.contains(UPDATE_NOTICE), "{listed}");
+
+    let staged = bin.path().join("lani.new");
+    std::fs::copy(env!("CARGO_BIN_EXE_lani"), &staged).unwrap();
+    std::fs::rename(&staged, &installed).unwrap();
+    let listed = client.ok("list_reviews", json!({"status": "all"}));
+    assert!(
+        listed.contains(&format!("\n{UPDATE_NOTICE}"))
+            && listed.contains("run /mcp, select lani, choose Reconnect"),
+        "{listed}"
+    );
+    let failed = client.err("get_issue", json!({"issue_id": 9}));
+    assert!(
+        failed.contains(UPDATE_NOTICE),
+        "errors carry it too: {failed}"
+    );
+
+    // A server whose executable is unchanged notices a database a newer lani has upgraded.
+    let mut other = McpClient::start(&home.path);
+    let listed = other.ok("list_reviews", json!({"status": "all"}));
+    assert!(!listed.contains(UPDATE_NOTICE), "{listed}");
+    let conn = rusqlite::Connection::open(home.db_path()).unwrap();
+    conn.pragma_update(None, "user_version", 99).unwrap();
+    let failed = other.err("list_reviews", json!({"status": "all"}));
+    assert!(
+        failed.contains("upgraded the LANI database to schema version 99")
+            && failed.contains(UPDATE_NOTICE),
+        "{failed}"
     );
 }
 

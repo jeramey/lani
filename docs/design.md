@@ -380,9 +380,18 @@ Migration 3 (`0003_turns.sql`) adds turns and questions for the human (§11.5). 
 existing tables need a default or NULL for the rows already there, which is the one exception to
 "no column defaults"; the service still writes every column. The event table gains new kinds,
 and SQLite cannot alter a CHECK constraint in place, so the migration rebuilds that table, keeping
-every row and id. A binary that finds `user_version` higher than it knows refuses to run and asks
-you to upgrade. For example, an old web server still running after a new binary migrated the DB is
-fixed with `lani stop && lani open`.
+every row and id.
+
+A binary that finds `user_version` higher than it knows refuses to open the database and asks you
+to upgrade. A process that is already running, such as the web server or a session's `lani mcp`,
+may outlive the binary it came from, so it checks again:
+- **Before each request.** The web server checks before each request, `lani mcp` before each tool
+  call, and `lani wait` on each poll. Once a newer lani has migrated the database, they stop with
+  an "outdated" error that says how to restart them. The web server shows *Restart needed* and
+  asks you to run `lani stop`, then `lani open`. `lani mcp` adds the update notice (§12.5).
+- **Inside every write.** Every write runs in a `BEGIN IMMEDIATE` transaction that reads
+  `user_version` again after taking the write lock. A migration also holds that lock, so no write
+  from an older process can land on a schema it does not know, even one racing the migration.
 
 ---
 
@@ -980,6 +989,29 @@ The differences are above lines 42-44, so LANI cannot tell which version your li
   - If you read the committed file (git show): resubmit with worktree_path: null.
 Uncommitted changes are not part of the review; they must be committed to be reviewed.
 ```
+
+### 12.5 Updates
+
+Claude Code starts `lani mcp` once per session and does not restart a stdio server on its own, so
+a session keeps running the binary it started with after you reinstall lani. Reconnecting the
+server (`/mcp`, select lani, *Reconnect*) starts the installed version without restarting the
+session.
+
+At startup, `lani mcp` records which file it was started from: its path, device, inode, size and
+modification time. On every tool call it compares them with the file now at that path. If they
+differ, the file was replaced (as `cargo install` does), rewritten or removed. The same applies
+if a newer lani has migrated the database (§7.4). In either case, every result and error ends
+with a notice that tells the session to ask you to reconnect LANI. A process that cannot find its
+own executable at startup notices an update only through the database.
+
+The notice is repeated on every call until you reconnect, because the session cannot fix this
+itself. A self-restart was considered and rejected:
+- **What it would take.** The new process would have to resume a session whose `initialize`
+  handshake it never saw, pick up input the old process had already buffered, and wait out tool
+  calls in flight.
+- **What it could not do.** Claude Code appears to read the server instructions only at connect
+  time (its documentation does not say), so a self-restarted server would likely still be running
+  under the old instructions.
 
 ---
 

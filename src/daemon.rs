@@ -271,8 +271,8 @@ fn executable_to_run(current: &Path) -> Result<PathBuf> {
     }
     Err(Error::Unavailable(format!(
         "cannot start the LANI server: the lani binary this process was started from, {}, has been \
-         removed or replaced. Restart this process (for `lani mcp`, the Claude Code session), or \
-         start the server with `lani open`.",
+         removed or replaced. Restart this process (for `lani mcp`, reconnect LANI with /mcp in \
+         Claude Code), or start the server with `lani open`.",
         quoted(&current.display().to_string())
     )))
 }

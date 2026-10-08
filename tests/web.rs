@@ -21,7 +21,7 @@ const HOST: &str = "127.0.0.1:4242";
 const ORIGIN: &str = "http://127.0.0.1:4242";
 
 struct Fixture {
-    _home: TestHome,
+    home: TestHome,
     repo: TestRepo,
     state: AppState,
     app: Router,
@@ -103,7 +103,7 @@ fn fixture() -> Fixture {
         review_id,
         issue_id: issue.issue.id,
         issue_comment_id: issue.comments[0].id,
-        _home: home,
+        home,
         repo,
     }
 }
@@ -1288,6 +1288,20 @@ async fn span_links_lead_to_the_section_of_the_change_that_shows_them() {
     assert!(
         !page.contains("View in changes"),
         "the review does not change README.md: {page}"
+    );
+}
+
+#[tokio::test]
+async fn an_outdated_server_asks_to_be_restarted() {
+    let f = fixture();
+    let conn = rusqlite::Connection::open(f.home.db_path()).unwrap();
+    conn.pragma_update(None, "user_version", 99).unwrap();
+    let (status, _, page) = send(&f.app, get(&format!("/reviews/{}", f.review_id))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert!(page.contains("Restart needed"), "{page}");
+    assert!(
+        page.contains("schema version 99") && page.contains("run lani stop, then lani open"),
+        "{page}"
     );
 }
 
