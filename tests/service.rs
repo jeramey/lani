@@ -1233,3 +1233,64 @@ fn conflict_errors_quote_the_current_text() {
     };
     assert!(message.contains("The current text is empty."), "{message}");
 }
+
+// ── exact hunks whatever the file or configuration (review 2, issue 14) ─────────────────────
+
+#[test]
+fn lines_changed_in_a_file_that_became_binary_are_outdated() {
+    let (_home, repo, service, issue_id) = repo_with_issue(10, 11);
+    // A NUL byte near the start makes git treat the file as binary; line 10 also changes.
+    let changed = numbered(20)
+        .replace("line 1\n", "line\u{0} 1\n")
+        .replace("line 10\n", "changed\n");
+    repo.write("src/lib.rs", &changed);
+    repo.commit_all("binary now");
+    let view = service.get_issue(issue_id).unwrap();
+    assert!(is_outdated(&view), "{:?}", view.location);
+}
+
+#[test]
+fn uncommitted_edits_in_a_diff_disabled_file_are_still_rejected() {
+    let home = TestHome::new();
+    let repo = TestRepo::new(&[
+        (".gitattributes", "gen.txt -diff\n"),
+        ("gen.txt", &numbered(12)),
+    ]);
+    repo.switch_new("feature");
+    repo.write("other.txt", "x\n");
+    let head = repo.commit_all("feature");
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    repo.write("gen.txt", &numbered(12).replace("line 5\n", "edited\n"));
+    let mut request = issue_request(review_id, &repo, &head, 5, 5, "line 5");
+    request.path = "gen.txt";
+    expect_invalid(service.create_issue(&request), "differ from commit");
+}
+
+#[test]
+fn a_users_inter_hunk_context_does_not_merge_hunks() {
+    let (_home, repo, mut service, issue_id) = repo_with_issue(5, 6);
+    repo.git(&["config", "diff.interHunkContext", "10"]);
+    // Edits on lines 3 and 9 leave lines 5-6 untouched and in place.
+    let edited = numbered(20)
+        .replace("line 3\n", "three\n")
+        .replace("line 9\n", "nine\n");
+    repo.write("src/lib.rs", &edited);
+    let head = repo.commit_all("edit around the issue");
+    let view = service.get_issue(issue_id).unwrap();
+    assert_eq!(current(&view), ("src/lib.rs".to_string(), 5, 6));
+
+    // The same holds for the on-disk check: dirty lines 2 and 8 around an anchor on 5-6.
+    let review_id = view.issue.review_id;
+    repo.write(
+        "src/lib.rs",
+        &edited
+            .replace("line 2\n", "two\n")
+            .replace("line 8\n", "eight\n"),
+    );
+    let accepted = service.create_issue(&issue_request(review_id, &repo, &head, 5, 6, "line 5"));
+    assert!(accepted.is_ok(), "{accepted:?}");
+}

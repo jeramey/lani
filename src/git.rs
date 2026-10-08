@@ -31,6 +31,21 @@ const REDIRECTING_ENV_VARS: &[&str] = &[
 /// parent-branch detection; 2.31 added `rev-parse --path-format` (design §8).
 pub const MIN_GIT_VERSION: (u32, u32) = (2, 41);
 
+/// Options for every diff whose hunks LANI parses, so that the hunks describe exactly the changed
+/// lines whatever the file or the user's configuration:
+/// - `--text`: a file git considers binary (`-diff` or `binary` in `.gitattributes`, or a NUL
+///   byte near the start) would otherwise produce no hunks at all, which reads as "unchanged".
+/// - `--inter-hunk-context=0`: `diff.interHunkContext` in the user's config would otherwise
+///   merge nearby hunks, so unchanged lines between them would count as changed.
+/// - No colour, external diff tools or textconv filters, which would change the output.
+const EXACT_HUNKS: [&str; 5] = [
+    "--text",
+    "--inter-hunk-context=0",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+];
+
 /// The result of checking the `git` on PATH, computed once per process.
 static GIT_CHECK: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
@@ -283,14 +298,8 @@ impl Git {
         new_path: &str,
     ) -> Result<Vec<Hunk>> {
         let mut command = self.command();
-        command.args([
-            "diff",
-            "-U0",
-            "-M",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-        ]);
+        command.args(["diff", "-U0", "-M"]);
+        command.args(EXACT_HUNKS);
         command.args([from, to, "--", old_path]);
         if new_path != old_path {
             command.arg(new_path);
@@ -371,18 +380,12 @@ pub fn worktree_state(worktree: &Path) -> Result<WorktreeState> {
 /// `--no-optional-locks`, while `diff-index` never writes it.
 pub fn diff_commit_to_disk(toplevel: &Path, commit: &str, path: &str) -> Result<Vec<Hunk>> {
     let mut command = git_command();
-    command.arg("-C").arg(toplevel).args([
-        "diff-index",
-        "-p",
-        "-U0",
-        "--no-renames",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        commit,
-        "--",
-        path,
-    ]);
+    command
+        .arg("-C")
+        .arg(toplevel)
+        .args(["diff-index", "-p", "-U0", "--no-renames"]);
+    command.args(EXACT_HUNKS);
+    command.args([commit, "--", path]);
     let output = run(command, &[0])?;
     parse_hunks(&String::from_utf8_lossy(&output.stdout))
 }
@@ -516,7 +519,14 @@ fn stdout_line(output: &Output) -> Result<String> {
 }
 
 /// Parse the `@@` headers of `-U0` unified diff output.
+/// A binary diff has no hunks, which would read as "nothing changed", so it is an error.
+/// `--text` (in [`EXACT_HUNKS`]) keeps git from producing one.
 pub fn parse_hunks(diff: &str) -> Result<Vec<Hunk>> {
+    if diff.lines().any(|line| line.starts_with("Binary files ")) {
+        return Err(Error::Git(
+            "git reported a binary diff, so changed lines cannot be followed".to_string(),
+        ));
+    }
     diff.lines()
         .filter(|line| line.starts_with("@@ "))
         .map(parse_hunk_header)
@@ -683,6 +693,12 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn binary_diffs_are_an_error_not_an_empty_diff() {
+        let diff = "diff --git a/f b/f\nBinary files a/f and b/f differ\n";
+        assert!(parse_hunks(diff).is_err());
     }
 
     #[test]

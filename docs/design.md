@@ -385,9 +385,17 @@ Rules for every invocation:
 - **No redirection.** Environment variables that would point git at another repository or index
   (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and similar) are removed from every invocation.
 - **Stable output.** These overrides make output independent of user config: `-c
-  core.quotePath=false`, `--no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/`,
-  and `LC_ALL=C`. The diff parser still handles C-quoted paths, and `-z` name-status output is
-  authoritative for paths.
+  core.quotePath=false`, `--no-color --no-ext-diff --no-textconv`, and `LC_ALL=C`. LANI reads
+  only `@@` hunk headers from unified diffs, never their file headers, and takes paths from
+  `-z` name-status output.
+- **Exact hunks.** Every diff whose hunks LANI parses also passes `--text`, so files git treats
+  as binary (`-diff` in `.gitattributes`, or a NUL byte near the start) still produce hunks
+  instead of none, which would read as "unchanged". It also passes `--inter-hunk-context=0`, so
+  a user's `diff.interHunkContext` cannot merge nearby hunks. A binary-diff marker in the output
+  is an error, never an empty diff.
+- **Working directory `/`.** Git commands, the detached server and the browser opener run in
+  `/`. Commands with `--git-dir` treat the working directory as the work tree, so they would fail
+  once the starting session's directory was deleted, and they would read its `.gitattributes`.
 - **No git inside transactions.** No git command runs inside a database transaction.
 
 ---
