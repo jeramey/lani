@@ -1376,6 +1376,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Side-by-side diff view, and expanding context lines in the diff. v1 links to the file view
   instead.
 - Issue severity or category labels, with filters.
+- Filtering the overview's issue list by author and by file (§13.3). The overview filters by
+  status only; to be designed later.
 - Suggested-change blocks that can be applied as patches.
 - Fuzzy file finder and code search.
 - A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
