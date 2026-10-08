@@ -671,7 +671,7 @@ signal to the reviewer that the implementer touched those lines.
 Placement work is shared within one request, meaning one tool call or one page. There is one
 whole-tree rename diff per (A, H) pair, and each anchor commit's existence and each file's contents
 are looked up once. Nothing is cached across requests, so every tool call and page view places
-each issue again (§21).
+each issue again. The M4 benchmarks found that cheap enough to need no cache (§16).
 
 Rebases and force-pushes are fine. Display never needs A to still exist; if A is gone from the
 object database, the issue is treated as outdated.
@@ -1281,7 +1281,8 @@ work on the review.
   - Files over 10 MiB are not shown at all, only described.
   - Files with a NUL byte in the first 8 KiB are shown as "binary file".
   - Highlighted HTML is large, about 0.8 KB per line, because each line re-opens its full scope
-    stack. The M4 benchmarks decide whether that needs trimming.
+    stack. The M4 benchmarks found no need to trim it: a cached 2,000-line page renders in
+    23.5 ms, most of it git subprocesses (§16).
   - Diffs of files with more than 1,500 changed lines are collapsed behind a "Load diff" link,
     which reloads the Changes view with `?expand=<path>`.
 - **Diffs.** `git diff` output (§8) is parsed into files → hunks → rows. Each row's HTML comes from
@@ -1300,8 +1301,8 @@ Comments and summaries are rendered with **comrak**:
   (` ```rust `); unknown languages are shown as plain text.
 - Links open in the same tab, and `Referrer-Policy: same-origin` keeps LANI URLs from leaking to
   linked sites, so no `rel` attributes are needed.
-- Markdown is rendered on every request. A cache keyed by (object, version) is deferred until
-  the M4 benchmarks show rendering matters (§21).
+- Markdown is rendered on every request. The M4 benchmarks found that cheap enough to need no
+  cache (§16).
 
 ### 13.8 Frontend technology
 
@@ -1391,22 +1392,38 @@ Accepted residual risks:
 
 ## 16. Performance budget
 
-These are targets. Figures marked *est.* are estimates to be verified with benchmarks during M1
-and M3.
+These are the targets, with what the M4 benchmarks measured. To run them:
 
-| Metric                                         | Target       | Notes |
-| ---------------------------------------------- | ------------ | ----- |
-| `lani mcp` start → ready                       | < 20 ms      | est. ~5 ms: opening the DB and checking `user_version`. |
-| MCP tool call (excluding git)                  | < 10 ms p95  | Single-digit SQLite queries. |
-| MCP tool call with anchor validation           | < 50 ms p95  | 2–4 git subprocesses at est. 3–10 ms each. |
-| `start_review` with parent detection           | < 100 ms     | One `for-each-ref` call computes the distance to every local branch. |
-| `lani open` with a server already running      | < 100 ms     | Health check, redirect file, and spawning the opener. |
-| First render of a 2,000-line file              | < 250 ms     | Measured in M3: 47 ms in a release build, including loading the syntax set; dominated by syntect, then cached. |
-| Cached page render                             | < 30 ms      | Measured in M3: 13 ms for that file (a 1.6 MB page). |
-| RSS: `lani mcp`                                | < 15 MB      | |
-| RSS: `lani serve`                              | < 100 MB     | Includes the 32 MiB highlight cache cap and the syntax set. Measured in M3: 17 MB after rendering that file. |
-| Idle CPU                                       | ~0           | MCP blocks on stdin. The server polls only while SSE clients are connected, and exits after the idle timeout. |
-| Release binary size                            | < 25 MB      | Measured in M3: 9.2 MB with LTO and strip (6.9 MB before the syntax set). |
+```sh
+cargo test --release --test bench -- --ignored --nocapture
+```
+
+`tests/bench.rs` drives the release binary the way Claude Code and the browser do. It prints every
+row and fails if a target is missed. The figures below are medians unless marked, measured on
+2026-10-08 on an Apple M5 Max with macOS 26.6 and git 2.54.
+
+| Metric                                    | Target      | Measured (M4)                  | Notes |
+| ----------------------------------------- | ----------- | ------------------------------ | ----- |
+| `lani mcp` start → ready                  | < 20 ms     | 2.4 ms (p95 5.3 ms)            | Opening the DB and checking `user_version`. |
+| MCP tool call (excluding git)             | < 10 ms p95 | p95 0.2 ms                     | `edit_comment` and `list_reviews`. |
+| MCP tool call with anchor validation      | < 50 ms p95 | p95 42.7 ms                    | `create_issue` runs 13 git subprocesses at about 3 ms each, not the 2–4 first estimated: 7 to validate the anchor, 4 for the review's git state and 2 for the code in the reply. This is the tightest budget (§21). |
+| `start_review` with parent detection      | < 100 ms    | 38.5 ms                        | With 40 local branches; 13 git subprocesses. |
+| `lani open` with a server already running | < 100 ms    | 1.7 ms                         | Health check and redirect, with `--no-browser`; launching the browser is not timed. |
+| First render of a 2,000-line file         | < 250 ms    | 60.3 ms                        | A fresh server: loading the syntax set, highlighting, and 8 git subprocesses. |
+| Cached page render                        | < 30 ms     | 23.5 ms                        | That file again: highlighting is cached, but every Files page still runs 7 git subprocesses (the review's state, the diff summary and the blob). |
+| RSS: `lani mcp`                           | < 15 MB     | 8.3 MiB                        | After about 200 tool calls. |
+| RSS: `lani serve`                         | < 100 MB    | 19.8 MiB                       | After rendering every page measured here; includes the syntax set. The highlight cache is capped at 32 MiB. |
+| Idle CPU                                  | ~0          | 0.00%                          | Both `lani mcp` and `lani serve` over 10 s. With one live-update stream open, the server uses 0.1% (10 ms in 10 s) for polling. |
+| Release binary size                       | < 25 MB     | 9.4 MiB                        | With LTO and strip. |
+
+The benchmarks also measure the costs that some deferred work was waiting on (§21):
+- **Placement:** `list_issues` with 40 issues placed and their code shown takes 19.2 ms, so
+  placements need no cache.
+- **Markdown:** the overview of a review with 40 issues takes 28.6 ms, most of it git
+  subprocesses, so rendered Markdown needs no cache. The Changes view of that review takes
+  33.8 ms.
+- **Git subprocesses:** one `git rev-parse` takes 2.9 ms (p95 8.4 ms). The number of git
+  subprocesses dominates every timing above; blob reads are one or two of them.
 
 ---
 
@@ -1443,7 +1460,8 @@ src/
   markdown.rs        comrak configuration
   daemon.rs          server.json, lock, detach/spawn, health check, browser launch, idle timer
   executable.rs      noticing a reinstall over the running binary (§12.5, §13.5)
-tests/               integration tests (temp git repos, MCP client, HTTP); browser.rs is opt-in
+tests/               integration tests (temp git repos, MCP client, HTTP); browser.rs and bench.rs
+                     are opt-in
 clippy.toml          words doc comments may use without backticks, such as WebDriver
 ```
 
@@ -1586,6 +1604,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - Concurrent `open` calls produce exactly one server.
   - A crashed server (lock released, stale `server.json`) is replaced.
 - **Concurrency:** two processes writing simultaneously, with no `SQLITE_BUSY` surfacing.
+- **Benchmarks:** `tests/bench.rs` measures the §16 budget against the release binary, and fails
+  if a target is missed. It is opt-in, and needs `--release`.
 - **Test harness:** every process spawn in a test binary goes through one mutex. On macOS a pipe
   created by one thread can leak into a child forked concurrently by another thread; a
   long-lived LANI server inheriting such a pipe makes the first thread wait for EOF forever.
@@ -1635,16 +1655,17 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   status only; to be designed later.
 - Suggested-change blocks that can be applied as patches.
 - Fuzzy file finder and code search.
-- A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
-- Caching rendered Markdown per (object, version), if rendering cost shows up in benchmarks.
+- Fewer git subprocesses per request, if a budget gets tight; anchor validation is at 85% of its
+  budget (§16). The M4 benchmarks show that the number of subprocesses is the cost, about 3 ms
+  each. Every request reads the review's git state with 4 of them, and `create_issue` resolves
+  the head twice. A persistent `git cat-file --batch` process would save only the one or two
+  blob reads, so resolving refs in one call, and reading the review's state once per request,
+  would come first.
 - Creating multi-span issues in the web UI, by selecting several ranges or adding a range to an
   existing issue. Until then the web UI creates single-span issues, and Claude creates
   multi-span ones.
 - A rich pop-over with the issue's text for span markers; they show the number and title as a
   tooltip for now.
-- Caching issue placements across requests (§10.2), if placement cost shows up in benchmarks.
-  Placement depends only on the anchor and the target commit, so a key of (issue, target commit)
-  never goes stale.
 - Keeping the session cookie away from other loopback ports, for shared machines (§15). Two
   candidates; neither is tested:
   - A per-server secret hostname (`http://lani-<random>.localhost:<port>/`) with a host-only
@@ -1655,8 +1676,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     The cost is a secret segment in every LANI URL.
 - Relocating a repo (re-pointing `git_dir` after the repo moves on disk).
 - Live updates for repository changes (§13.5): the stream could also compare the head and base
-  SHAs every few seconds. That is a git call per open stream per interval, so the §16 benchmarks
-  should decide it.
+  SHAs every few seconds. The M4 benchmarks put one `git rev-parse` at about 3 ms, so checking
+  both refs every 3 s would cost about 0.2% of a core per open stream: affordable, but not built.
 - Keeping reviewed commits reachable through `refs/lani/*`. This writes to the repo, so it would
   need an explicit opt-in.
 - A Claude Code plugin with slash commands (`/lani-review`, `/lani-fix`).
