@@ -428,14 +428,17 @@ LANI resolves names in the common git dir, which every worktree shares, so `base
 `head_ref` must mean the same thing in every worktree. Some names depend on which worktree
 resolves them, and in the common git dir they mean the main worktree's:
 
-- `HEAD` and `@` mean that worktree's checked-out branch.
+- `HEAD` and `@` mean that worktree's checked-out branch. `HEAD` is matched in any case,
+  because on a case-insensitive filesystem (the macOS default) `head` opens the common git dir's
+  `HEAD` file, even from a linked worktree.
 - `@{…}` forms such as `@{-1}`, `@{u}` and `main@{1}` read a reflog or an upstream.
 - `refs/bisect/`, `refs/worktree/` and `refs/rewritten/` hold refs that each worktree keeps its own
   copy of. This rule applies to `base_ref` only; `head_ref` must be a local branch anyway.
 
 From a linked worktree, any of these could silently pick the wrong branch, so they are refused,
-and the error asks for a branch name. No real ref name is `@` or contains `@{`, so no branch is
-refused. `head_ref` can simply be left out, since it then defaults to the branch checked out at
+and the error asks for a branch name. No real ref name is `@` or contains `@{`. A branch named
+`head`, in any case, is refused under its short name but can be given as `refs/heads/head`.
+`head_ref` can simply be left out, since it then defaults to the branch checked out at
 `repo_path`, which is read in that worktree.
 
 The response states the resolved base and how it was chosen. For `auto`, it also lists the

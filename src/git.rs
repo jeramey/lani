@@ -316,11 +316,15 @@ impl Git {
 
 /// Whether git resolves `name` through one worktree's own state: its `HEAD` (`HEAD`, `@`), or
 /// reflog and upstream syntax (`@{-1}`, `@{u}`, `main@{1}`). LANI resolves names with
-/// `--git-dir`, where these mean the main worktree's, whichever worktree the name came from. No
-/// ref can be named `@` or contain `@{` (git-check-ref-format(1)), so no branch is caught.
+/// `--git-dir`, where these mean the main worktree's, whichever worktree the name came from.
+///
+/// `HEAD` is matched in any case: on a case-insensitive filesystem (the macOS default), `head`
+/// opens the common git dir's `HEAD` file, even from a linked worktree. No ref can be named `@`
+/// or contain `@{` (git-check-ref-format(1)); a branch named `head` in any case is still
+/// reachable as `refs/heads/head`.
 #[must_use]
 pub fn is_worktree_relative(name: &str) -> bool {
-    name == "HEAD" || name == "@" || name.contains("@{")
+    name.eq_ignore_ascii_case("HEAD") || name == "@" || name.contains("@{")
 }
 
 /// Whether `full_name` is a ref each worktree has its own copy of, such as `refs/worktree/x`.

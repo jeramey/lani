@@ -958,7 +958,8 @@ fn names_relative_to_a_worktree_are_refused_as_base_and_head() {
         })
     };
 
-    for name in ["HEAD", "@", "@{-1}", "main@{1}"] {
+    // On a case-insensitive filesystem, `head` and `Head` open the common git dir's HEAD file.
+    for name in ["HEAD", "head", "Head", "@", "@{-1}", "main@{1}"] {
         expect_invalid(
             start_from_linked(BaseMode::Ref(name.into()), None),
             &format!("base {name:?} is relative to a worktree's HEAD or reflog"),
@@ -981,14 +982,24 @@ fn names_relative_to_a_worktree_are_refused_as_base_and_head() {
         started.view.review.base_ref.as_deref(),
         Some("refs/heads/main")
     );
-    expect_invalid(
-        service.change_base(
+    let review_id = started.view.review.id;
+    for name in ["@{-1}", "head"] {
+        expect_invalid(
+            service.change_base(Actor::Human, review_id, &BaseMode::Ref(name.into())),
+            "is relative to a worktree's HEAD or reflog",
+        );
+    }
+
+    // A branch whose name is a case variant of HEAD is still reachable by its full name.
+    repo.git(&["branch", "Head", "main"]);
+    let view = service
+        .change_base(
             Actor::Human,
-            started.view.review.id,
-            &BaseMode::Ref("@{-1}".into()),
-        ),
-        "is relative to a worktree's HEAD or reflog",
-    );
+            review_id,
+            &BaseMode::Ref("refs/heads/Head".into()),
+        )
+        .unwrap();
+    assert_eq!(view.review.base_ref.as_deref(), Some("refs/heads/Head"));
 }
 
 // ── storage guarantees ───────────────────────────────────────────────────────────────────────
