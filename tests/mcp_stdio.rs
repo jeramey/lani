@@ -308,7 +308,7 @@ fn invalid_arguments_are_reported() {
         "tools/call",
         json!({"name": "create_issue", "arguments": {
             "review_id": 1, "author": "reviewer", "body": "b", "path": "a", "side": "head",
-            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "HEAD"}}),
+            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"}}),
     );
     let rejected = response["error"].is_object() || response["result"]["isError"] == json!(true);
     assert!(

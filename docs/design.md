@@ -501,8 +501,11 @@ lines inside the diff.
 
 `create_issue` takes two parameters that say where Claude's view of the file came from:
 
-- **`commit`**: the commit whose files Claude read. This is normally `git rev-parse HEAD` in its
-  worktree, which should equal the review head that `start_review` and `get_review` report.
+- **`commit`**: the SHA of the commit whose files Claude read, as `git rev-parse HEAD` prints it
+  in its worktree. It should equal the review head that `start_review` and `get_review` report.
+  Only a full or abbreviated SHA (4–64 hex digits) is accepted. LANI resolves names in the common
+  git dir, where `HEAD`, `@{-1}` and other per-worktree names mean the main worktree's; from a
+  linked worktree they would name a commit Claude never read.
 - **`worktree_path`**: the worktree Claude read the file from. It is `null` if Claude read the file
   from git with `git show <commit>:<path>`. It must be `null` for side `base`, whose content only
   exists in git.
@@ -532,6 +535,11 @@ Validation runs in this order, and the first failure is reported:
        which version the line numbers came from. The error gives the region's line numbers in
        both versions so Claude can resubmit with explicit values (§12.4 has an example).
      - **File missing on disk:** rejected.
+   - When a difference leads to rejection, LANI checks which commit the worktree has checked
+     out. If it is not `commit`, the differences may be committed rather than uncommitted, and
+     the likelier mistake is the `commit` passed. The error then names the checked-out commit and
+     says to pass its SHA if Claude read the file on disk, or `worktree_path: null` if the line
+     numbers came from `commit`.
 4. **The first line matches.** `start_line_text` must equal line `start_line` in the anchor commit
    after trimming whitespace.
    - This catches off-by-N line numbers, which LLMs occasionally produce.

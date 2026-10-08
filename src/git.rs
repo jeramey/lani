@@ -358,6 +358,22 @@ pub fn current_branch(worktree: &Path) -> Result<Option<String>> {
     }
 }
 
+/// The commit checked out in `worktree`, or `None` on an unborn branch. Running in the worktree
+/// (`-C`) makes `HEAD` that worktree's own; in the common git dir it is the main worktree's.
+pub fn worktree_head(worktree: &Path) -> Result<Option<String>> {
+    let mut command = git_command();
+    command
+        .arg("-C")
+        .arg(worktree)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+    let output = run(command, &[0, 1])?;
+    if output.status.success() {
+        Ok(Some(stdout_line(&output)?))
+    } else {
+        Ok(None)
+    }
+}
+
 /// The checked-out commit, branch and modified tracked files of `worktree`.
 pub fn worktree_state(worktree: &Path) -> Result<WorktreeState> {
     let mut command = git_command();

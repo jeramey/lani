@@ -1127,7 +1127,17 @@ fn validate_anchor(
         ));
     }
 
-    // Step 1: the commit the author read is on the branch.
+    // Step 1: the commit the author read is on the branch. It must be given as a SHA: LANI
+    // resolves names in the common git dir, where `HEAD`, `@{-1}` and other per-worktree names
+    // mean the main worktree's, so from a linked worktree they could name a commit nobody read.
+    if !is_object_name(request.commit) {
+        return Err(Error::Invalid(format!(
+            "commit {} is not a commit SHA. Pass the SHA that `git rev-parse HEAD` prints in the \
+             worktree you read, not a name such as HEAD: LANI would look a name up in the \
+             repository's main worktree, which may have a different commit checked out.",
+            quoted(request.commit)
+        )));
+    }
     let commit = git.resolve_commit(request.commit)?.ok_or_else(|| {
         Error::NotFound(format!(
             "commit {:?} does not exist in this repository",
@@ -1190,6 +1200,12 @@ fn validate_anchor(
     })
 }
 
+/// Whether `commit` is a full or abbreviated object name (4 to 64 hex digits), as
+/// `git rev-parse HEAD` prints it, rather than a name that git resolves.
+fn is_object_name(commit: &str) -> bool {
+    (4..=64).contains(&commit.len()) && commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 /// The commit an anchor's line numbers refer to: the commit read, or for side `base` its
 /// merge-base with the review's base branch.
 fn anchor_commit(git: &Git, review: &Review, side: Side, commit: &str) -> Result<String> {
@@ -1233,8 +1249,37 @@ fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &CreateIssue<'
     let hunks = git::diff_commit_to_disk(&worktree.toplevel, commit, path)?;
     let (start, end) = (request.start_line, request.end_line);
     let disk = quoted(&worktree.toplevel.display().to_string());
+    let check = anchor::check_disk(&hunks, start, end);
+    if check == DiskCheck::Consistent {
+        return Ok(());
+    }
+    // The diff is against the files on disk, so with another commit checked out the
+    // differences may be committed; then the likely mistake is the commit passed.
+    let worktree_head = git::worktree_head(&worktree.toplevel)?;
+    if worktree_head.as_deref() != Some(commit) {
+        let (checked_out, if_read_from_disk) = match &worktree_head {
+            Some(head) => (
+                format!("has commit {} checked out", short_sha(head)),
+                format!(
+                    "resubmit with commit {head}, the SHA that `git rev-parse HEAD` prints there."
+                ),
+            ),
+            None => (
+                "has no commit checked out (its branch has no commits yet)".to_string(),
+                "it is not committed, so it cannot be reviewed until it is.".to_string(),
+            ),
+        };
+        let commit = short_sha(commit);
+        return Err(Error::Invalid(format!(
+            "create_issue rejected: {shown_path} on disk in {disk} differs from commit {commit} in a way that \
+             affects lines {start}-{end}, and that worktree {checked_out}, so the differences may be committed.\n  \
+             - If you read the file on disk: {if_read_from_disk}\n  \
+             - If your line numbers come from commit {commit} (git show, or the worktree before it moved on): \
+             resubmit with worktree_path: null."
+        )));
+    }
     let commit = short_sha(commit);
-    match anchor::check_disk(&hunks, start, end) {
+    match check {
         DiskCheck::Consistent => Ok(()),
         DiskCheck::RangeChanged => Err(Error::Invalid(format!(
             "create_issue rejected: lines {start}-{end} of {shown_path} on disk in {disk} differ from commit {commit}.\n\

@@ -473,11 +473,16 @@ fn head_that_moved_since_the_read_is_detected_through_the_disk_check() {
     let read_at = repo.head();
     // The implementer commits lines at the top after the reviewer read the file.
     repo.write("src/lib.rs", &format!("header\n{}", numbered(20)));
-    repo.commit_all("add header");
-    expect_invalid(
+    let moved_to = repo.commit_all("add header");
+    let message = expect_invalid(
         service.create_issue(&issue_request(review_id, &repo, &read_at, 5, 5, "line 5")),
-        "The differences are above lines 5-5",
+        &format!("that worktree has commit {} checked out", &moved_to[..7]),
     );
+    assert!(
+        message.contains(&format!("resubmit with commit {moved_to}")),
+        "{message}"
+    );
+    assert!(message.contains("worktree_path: null"), "{message}");
 }
 
 #[test]
@@ -806,6 +811,79 @@ fn worktrees_of_one_repo_share_reviews() {
         !from_main.items[0].checked_out,
         "main worktree has main checked out"
     );
+}
+
+#[test]
+fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
+    // main's f.rs ends with `fn b`; feature adds `fn new` above, so feature's line 6 is the `}`
+    // closing `fn a`, and main's line 6 is the `}` closing `fn b`.
+    let main_file = "fn a() {\n    a();\n}\nfn b() {\n    b();\n}\n";
+    let repo = TestRepo::new(&[("f.rs", main_file)]);
+    let main_sha = repo.head();
+    repo.switch_new("feature");
+    repo.write("f.rs", &format!("fn new() {{\n    new();\n}}\n{main_file}"));
+    let feature_sha = repo.commit_all("add new");
+    repo.switch("main");
+    let linked_parent = tempfile::tempdir().unwrap();
+    let linked = std::fs::canonicalize(linked_parent.path())
+        .unwrap()
+        .join("wt");
+    repo.git(&["worktree", "add", "-q", linked.to_str().unwrap(), "feature"]);
+
+    let home = TestHome::new();
+    let mut service = service(&home);
+    let review_id = service
+        .start_review(&StartReview {
+            repo_path: &linked,
+            title: "From the linked worktree",
+            author: Actor::Reviewer,
+            base_mode: BaseMode::Auto,
+            summary: None,
+            head_ref: None,
+        })
+        .unwrap()
+        .view
+        .review
+        .id;
+    let mut create = |commit: &str, worktree_path: Option<&Path>| {
+        service.create_issue(&CreateIssue {
+            review_id,
+            author: Actor::Reviewer,
+            body: "Wrong.",
+            path: "f.rs",
+            side: Side::Head,
+            start_line: 6,
+            end_line: 6,
+            start_line_text: Some("}"),
+            commit,
+            worktree_path,
+        })
+    };
+
+    // In the common git dir these names mean the main worktree's (HEAD is main's commit, which
+    // is on the branch, and line 6 there is also "}"), so they are refused rather than resolved.
+    for name in ["HEAD", "@{-1}", "feature", "abc"] {
+        expect_invalid(
+            create(name, None),
+            &format!("commit {name:?} is not a commit SHA"),
+        );
+    }
+
+    // The wrong SHA with the linked worktree: the difference is committed, so the error names
+    // the commit checked out there instead of blaming uncommitted changes.
+    let message = expect_invalid(
+        create(&main_sha, Some(&linked)),
+        &format!("that worktree has commit {} checked out", &feature_sha[..7]),
+    );
+    assert!(
+        message.contains(&format!("resubmit with commit {feature_sha}")),
+        "{message}"
+    );
+    assert!(!message.contains("Uncommitted"), "{message}");
+
+    let view = create(&feature_sha, Some(&linked)).unwrap();
+    assert_eq!(view.issue.anchor.commit, feature_sha);
+    assert_eq!(current(&view), ("f.rs".to_string(), 6, 6));
 }
 
 // ── storage guarantees ───────────────────────────────────────────────────────────────────────

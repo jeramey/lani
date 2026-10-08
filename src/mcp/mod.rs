@@ -31,9 +31,9 @@ Each review has a summary of the change's intent. Read it first, and keep it acc
 update_review_summary without discarding what others wrote.
 
 Reviewer: call start_review (base_mode \"auto\" unless the human names a base or asks for a whole-tree \
-review), then create_issue once per finding, anchored to the lines concerned. Pass commit = the commit \
-whose files you read (normally `git rev-parse HEAD`; it should equal the review head) and worktree_path = \
-where you read them. Then call open_web_ui so the human can read and edit. Only committed code can \
+review), then create_issue once per finding, anchored to the lines concerned. Pass commit = the SHA of the \
+commit whose files you read (what `git rev-parse HEAD` prints there, not `HEAD` itself; it should equal \
+the review head) and worktree_path = where you read them. Then call open_web_ui so the human can read and edit. Only committed code can \
 be reviewed: if start_review reports uncommitted changes, \
 tell the human. In a whole-tree review there is no diff; review the files the human asked about.
 
@@ -219,7 +219,8 @@ pub struct CreateIssueParams {
     /// The exact text of `start_line`, used to catch wrong line numbers: the line's text alone,
     /// without line numbers or the `> 12 | ` gutter of code excerpts.
     pub start_line_text: String,
-    /// The commit whose files you read, normally `git rev-parse HEAD`.
+    /// The SHA of the commit whose files you read: what `git rev-parse HEAD` prints in that
+    /// worktree. Pass the SHA itself, not `HEAD` or a branch name.
     pub commit: String,
     /// Absolute path of the worktree you read the file from, or null if you read it from git
     /// (`git show <commit>:<path>`). Must be null for side "base". Pass the plain value, without
@@ -800,7 +801,7 @@ mod tests {
     fn worktree_path_is_required_but_nullable() {
         let base = serde_json::json!({
             "review_id": 1, "author": "reviewer", "body": "b", "path": "a.rs", "side": "head",
-            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "HEAD"
+            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"
         });
         assert!(serde_json::from_value::<CreateIssueParams>(base.clone()).is_err());
 
