@@ -321,6 +321,18 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         "the reopened review's toolbar",
     );
 
+    // Abandoning the draft lets the stale part catch up, without waiting for another change.
+    browser.clear("#new-summary-comment");
+    browser.run("document.activeElement.blur(); return true;");
+    browser.wait_for(
+        &format!(
+            "const part = document.querySelector('#conversation'); \
+             return {in_place} && part.textContent.includes('A second comment.') \
+             && !part.querySelector('.stale-notice');"
+        ),
+        "the conversation, once the draft is gone",
+    );
+
     // In a code view, a selection survives its table being replaced.
     let file = format!("/reviews/{review_id}/files/src/lib.rs");
     browser.navigate(&format!("{}{file}", fixture.base));
@@ -742,6 +754,13 @@ impl WebDriver {
             &format!("/element/{element}/value"),
             Some(&json!({ "text": text })),
         );
+    }
+
+    /// Empty a field, as WebDriver's Element Clear does: focus, clear, then leave it.
+    fn clear(&self, selector: &str) {
+        self.scroll_to(selector);
+        let element = self.find(selector);
+        self.command("POST", &format!("/element/{element}/clear"), Some(&json!({})));
     }
 
     /// Type the new-issue form's title and pick its severity, as a person would.

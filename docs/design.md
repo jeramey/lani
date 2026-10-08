@@ -1230,8 +1230,9 @@ work on the review.
 - **Open editors.** A part is never replaced while someone may be writing in it: a field in it
   has focus or unsaved changes, or an inline editor (`<details class="inline-edit">`) or the
   new-issue form is open. It shows *"Updated elsewhere. Reload to see the changes; copy anything
-  you are writing first."* instead. Posting the form reloads the page anyway, and conflicting
-  edits are caught by version checks (§11.4).
+  you are writing first."* instead. When nobody is editing in it any more (the draft was cleared
+  and the field left, or the editor closed), it catches up with the last fetched page. Posting
+  the form reloads the page anyway, and conflicting edits are caught by version checks (§11.4).
 - **Hidden pages.** Browsers allow about six HTTP/1.1 connections per host, and every open stream
   holds one. A page therefore closes its stream while it is hidden, and reconnects with `?after`
   when it is shown again, so many open LANI tabs cannot starve each other.

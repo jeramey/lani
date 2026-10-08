@@ -269,6 +269,8 @@
   // Refreshes run one at a time; a change announced during one starts another after it.
   let refreshing = false;
   let refreshAgain = false;
+  // The page as last fetched, for parts left stale until nobody is editing in them.
+  let latest = null;
 
   async function refresh() {
     if (refreshing) {
@@ -289,7 +291,8 @@
           );
           return;
         }
-        update(new DOMParser().parseFromString(await response.text(), "text/html"));
+        latest = new DOMParser().parseFromString(await response.text(), "text/html");
+        update(latest);
         clearNotice("refresh");
       } while (refreshAgain);
     } catch (error) {
@@ -314,7 +317,8 @@
         continue;
       }
       served.set(part.id, replacement.outerHTML);
-      part.replaceWith(document.adoptNode(replacement));
+      // A copy: the fetched page stays whole, to be applied again (retryStale).
+      part.replaceWith(document.importNode(replacement, true));
     }
     // Parts are replaced, never added or removed: a file that a new commit brings into the
     // Changes view, or takes out of it, would land in the wrong place. The page says so instead.
@@ -376,6 +380,20 @@
     }
     return select.selectedIndex !== shown;
   }
+
+  // A stale part catches up as soon as nobody is editing in it: the draft was cleared and the
+  // field left, or the editor closed.
+  function retryStale(event) {
+    const part = event.target.closest && event.target.closest("[data-live]");
+    if (!latest || !part || !part.querySelector(":scope > .stale-notice")) {
+      return;
+    }
+    // During focusout, the focus has not moved on yet.
+    setTimeout(() => update(latest), 0);
+  }
+  document.addEventListener("focusout", retryStale);
+  // `toggle` does not bubble.
+  document.addEventListener("toggle", retryStale, true);
 
   function markStale(part) {
     if (part.querySelector(":scope > .stale-notice")) {
