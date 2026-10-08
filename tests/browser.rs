@@ -273,6 +273,23 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         "the draft is kept, and the part is not replaced"
     );
 
+    // Parts nobody is editing in still change: closing the review from another session swaps
+    // the toolbar's forms for "Reopen review".
+    service.close_review(Actor::Reviewer, review_id).unwrap();
+    browser.wait_for(
+        &format!(
+            "const toolbar = document.querySelector('#toolbar'); \
+             return {in_place} && toolbar.textContent.includes('Reopen review') \
+             && !toolbar.querySelector('.stale-notice');"
+        ),
+        "the closed review's toolbar, in place",
+    );
+    service.reopen_review(Actor::Human, review_id).unwrap();
+    browser.wait_for(
+        "return document.querySelector('#toolbar').textContent.includes('Close review');",
+        "the reopened review's toolbar",
+    );
+
     // In a code view, a selection survives its table being replaced.
     let file = format!("/reviews/{review_id}/files/src/lib.rs");
     browser.navigate(&format!("{}{file}", fixture.base));

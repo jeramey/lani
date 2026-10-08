@@ -306,12 +306,32 @@
         return true;
       }
     }
-    for (const option of part.querySelectorAll("option")) {
-      if (option.selected !== option.defaultSelected) {
+    for (const select of part.querySelectorAll("select")) {
+      if (selectChanged(select)) {
         return true;
       }
     }
     return false;
+  }
+
+  // Whether a select shows something other than what the page loaded with. A drop-down without
+  // a `selected` option shows its first enabled option, which the browser marks selected itself,
+  // so its options alone cannot tell.
+  function selectChanged(select) {
+    const options = Array.from(select.options);
+    if (select.multiple) {
+      return options.some((option) => option.selected !== option.defaultSelected);
+    }
+    let shown = -1;
+    for (const option of options) {
+      if (option.defaultSelected) {
+        shown = option.index;
+      }
+    }
+    if (shown === -1) {
+      shown = options.findIndex((option) => !option.disabled);
+    }
+    return select.selectedIndex !== shown;
   }
 
   function markStale(part) {
