@@ -193,22 +193,7 @@ impl Service {
         let worktree = git::discover(request.repo_path)?;
         let git = Git::new(&worktree.git_dir);
 
-        let head_ref = match request.head_ref {
-            Some(name) => match git.full_ref_name(name)? {
-                Some(full) if full.starts_with("refs/heads/") => full,
-                _ => {
-                    return Err(Error::Invalid(format!(
-                        "head_ref {name:?} is not a local branch in this repository"
-                    )));
-                }
-            },
-            None => git::current_branch(&worktree.toplevel)?.ok_or_else(|| {
-                Error::Invalid(format!(
-                    "HEAD is detached in {}; check out the branch to review, or pass head_ref",
-                    quoted(&worktree.toplevel.display().to_string())
-                ))
-            })?,
-        };
+        let head_ref = head_branch(&git, &worktree, request.head_ref)?;
         let head_sha = git.resolve_commit(&head_ref)?.ok_or_else(|| {
             Error::Invalid(format!(
                 "branch {} has no commits yet",
@@ -1135,6 +1120,31 @@ fn worktree_report(worktree: &Worktree, review_head: Option<&str>) -> Result<Wor
 fn is_in_file(anchor: &Anchor, location: &Location, path: &str) -> bool {
     anchor.path == path
         || matches!(location, Location::Current { path: current, .. } if current == path)
+}
+
+/// The full ref of the branch a new review covers: `head_ref` if given, otherwise the branch
+/// checked out in `worktree`.
+fn head_branch(git: &Git, worktree: &Worktree, head_ref: Option<&str>) -> Result<String> {
+    match head_ref {
+        Some(name) if git::is_worktree_relative(name) => Err(Error::Invalid(format!(
+            "head_ref {} is relative to a worktree's HEAD or reflog, which LANI would read from \
+             the repository's main worktree, not yours. Pass the branch name, or leave head_ref \
+             out to review the branch checked out at repo_path.",
+            quoted(name)
+        ))),
+        Some(name) => match git.full_ref_name(name)? {
+            Some(full) if full.starts_with("refs/heads/") => Ok(full),
+            _ => Err(Error::Invalid(format!(
+                "head_ref {name:?} is not a local branch in this repository"
+            ))),
+        },
+        None => git::current_branch(&worktree.toplevel)?.ok_or_else(|| {
+            Error::Invalid(format!(
+                "HEAD is detached in {}; check out the branch to review, or pass head_ref",
+                quoted(&worktree.toplevel.display().to_string())
+            ))
+        }),
+    }
 }
 
 /// Find the worktree containing `path` and require it to belong to `repo`.

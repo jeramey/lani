@@ -133,16 +133,17 @@ pub struct StartReviewParams {
     /// "auto": whole-tree review on the default branch, otherwise a diff against the nearest parent
     /// branch. "none": whole-tree review. "ref": diff review against `base_ref`.
     pub base_mode: BaseModeParam,
-    /// Base branch or ref, e.g. "main" or "origin/main". Required if and only if `base_mode` is
-    /// "ref". Pass the plain value, without the quotes that tool output shows around it.
+    /// Base branch or ref, e.g. "main" or "origin/main", not `HEAD` or `@{-1}`. Required if and
+    /// only if `base_mode` is "ref". Pass the plain value, without the quotes that tool output
+    /// shows around it.
     #[serde(default)]
     pub base_ref: Option<String>,
     /// Markdown summary of the change's intent, like a PR description. Plain text: without the
     /// `│ ` prefixes that tool output adds.
     #[serde(default)]
     pub summary: Option<String>,
-    /// Branch to review. Defaults to the branch checked out at `repo_path`. Pass the plain value,
-    /// without the quotes that tool output shows around it.
+    /// Branch to review, by name (not `HEAD`). Defaults to the branch checked out at `repo_path`.
+    /// Pass the plain value, without the quotes that tool output shows around it.
     #[serde(default)]
     pub head_ref: Option<String>,
 }

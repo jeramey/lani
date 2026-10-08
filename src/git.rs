@@ -46,6 +46,9 @@ const EXACT_HUNKS: [&str; 5] = [
     "--no-textconv",
 ];
 
+/// Refs that each worktree has its own copy of (git-worktree(1), "REFS").
+const PER_WORKTREE_REF_PREFIXES: [&str; 3] = ["refs/bisect/", "refs/worktree/", "refs/rewritten/"];
+
 /// Set once the `git` on PATH has passed [`check_git_version`]. Only success is remembered: after
 /// a failure the next git call checks again, so installing or upgrading git takes effect without
 /// restarting a long-running `lani serve` or `lani mcp`.
@@ -309,6 +312,24 @@ impl Git {
         let output = run(command, &[0])?;
         parse_hunks(&String::from_utf8_lossy(&output.stdout))
     }
+}
+
+/// Whether git resolves `name` through one worktree's own state: its `HEAD` (`HEAD`, `@`), or
+/// reflog and upstream syntax (`@{-1}`, `@{u}`, `main@{1}`). LANI resolves names with
+/// `--git-dir`, where these mean the main worktree's, whichever worktree the name came from. No
+/// ref can be named `@` or contain `@{` (git-check-ref-format(1)), so no branch is caught.
+#[must_use]
+pub fn is_worktree_relative(name: &str) -> bool {
+    name == "HEAD" || name == "@" || name.contains("@{")
+}
+
+/// Whether `full_name` is a ref each worktree has its own copy of, such as `refs/worktree/x`.
+/// With `--git-dir`, git reads the main worktree's copy.
+#[must_use]
+pub fn is_per_worktree_ref(full_name: &str) -> bool {
+    PER_WORKTREE_REF_PREFIXES
+        .iter()
+        .any(|prefix| full_name.starts_with(prefix))
 }
 
 /// Find the worktree containing `path` and the repository it belongs to.

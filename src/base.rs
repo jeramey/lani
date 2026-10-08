@@ -2,7 +2,7 @@
 //! (docs/design.md §9).
 
 use crate::error::{Error, Result};
-use crate::git::{BranchDistance, Git};
+use crate::git::{self, BranchDistance, Git};
 use crate::model::{BaseSource, short_ref};
 use crate::text::quoted;
 
@@ -44,11 +44,26 @@ pub fn choose_base(
             other_candidates: Vec::new(),
         }),
         BaseMode::Ref(name) => {
+            if git::is_worktree_relative(name) {
+                return Err(Error::Invalid(format!(
+                    "base {} is relative to a worktree's HEAD or reflog, which LANI would read from \
+                     the repository's main worktree, not yours. Pass a branch name, such as \"main\".",
+                    quoted(name)
+                )));
+            }
             let full = git.full_ref_name(name)?.ok_or_else(|| {
                 Error::NotFound(format!(
                     "base {name:?} is not a branch or other ref in this repository"
                 ))
             })?;
+            if git::is_per_worktree_ref(&full) {
+                return Err(Error::Invalid(format!(
+                    "base {} is {}, a ref each worktree keeps its own copy of, so LANI would read \
+                     the main worktree's. Pass a branch, tag or remote-tracking branch name.",
+                    quoted(name),
+                    quoted(&full)
+                )));
+            }
             if git.resolve_commit(&full)?.is_none() {
                 return Err(Error::Invalid(format!(
                     "base {name:?} does not point to a commit"

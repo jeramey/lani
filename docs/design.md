@@ -420,9 +420,23 @@ code is ever reviewed.
 
 | `base_mode` | Result |
 | ----------- | ------ |
-| `ref`       | A diff review against `base_ref`, which can be a local branch, a remote-tracking branch (e.g. `origin/main`), or any ref that resolves to a commit. It must differ from the head. |
+| `ref`       | A diff review against `base_ref`, which can be a local branch, a remote-tracking branch (e.g. `origin/main`), or any ref that resolves to a commit. It must differ from the head. Names that depend on which worktree resolves them are refused (see below). |
 | `none`      | A whole-tree review. |
 | `auto`      | A whole-tree review if the head is the repo's default branch (§9.3). Otherwise, a diff review against the nearest parent branch (§9.4). |
+
+LANI resolves names in the common git dir, which every worktree shares, so `base_ref` and
+`head_ref` must mean the same thing in every worktree. Some names depend on which worktree
+resolves them, and in the common git dir they mean the main worktree's:
+
+- `HEAD` and `@` mean that worktree's checked-out branch.
+- `@{…}` forms such as `@{-1}`, `@{u}` and `main@{1}` read a reflog or an upstream.
+- `refs/bisect/`, `refs/worktree/` and `refs/rewritten/` hold refs that each worktree keeps its own
+  copy of. This rule applies to `base_ref` only; `head_ref` must be a local branch anyway.
+
+From a linked worktree, any of these could silently pick the wrong branch, so they are refused,
+and the error asks for a branch name. No real ref name is `@` or contains `@{`, so no branch is
+refused. `head_ref` can simply be left out, since it then defaults to the branch checked out at
+`repo_path`, which is read in that worktree.
 
 The response states the resolved base and how it was chosen. For `auto`, it also lists the
 runner-up candidates. The review stores `base_source` (`auto`, `explicit` or `web_ui`), so the web

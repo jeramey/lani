@@ -933,6 +933,64 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
     assert_eq!(current(&view), ("f.rs".to_string(), 6, 6));
 }
 
+#[test]
+fn names_relative_to_a_worktree_are_refused_as_base_and_head() {
+    // The main worktree has main checked out (its previous branch was feature) and its own
+    // refs/worktree/mine; the linked worktree has feature. In the common git dir, HEAD is main.
+    let repo = feature_repo();
+    repo.switch("main");
+    repo.git(&["update-ref", "refs/worktree/mine", "HEAD"]);
+    let linked_parent = tempfile::tempdir().unwrap();
+    let linked = std::fs::canonicalize(linked_parent.path())
+        .unwrap()
+        .join("wt");
+    repo.git(&["worktree", "add", "-q", linked.to_str().unwrap(), "feature"]);
+    let home = TestHome::new();
+    let mut service = service(&home);
+    let mut start_from_linked = |base_mode: BaseMode, head_ref: Option<&str>| {
+        service.start_review(&StartReview {
+            repo_path: &linked,
+            title: "t",
+            author: Actor::Reviewer,
+            base_mode,
+            summary: None,
+            head_ref,
+        })
+    };
+
+    for name in ["HEAD", "@", "@{-1}", "main@{1}"] {
+        expect_invalid(
+            start_from_linked(BaseMode::Ref(name.into()), None),
+            &format!("base {name:?} is relative to a worktree's HEAD or reflog"),
+        );
+        expect_invalid(
+            start_from_linked(BaseMode::None, Some(name)),
+            &format!("head_ref {name:?} is relative to a worktree's HEAD or reflog"),
+        );
+    }
+    for name in ["refs/worktree/mine", "worktree/mine"] {
+        expect_invalid(
+            start_from_linked(BaseMode::Ref(name.into()), None),
+            "\"refs/worktree/mine\", a ref each worktree keeps its own copy of",
+        );
+    }
+
+    let started = start_from_linked(BaseMode::Ref("main".into()), Some("feature")).unwrap();
+    assert_eq!(started.view.review.head_ref, "refs/heads/feature");
+    assert_eq!(
+        started.view.review.base_ref.as_deref(),
+        Some("refs/heads/main")
+    );
+    expect_invalid(
+        service.change_base(
+            Actor::Human,
+            started.view.review.id,
+            &BaseMode::Ref("@{-1}".into()),
+        ),
+        "is relative to a worktree's HEAD or reflog",
+    );
+}
+
 // ── storage guarantees ───────────────────────────────────────────────────────────────────────
 
 #[test]
