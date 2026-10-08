@@ -19,6 +19,9 @@ use crate::text;
 
 /// How often an open stream checks its review for changes.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Failed polls in a row after which a stream gives up on an error the next poll might not
+/// repeat, such as a database that stayed busy past its timeout.
+const FAILURES_BEFORE_GIVING_UP: u32 = 3;
 
 #[derive(Deserialize)]
 pub struct EventsQuery {
@@ -30,8 +33,8 @@ pub struct EventsQuery {
 /// - `changed` when the review has changed (with the latest event id as the message id), or when
 ///   a newer lani has been installed (data `update`);
 /// - `stopping` with the notice to show, as the server stops; the stream then ends;
-/// - `failed` with the notice to show, when the review can no longer be watched; the stream then
-///   ends.
+/// - `failed` with the notice to show, when the review can no longer be watched, or polling keeps
+///   failing; the stream then ends.
 pub async fn events(
     State(state): State<AppState>,
     Path(review_id): Path<i64>,
@@ -54,6 +57,7 @@ pub async fn events(
         seen: reconnected.or(query.after).unwrap_or(latest),
         update_announced: false,
         ticker,
+        failures: 0,
         ended: false,
     };
     let stream = stream::unfold(watch, |mut watch| async move {
@@ -76,6 +80,8 @@ struct Watch {
     /// Whether this stream has told the page about a newer installed lani.
     update_announced: bool,
     ticker: Interval,
+    /// Failed polls in a row.
+    failures: u32,
     /// Set after the last message, `stopping` or `failed`.
     ended: bool,
 }
@@ -100,19 +106,27 @@ impl Watch {
             {
                 // Not `>`: a page rendered from another database (moved aside and recreated)
                 // has seen ids this one has not reached.
-                Ok(latest) if latest != self.seen => {
-                    self.seen = latest;
-                    return Event::default()
-                        .event("changed")
-                        .id(latest.to_string())
-                        .data("events");
+                Ok(latest) => {
+                    self.failures = 0;
+                    if latest != self.seen {
+                        self.seen = latest;
+                        return Event::default()
+                            .event("changed")
+                            .id(latest.to_string())
+                            .data("events");
+                    }
                 }
-                Ok(_) => {}
                 Err(error) => {
-                    self.ended = true;
-                    return Event::default()
-                        .event("failed")
-                        .data(notice(&failure(&error)));
+                    self.failures += 1;
+                    if give_up(&error, self.failures) {
+                        self.ended = true;
+                        return Event::default()
+                            .event("failed")
+                            .data(notice(&failure(&error)));
+                    }
+                    eprintln!(
+                        "live updates for review {review_id}: poll failed, retrying: {error}"
+                    );
                 }
             }
             if !self.update_announced && self.state.outdated() {
@@ -121,6 +135,13 @@ impl Watch {
             }
         }
     }
+}
+
+/// Whether a stream should stop after `failures` failed polls in a row, the last with `error`.
+/// An outdated server and a missing review are final: the next poll would only repeat them.
+fn give_up(error: &Error, failures: u32) -> bool {
+    matches!(error, Error::Outdated(_) | Error::NotFound(_))
+        || failures >= FAILURES_BEFORE_GIVING_UP
 }
 
 /// What a page shows when its stream fails.
@@ -134,4 +155,22 @@ fn failure(error: &Error) -> String {
 /// `text` on one line, as an SSE data field: a lone carriage return would end the line early.
 fn notice(text: &str) -> String {
     text::neutralize_line_breaks(text).replace('\n', " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streams_retry_errors_that_may_pass_and_stop_on_final_ones() {
+        let busy = || Error::Io(std::io::Error::other("database is busy"));
+        assert!(!give_up(&busy(), 1), "one failure is retried");
+        assert!(!give_up(&busy(), FAILURES_BEFORE_GIVING_UP - 1));
+        assert!(give_up(&busy(), FAILURES_BEFORE_GIVING_UP));
+        assert!(give_up(&Error::Outdated("newer schema".into()), 1));
+        assert!(give_up(
+            &Error::NotFound("review 9 does not exist".into()),
+            1
+        ));
+    }
 }

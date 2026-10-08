@@ -1213,8 +1213,9 @@ work on the review.
   - `changed` when the id has grown; its SSE id is the new latest event. It is also sent once,
     with data `update`, when a newer lani is installed over the server's executable.
   - `stopping` as the server stops (§13.1), and `failed` when the review can no longer be
-    watched, for example after a newer lani upgraded the database (§7.4). Both carry the notice
-    the page shows, and end the stream.
+    watched: a newer lani upgraded the database (§7.4), the review is gone, or polling failed
+    three times in a row. Other poll errors are logged and retried on the next poll. Both
+    messages carry the notice the page shows, and end the stream.
 - **No missed changes.** A page reads the review's latest event id before anything else it
   shows, and connects with `?after=<id>`. The first poll is immediate, so a change made between
   rendering and connecting is announced at once. EventSource's own reconnects send
