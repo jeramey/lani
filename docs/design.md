@@ -577,8 +577,12 @@ against the current merge-base for side `base`.
 
 A current issue is shown at its relocated position. An outdated issue is shown with its stored
 snippet and original line numbers, as GitHub shows outdated comments. "Outdated" is also a useful
-signal to the reviewer that the implementer touched those lines. Results are cached in memory per
-(issue, H).
+signal to the reviewer that the implementer touched those lines.
+
+Placement work is shared within one request, meaning one tool call or one page. There is one
+whole-tree rename diff per (A, H) pair, and each anchor commit's existence and each file's contents
+are looked up once. Nothing is cached across requests, so every tool call and page view places
+each issue again (§21).
 
 Rebases and force-pushes are fine. Display never needs A to still exist; if A is gone from the
 object database, the issue is treated as outdated.
@@ -1328,6 +1332,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Fuzzy file finder and code search.
 - A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
 - Caching rendered Markdown per (object, version), if rendering cost shows up in benchmarks.
+- Caching issue placements across requests (§10.2), if placement cost shows up in benchmarks.
+  Placement depends only on the anchor and the target commit, so a key of (issue, target commit)
+  never goes stale.
 - Keeping the session cookie away from other loopback ports, for shared machines (§15). Two
   candidates; neither is tested:
   - A per-server secret hostname (`http://lani-<random>.localhost:<port>/`) with a host-only
