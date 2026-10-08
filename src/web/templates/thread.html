@@ -1,0 +1,32 @@
+<div class="thread {{ thread.status_class }}" id="{{ thread.anchor }}">
+  <details{% if !thread.resolved %} open{% endif %}>
+    <summary>
+      <a href="{{ thread.url }}">Issue #{{ thread.id }}</a>
+      <span class="badge {{ thread.status_class }}">{{ thread.status_label }}</span>
+      <span class="author {{ thread.opened_by.class }}">{{ thread.opened_by.label }}</span>
+      <code class="location">{{ thread.location }}</code>
+    </summary>
+    {% if let Some(reason) = thread.outdated_reason %}<p class="notice">Outdated: {{ reason }}.</p>{% endif %}
+    {% if let Some(excerpt) = thread.code %}{% include "code_excerpt.html" %}{% endif %}
+    {% for comment in thread.comments %}{% include "comment.html" %}{% endfor %}
+    {% if editable %}
+    <form method="post" action="{{ thread.comment_action }}" class="new-comment">
+      <input type="hidden" name="back" value="{{ thread.back }}">
+      <textarea name="body" rows="3" required aria-label="Reply to issue #{{ thread.id }}" placeholder="Reply (Markdown is supported)"></textarea>
+      <div class="form-actions">
+        <button type="submit">Reply</button>
+      </div>
+    </form>
+    <form method="post" action="{{ thread.status_action }}" class="thread-status">
+      <input type="hidden" name="back" value="{{ thread.back }}">
+      {% if thread.resolved %}
+      <input type="hidden" name="status" value="open">
+      <button type="submit" class="secondary">Reopen issue</button>
+      {% else %}
+      <input type="hidden" name="status" value="resolved">
+      <button type="submit" class="secondary">Resolve issue</button>
+      {% endif %}
+    </form>
+    {% endif %}
+  </details>
+</div>

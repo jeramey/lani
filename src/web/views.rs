@@ -15,7 +15,7 @@ use crate::model::{
     short_sha,
 };
 use crate::service::{IssueView, Location, ReviewView};
-use crate::{markdown, time};
+use crate::{highlight, markdown, time};
 
 // ── URLs ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,69 @@ pub fn review_url(review_id: i64) -> String {
 #[must_use]
 pub fn issue_url(review_id: i64, issue_id: i64) -> String {
     format!("/reviews/{review_id}/issues/{issue_id}")
+}
+
+/// The Files view of `path` (`""` for the root). Directory URLs end with `/`; file URLs don't.
+#[must_use]
+pub fn files_url(review_id: i64, path: &str, directory: bool) -> String {
+    let mut url = format!("/reviews/{review_id}/files/");
+    if !path.is_empty() {
+        url.push_str(&encode_path(path));
+        if directory {
+            url.push('/');
+        }
+    }
+    url
+}
+
+/// The Changes (diff) view of a review.
+#[must_use]
+pub fn changes_url(review_id: i64) -> String {
+    format!("/reviews/{review_id}/changes")
+}
+
+/// A repository path as a URL path: every byte outside `A-Z a-z 0-9 - . _ ~` is
+/// percent-encoded, except the `/` between segments.
+#[must_use]
+pub fn encode_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+/// One step of a path's breadcrumb trail; the last step has no link.
+pub struct Crumb {
+    pub label: String,
+    pub url: Option<String>,
+}
+
+/// The breadcrumb trail of `path` in the Files view, starting at the repository root.
+#[must_use]
+pub fn crumbs(review_id: i64, repo_name: &str, path: &str) -> Vec<Crumb> {
+    let mut crumbs = vec![Crumb {
+        label: repo_name.to_string(),
+        url: Some(files_url(review_id, "", true)),
+    }];
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    for (index, segment) in segments.iter().enumerate() {
+        let is_last = index + 1 == segments.len();
+        crumbs.push(Crumb {
+            label: (*segment).to_string(),
+            url: (!is_last).then(|| files_url(review_id, &segments[..=index].join("/"), true)),
+        });
+    }
+    if let Some(last) = crumbs.last_mut()
+        && path.is_empty()
+    {
+        last.url = None;
+    }
+    crumbs
 }
 
 /// Where a comment is shown: on its issue's page, or on the review page for summary comments.
@@ -96,6 +159,8 @@ pub struct CommentView {
     pub body: String,
     pub version: i64,
     pub edit_action: String,
+    /// The page to return to after an edit, when it is not the issue page.
+    pub back: Option<String>,
 }
 
 #[must_use]
@@ -119,6 +184,7 @@ pub fn comment(comment: &Comment) -> CommentView {
         body: comment.body.clone(),
         version: comment.version,
         edit_action: format!("/comments/{}/edit", comment.id),
+        back: None,
     }
 }
 
@@ -139,6 +205,11 @@ pub struct ReviewHeader {
     pub created: String,
     /// Why current code cannot be shown, e.g. the repository was moved or deleted.
     pub repo_notice: Option<String>,
+    pub files_url: String,
+    /// `None` for a whole-tree review, which has no diff.
+    pub changes_url: Option<String>,
+    /// The active tab: "overview", "changes" or "files"; `""` for none.
+    pub tab: &'static str,
 }
 
 #[must_use]
@@ -189,6 +260,9 @@ pub fn review_header(view: &ReviewView) -> ReviewHeader {
         created_by: author(review.created_by),
         created: time::to_local(&review.created_at),
         repo_notice: view.repo_unavailable.clone(),
+        files_url: files_url(review.id, "", true),
+        changes_url: review.base_ref.is_some().then(|| changes_url(review.id)),
+        tab: "overview",
     }
 }
 
@@ -269,7 +343,8 @@ pub fn issue_status(status: IssueStatus, resolved_by: Option<Actor>) -> (String,
 
 pub struct CodeLine {
     pub number: u32,
-    pub text: String,
+    /// The line as highlighted HTML (escaped by the highlighter).
+    pub html: String,
     pub highlighted: bool,
 }
 
@@ -283,30 +358,92 @@ pub struct CodeView {
 pub fn code(view: &IssueView) -> Option<CodeView> {
     let excerpt = view.code.as_ref()?;
     let anchor = &view.issue.anchor;
-    let (label, highlighted) = match &view.location {
+    let (label, highlighted, path) = match &view.location {
         Location::Current {
             commit,
+            path,
             start_line,
             end_line,
-            ..
         } if *commit == excerpt.commit => (
             format!("Code @ {}", short_sha(commit)),
             (*start_line, *end_line),
+            path.as_str(),
         ),
         _ => (
             format!("Original code @ {}", short_sha(&excerpt.commit)),
             (anchor.start_line, anchor.end_line),
+            anchor.path.as_str(),
         ),
     };
+    // The excerpt is highlighted on its own; a construct that starts above it, such as a long
+    // comment, may be coloured as code.
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let html = highlight::highlight_lines(file_name, &excerpt.lines).lines;
     let lines = (excerpt.first_line..)
-        .zip(&excerpt.lines)
-        .map(|(number, text)| CodeLine {
+        .zip(html)
+        .map(|(number, html)| CodeLine {
             number,
-            text: text.clone(),
+            html,
             highlighted: (highlighted.0..=highlighted.1).contains(&number),
         })
         .collect();
     Some(CodeView { label, lines })
+}
+
+/// An issue shown inside a code view: its thread, with forms that return to the view.
+pub struct ThreadView {
+    pub id: i64,
+    pub url: String,
+    /// The element id, e.g. "issue-12".
+    pub anchor: String,
+    pub status_label: String,
+    pub status_class: &'static str,
+    pub resolved: bool,
+    pub opened_by: AuthorView,
+    pub location: String,
+    pub outdated_reason: Option<String>,
+    /// The code, for threads shown apart from the lines they are about.
+    pub code: Option<CodeView>,
+    pub comments: Vec<CommentView>,
+    pub comment_action: String,
+    pub status_action: String,
+    /// The page to return to after a reply or a status change.
+    pub back: String,
+}
+
+/// An issue's thread for a code view at `back`. `with_code` adds the issue's code, for threads
+/// that are not shown under their own lines.
+#[must_use]
+pub fn thread(view: &IssueView, back: &str, with_code: bool) -> ThreadView {
+    let issue = &view.issue;
+    let (status_label, status_class) = issue_status(issue.status, issue.resolved_by);
+    let url = issue_url(issue.review_id, issue.id);
+    ThreadView {
+        id: issue.id,
+        anchor: format!("issue-{}", issue.id),
+        status_label,
+        status_class,
+        resolved: issue.status == IssueStatus::Resolved,
+        opened_by: author(issue.author),
+        location: location(view),
+        outdated_reason: match &view.location {
+            Location::Outdated { reason } => Some(reason.clone()),
+            Location::Current { .. } => None,
+        },
+        code: if with_code { code(view) } else { None },
+        comments: view
+            .comments
+            .iter()
+            .map(|item| CommentView {
+                back: Some(back.to_string()),
+                ..comment(item)
+            })
+            .collect(),
+        comment_action: format!("{url}/comments"),
+        status_action: format!("{url}/status"),
+        back: back.to_string(),
+        url,
+    }
 }
 
 /// The issue's location in words, e.g. "src/a.rs:42-44 @ a1b2c3d", in the web's plain style
@@ -401,6 +538,55 @@ pub fn event(event: &Event) -> EventView {
         text,
         link,
     }
+}
+
+pub struct Link {
+    pub label: String,
+    pub url: String,
+}
+
+/// Links from an issue to its lines in the code views: the Files view for side `head`, and the
+/// Changes view when the review has a diff.
+#[must_use]
+pub fn code_links(view: &IssueView, has_diff: bool) -> Vec<Link> {
+    let Location::Current {
+        path,
+        start_line,
+        end_line,
+        ..
+    } = &view.location
+    else {
+        return Vec::new();
+    };
+    let review_id = view.issue.review_id;
+    let mut links = Vec::new();
+    if view.issue.anchor.side == Side::Head {
+        links.push(Link {
+            label: "View in file".to_string(),
+            url: format!(
+                "{}#L{start_line}-L{end_line}",
+                files_url(review_id, path, false)
+            ),
+        });
+    }
+    if has_diff {
+        links.push(Link {
+            label: "View in changes".to_string(),
+            url: format!("{}#{}", changes_url(review_id), file_anchor(path)),
+        });
+    }
+    links
+}
+
+/// The element id of a file's section in the Changes view: `file-` and the path's bytes in hex,
+/// which is unambiguous and needs no escaping in a URL fragment.
+#[must_use]
+pub fn file_anchor(path: &str) -> String {
+    let mut anchor = String::from("file-");
+    for byte in path.bytes() {
+        let _ = write!(anchor, "{byte:02x}");
+    }
+    anchor
 }
 
 pub struct FilterLink {

@@ -275,3 +275,82 @@ figure.code tr.hl { background: var(--highlight); }
 .message { max-width: 720px; }
 .message-text { white-space: pre-wrap; }
 .status-change { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
+
+/* Review tabs */
+.tabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 1px solid var(--border); }
+.tabs a {
+  padding: 6px 14px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  margin-bottom: -1px;
+}
+.tabs a.active { color: var(--text); background: var(--surface); border-color: var(--border); }
+.tabs a:hover { text-decoration: none; color: var(--text); }
+
+/* Code views */
+main:has(.code-view), main:has(.diff-file) { max-width: 1280px; }
+.path { font-family: var(--mono); font-size: 14px; overflow-wrap: anywhere; }
+.path .sep { color: var(--muted); padding: 0 4px; }
+.links { display: flex; gap: 16px; font-size: 14px; }
+
+.tree { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.tree td { padding: 4px 8px; border-top: 1px solid var(--border); }
+.tree td.kind { width: 1.5em; color: var(--muted); }
+.tree td.kind.dir::before { content: "▸"; }
+.tree td.kind.file::before { content: "·"; }
+.tree td.kind.link::before { content: "↪"; }
+.tree td.kind.submodule::before { content: "⊕"; }
+.tree td.marks { text-align: right; white-space: nowrap; }
+.tree td.marks .badge { margin-left: 6px; }
+.badge.changed { background: var(--outdated); }
+
+.code-view {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 13px;
+  margin: 16px 0;
+}
+.code-view td { padding: 0 10px; vertical-align: top; }
+.code-view td.ln {
+  width: 1%;
+  text-align: right;
+  user-select: none;
+  white-space: nowrap;
+}
+.code-view td.ln a { color: var(--muted); display: block; }
+.code-view td.src { height: 20px; line-height: 20px; }
+.code-view td.src code {
+  background: none;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-view tr:target, .code-view tr.selected { background: var(--highlight); }
+.code-view tr.thread-row td { padding: 6px 10px; font-family: inherit; }
+figure.code td.src code { background: none; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.thread {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 6px 12px;
+  margin: 6px 0;
+}
+.thread > details > summary {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 14px;
+}
+.thread.resolved { opacity: 0.85; }
+.thread form.thread-status { margin: 4px 0 6px; }

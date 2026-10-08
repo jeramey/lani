@@ -4,6 +4,10 @@
 //! (docs/design.md §11.2), anchor validation (§10.1), relocation (§10.2) and optimistic
 //! concurrency (§11.4). Git commands never run while a database transaction is open.
 
+mod code;
+
+pub use code::{DirectoryEntry, FileContent, MAX_DISPLAY_BYTES, PathContent, PathView};
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

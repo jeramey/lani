@@ -10,6 +10,11 @@
   <dt>Base</dt><dd><code>{{ review.base }}</code>{% if let Some(note) = review.base_note %} <span class="note">{{ note }}</span>{% endif %}</dd>
   <dt>Started</dt><dd>by <span class="author {{ review.created_by.class }}">{{ review.created_by.label }}</span> · {{ review.created }}</dd>
 </dl>
+<nav class="tabs" aria-label="Review views">
+  <a href="{{ review.url }}"{% if review.tab == "overview" %} class="active" aria-current="page"{% endif %}>Overview</a>
+  {% if let Some(url) = review.changes_url %}<a href="{{ url }}"{% if review.tab == "changes" %} class="active" aria-current="page"{% endif %}>Changes</a>{% endif %}
+  <a href="{{ review.files_url }}"{% if review.tab == "files" %} class="active" aria-current="page"{% endif %}>Files</a>
+</nav>
 {% if let Some(notice) = review.repo_notice %}
 <p class="notice">Repository not available: {{ notice }}. Everything LANI has stored is shown, and issues appear as they were when opened. Commenting needs the repository; resolving and closing do not.</p>
 {% endif %}

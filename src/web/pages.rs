@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use super::AppState;
 use super::views::{
-    self, AuthorView, CodeView, CommentView, EventView, FilterLink, IssueRow, PageError,
+    self, AuthorView, CodeView, CommentView, EventView, FilterLink, IssueRow, Link, PageError,
     ReviewHeader, author, review_url,
 };
 use crate::daemon::{self, Health};
@@ -270,6 +270,7 @@ struct IssuePage {
     location: String,
     outdated_reason: Option<String>,
     code: Option<CodeView>,
+    links: Vec<Link>,
     comments: Vec<CommentView>,
     status_action: String,
     comment_action: String,
@@ -309,6 +310,7 @@ pub async fn issue(
         location: views::location(&view),
         outdated_reason,
         code: views::code(&view),
+        links: views::code_links(&view, detail.view.review.base_ref.is_some()),
         comments: view.comments.iter().map(views::comment).collect(),
         status_action: format!("{}/status", views::issue_url(review_id, issue_id)),
         comment_action: format!("{}/comments", views::issue_url(review_id, issue_id)),

@@ -1,0 +1,1 @@
+<nav class="path" aria-label="Path">{% for crumb in crumbs %}{% if !loop.first %}<span class="sep">/</span>{% endif %}{% if let Some(url) = crumb.url %}<a href="{{ url }}">{{ crumb.label }}</a>{% else %}<strong>{{ crumb.label }}</strong>{% endif %}{% endfor %}</nav>

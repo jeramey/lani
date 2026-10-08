@@ -1,0 +1,8 @@
+<figure class="code">
+  <figcaption>{{ excerpt.label }}</figcaption>
+  <table>
+    {% for line in excerpt.lines %}
+    <tr{% if line.highlighted %} class="hl"{% endif %}><td class="ln">{{ line.number }}</td><td class="src"><code>{{ line.html|safe }}</code></td></tr>
+    {% endfor %}
+  </table>
+</figure>

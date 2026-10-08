@@ -37,6 +37,9 @@ pub struct SummaryForm {
 #[derive(Deserialize)]
 pub struct BodyForm {
     body: String,
+    /// The page to return to, when the form is not on the issue's own page.
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -44,12 +47,16 @@ pub struct StatusForm {
     status: String,
     #[serde(default)]
     comment: String,
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct EditForm {
     body: String,
     version: i64,
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -210,6 +217,13 @@ pub async fn reopen_review(
     Ok(redirect(&review_url(review_id)))
 }
 
+/// The page a form asked to return to, without its fragment, if it is a local LANI path. Code
+/// views send it so a reply or resolve made there lands back in the code.
+fn back_page(back: Option<&str>) -> Option<String> {
+    let page = back?.split('#').next()?;
+    super::is_safe_next(page).then(|| page.to_string())
+}
+
 /// Fail unless `issue_id` belongs to `review_id`, so URLs cannot mix reviews and issues.
 fn require_issue_in_review(
     service: &crate::service::Service,
@@ -231,6 +245,7 @@ pub async fn comment_on_issue(
     Form(form): Form<BodyForm>,
 ) -> Result<Response, PageError> {
     let body = form.body.clone();
+    let back = back_page(form.back.as_deref());
     let comment = state
         .call(move |service| {
             require_issue_in_review(service, review_id, issue_id)?;
@@ -240,12 +255,16 @@ pub async fn comment_on_issue(
         .map_err(|error| {
             failed(
                 error,
-                issue_url(review_id, issue_id),
-                "Back to the issue",
+                back.clone()
+                    .unwrap_or_else(|| issue_url(review_id, issue_id)),
+                "Back",
                 &form.body,
             )
         })?;
-    Ok(redirect(&comment_url(&comment)))
+    Ok(redirect(&match &back {
+        Some(page) => format!("{page}#c{}", comment.id),
+        None => comment_url(&comment),
+    }))
 }
 
 pub async fn set_issue_status(
@@ -253,7 +272,10 @@ pub async fn set_issue_status(
     Path((review_id, issue_id)): Path<(i64, i64)>,
     Form(form): Form<StatusForm>,
 ) -> Result<Response, PageError> {
-    let back = issue_url(review_id, issue_id);
+    let return_to = back_page(form.back.as_deref());
+    let back = return_to
+        .clone()
+        .unwrap_or_else(|| issue_url(review_id, issue_id));
     let status = match form.status.as_str() {
         "resolved" => IssueStatus::Resolved,
         "open" => IssueStatus::Open,
@@ -263,7 +285,7 @@ pub async fn set_issue_status(
                 "Unknown status",
                 &format!("{other:?} is not an issue status."),
             )
-            .back(back, "Back to the issue"));
+            .back(back, "Back"));
         }
     };
     let comment = (!form.comment.trim().is_empty()).then(|| form.comment.clone());
@@ -273,8 +295,11 @@ pub async fn set_issue_status(
             service.set_issue_status(Actor::Human, issue_id, status, comment.as_deref())
         })
         .await
-        .map_err(|error| failed(error, back.clone(), "Back to the issue", &form.comment))?;
-    Ok(redirect(&back))
+        .map_err(|error| failed(error, back.clone(), "Back", &form.comment))?;
+    Ok(redirect(&match return_to {
+        Some(page) => format!("{page}#issue-{issue_id}"),
+        None => back,
+    }))
 }
 
 pub async fn edit_comment(
@@ -287,8 +312,12 @@ pub async fn edit_comment(
     let result = state
         .call(move |service| service.edit_comment(Actor::Human, comment_id, &body, version))
         .await;
+    let back = back_page(form.back.as_deref());
     match result {
-        Ok(comment) => Ok(redirect(&comment_url(&comment))),
+        Ok(comment) => Ok(redirect(&match &back {
+            Some(page) => format!("{page}#c{}", comment.id),
+            None => comment_url(&comment),
+        })),
         Err(Error::Conflict(_)) => {
             let current = state
                 .call(move |service| service.get_comment(comment_id))

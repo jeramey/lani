@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ path }} · {{ review.title }} · LANI{% endblock %}
+{% block content %}
+{% include "review_header.html" %}
+
+<section class="panel file">
+  {% include "crumbs.html" %}
+  <p class="meta">{{ facts }} · at the head commit <code>{{ head_short }}</code>{% if let Some(url) = changes_url %} · <a href="{{ url }}">changed in this review</a>{% endif %}</p>
+  {% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+</section>
+
+{% if !other_threads.is_empty() %}
+<section class="panel other-issues">
+  <h2>Other issues in this file</h2>
+  <p class="hint">Outdated issues, and issues on the base version, are not shown next to the current lines.</p>
+  {% for thread in other_threads %}{% include "thread.html" %}{% endfor %}
+</section>
+{% endif %}
+
+{% if !lines.is_empty() %}
+<table class="code-view" data-path="{{ path }}" data-commit="{{ head }}">
+  {% for line in lines %}
+  <tr id="L{{ line.number }}" data-line="{{ line.number }}"><td class="ln"><a href="#L{{ line.number }}">{{ line.number }}</a></td><td class="src"><code>{{ line.html|safe }}</code></td></tr>
+  {% for thread in line.threads %}
+  <tr class="thread-row"><td colspan="2">{% include "thread.html" %}</td></tr>
+  {% endfor %}
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

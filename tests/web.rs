@@ -946,3 +946,153 @@ async fn the_base_picker_shows_a_base_that_is_not_a_branch() {
         Some("refs/tags/v1.0")
     );
 }
+
+// ── code views ───────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_files_view_lists_directories_and_marks_changes_and_issues() {
+    let f = fixture();
+    let files = format!("/reviews/{}/files", f.review_id);
+    let (status, headers, _) = send(&f.app, get(&files)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&headers), format!("{files}/"));
+
+    let (status, _, page) = send(&f.app, get(&format!("{files}/"))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(&format!("href=\"{files}/src/\">src</a>")),
+        "{page}"
+    );
+    assert!(page.contains("Changed"), "src holds a changed file: {page}");
+    assert!(page.contains("1 open"), "src holds the open issue: {page}");
+    assert!(
+        page.contains("aria-current=\"page\">Files</a>"),
+        "the Files tab is active"
+    );
+
+    // A directory URL without its slash, and a file URL with one, redirect to the real address.
+    let (status, headers, _) = send(&f.app, get(&format!("{files}/src"))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&headers), format!("{files}/src/"));
+    let (status, headers, _) = send(&f.app, get(&format!("{files}/src/lib.rs/"))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&headers), format!("{files}/src/lib.rs"));
+
+    let (status, _, page) = send(&f.app, get(&format!("{files}/src/"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains(&format!("href=\"{files}/src/lib.rs\">lib.rs</a>")),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!("href=\"{files}/\">..</a>")),
+        "a link to the parent"
+    );
+
+    let (status, _, _) = send(&f.app, get(&format!("{files}/nowhere.rs"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = send(&f.app, get(&format!("{files}/src/%2E%2E/secret"))).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "`..` is refused, never resolved"
+    );
+}
+
+#[tokio::test]
+async fn the_file_view_highlights_code_and_shows_threads_under_their_lines() {
+    let f = fixture();
+    let url = format!("/reviews/{}/files/src/lib.rs", f.review_id);
+    let (status, _, page) = send(&f.app, get(&url)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(&format!("data-commit=\"{}\"", f.repo.head())),
+        "{page}"
+    );
+    assert!(page.contains("<tr id=\"L5\" data-line=\"5\">"), "{page}");
+    assert!(
+        page.contains("class=\"hl-"),
+        "the code is highlighted: {page}"
+    );
+    assert!(page.contains("20 lines"), "{page}");
+    // The issue on line 5 is shown right after line 5, before line 6.
+    let thread = page.find(&format!("id=\"issue-{}\"", f.issue_id)).unwrap();
+    let line5 = page.find("id=\"L5\"").unwrap();
+    let line6 = page.find("id=\"L6\"").unwrap();
+    assert!(line5 < thread && thread < line6, "{page}");
+    assert!(page.contains("changed in this review"), "{page}");
+    assert!(!page.contains("Other issues in this file"));
+
+    // Once its lines change, the issue moves to the box above the code.
+    f.repo.write(
+        "src/lib.rs",
+        &numbered(20).replace("line 5\n", "line FIVE\n"),
+    );
+    f.repo.commit_all("rewrite line 5");
+    let (_, _, page) = send(&f.app, get(&url)).await;
+    let other = page.find("Other issues in this file").unwrap();
+    let thread = page.find(&format!("id=\"issue-{}\"", f.issue_id)).unwrap();
+    assert!(
+        other < thread && thread < page.find("id=\"L1\"").unwrap(),
+        "{page}"
+    );
+    assert!(page.contains("Outdated: "), "{page}");
+}
+
+#[tokio::test]
+async fn replies_from_a_code_view_return_to_it() {
+    let f = fixture();
+    let back = format!("/reviews/{}/files/src/lib.rs", f.review_id);
+    let issue = format!("/reviews/{}/issues/{}", f.review_id, f.issue_id);
+    let (status, headers, _) = send(
+        &f.app,
+        post(
+            &format!("{issue}/comments"),
+            &format!("body=Agreed.&back={}", back.replace('/', "%2F")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        location(&headers).starts_with(&format!("{back}#c")),
+        "{headers:?}"
+    );
+
+    let (_, headers, _) = send(
+        &f.app,
+        post(
+            &format!("{issue}/status"),
+            &format!("status=resolved&back={}", back.replace('/', "%2F")),
+        ),
+    )
+    .await;
+    assert_eq!(location(&headers), format!("{back}#issue-{}", f.issue_id));
+
+    // A return address outside LANI is ignored.
+    let (_, headers, _) = send(
+        &f.app,
+        post(
+            &format!("{issue}/comments"),
+            "body=Again.&back=https%3A%2F%2Fexample.com%2F",
+        ),
+    )
+    .await;
+    assert!(
+        location(&headers).starts_with(&format!("{issue}#c")),
+        "{headers:?}"
+    );
+}
+
+#[tokio::test]
+async fn file_paths_are_encoded_in_links_and_decoded_in_requests() {
+    let f = fixture();
+    f.repo.write("docs/a b#c?.md", "# Title\n");
+    f.repo.commit_all("odd name");
+    let dir = format!("/reviews/{}/files/docs/", f.review_id);
+    let (_, _, page) = send(&f.app, get(&dir)).await;
+    let link = format!("/reviews/{}/files/docs/a%20b%23c%3F.md", f.review_id);
+    assert!(page.contains(&format!("href=\"{link}\"")), "{page}");
+    let (status, _, page) = send(&f.app, get(&link)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Markdown"), "{page}");
+}

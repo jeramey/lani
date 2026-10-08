@@ -1007,7 +1007,9 @@ redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inli
 - **Authorship display.** Described in §11.1. Every issue, comment and the summary shows the
   author's badge, plus *edited by you* or *edited* markers.
 - **Threads.** Comments are linear, oldest first, with a comment box at the bottom. Any comment can
-  be edited in place. Issues have *Resolve* / *Reopen* buttons.
+  be edited in place. Issues have *Resolve* / *Reopen* buttons. Threads shown in a code view
+  send the view's address with each form, so a reply, edit or status change returns there. Only
+  a local LANI path is accepted as that address; anything else is ignored.
 - **Edit conflicts.** As described in §11.4, nothing is silently lost.
 - **Issue placement.** In the file and diff views, a thread renders below its (relocated) end line.
   Outdated issues, and diff-view issues on lines outside the hunks, are listed in a box at the top
@@ -1048,7 +1050,10 @@ redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inli
   20–60 ms once per server lifetime.
 - **Limits.**
   - Files over 1 MiB or 20,000 lines render as plain text.
+  - Files over 10 MiB are not shown at all, only described.
   - Files with a NUL byte in the first 8 KiB are shown as "binary file".
+  - Highlighted HTML is large, about 0.8 KB per line, because each line re-opens its full scope
+    stack. The M4 benchmarks decide whether that needs trimming.
   - Diffs of files with more than 1,500 changed lines are collapsed behind a "Load diff" button.
 - **Diffs.** `git diff` output (§8) is parsed into files → hunks → rows. Each row's HTML comes from
   the highlighted old or new blob, by line number. Diffs are unified only in v1.

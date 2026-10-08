@@ -5,6 +5,7 @@
 
 mod actions;
 mod auth;
+mod code;
 mod pages;
 mod views;
 
@@ -182,6 +183,9 @@ pub fn router(state: AppState) -> Router {
         .route("/reviews/{review_id}", get(pages::review))
         .route("/reviews/{review_id}/issues/{issue_id}", get(pages::issue))
         .route("/issues/{issue_id}", get(pages::issue_redirect))
+        .route("/reviews/{review_id}/files", get(code::files_bare))
+        .route("/reviews/{review_id}/files/", get(code::files_root))
+        .route("/reviews/{review_id}/files/{*path}", get(code::files))
         .route(
             "/settings",
             get(pages::settings).post(actions::save_settings),

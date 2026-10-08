@@ -13,15 +13,9 @@
   {% if let Some(reason) = outdated_reason %}
   <p class="notice">Outdated: {{ reason }}. The code below is how it looked when the issue was opened.</p>
   {% endif %}
-  {% if let Some(excerpt) = code %}
-  <figure class="code">
-    <figcaption>{{ excerpt.label }}</figcaption>
-    <table>
-      {% for line in excerpt.lines %}
-      <tr{% if line.highlighted %} class="hl"{% endif %}><td class="ln">{{ line.number }}</td><td class="src"><pre>{{ line.text }}</pre></td></tr>
-      {% endfor %}
-    </table>
-  </figure>
+  {% if let Some(excerpt) = code %}{% include "code_excerpt.html" %}{% endif %}
+  {% if !links.is_empty() %}
+  <p class="links">{% for link in links %}<a href="{{ link.url }}">{{ link.label }}</a>{% endfor %}</p>
   {% endif %}
 </section>
 

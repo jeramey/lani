@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Files · {{ review.title }} · LANI{% endblock %}
+{% block content %}
+{% include "review_header.html" %}
+
+<section class="panel">
+  {% include "crumbs.html" %}
+  <p class="meta">At the head commit <code>{{ head_short }}</code></p>
+  {% if entries.is_empty() %}
+  <p class="empty">This directory is empty.</p>
+  {% else %}
+  <table class="tree">
+    {% if let Some(url) = parent_url %}
+    <tr><td class="kind dir"></td><td><a href="{{ url }}">..</a></td><td></td></tr>
+    {% endif %}
+    {% for entry in entries %}
+    <tr>
+      <td class="kind {{ entry.kind }}"></td>
+      <td><a href="{{ entry.url }}">{{ entry.name }}</a></td>
+      <td class="marks">{% if entry.changed %}<span class="badge changed">Changed</span>{% endif %}{% if entry.open_issues > 0 %}<span class="badge open">{{ entry.open_issues }} open</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
+{% endblock %}
