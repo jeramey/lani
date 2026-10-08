@@ -361,7 +361,7 @@ pub fn get_issue(conn: &Connection, id: i64) -> Result<Issue> {
     .ok_or_else(|| Error::NotFound(format!("issue {id} does not exist")))
 }
 
-/// List a review's issues by issue number, oldest first. `None` filters mean "all".
+/// List all of a review's issues by issue number, oldest first.
 pub fn list_issues(conn: &Connection, review_id: i64) -> Result<Vec<Issue>> {
     let mut statement = conn.prepare(&format!(
         "SELECT {ISSUE_COLUMNS} FROM issue WHERE review_id = ?1 ORDER BY id"
