@@ -850,11 +850,16 @@ impl Service {
         to: Option<Actor>,
         note: Option<&str>,
     ) -> Result<HandOff> {
-        let review = store::get_review(&self.conn, review_id)?;
-        require_open(&review)?;
         let note = note
             .map(normalize_newlines)
             .filter(|note| !note.trim().is_empty());
+        // Everything the change depends on is read inside the write transaction, so a hand-off
+        // made meanwhile by another session or the web UI is seen, not overwritten.
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let review = store::get_review(&tx, review_id)?;
+        require_open(&review)?;
         if actor == Actor::Human {
             if to == Some(Actor::Human) {
                 return Err(Error::Invalid(
@@ -890,7 +895,7 @@ impl Service {
                 )));
             }
         }
-        let limit = self.round_limit()?;
+        let limit = round_limit(&tx)?;
         let (to, rounds, limit_reached) = match (actor, to) {
             (Actor::Human, to) => (to, 0, None),
             (Actor::Implementer, Some(Actor::Reviewer)) => {
@@ -904,9 +909,6 @@ impl Service {
             (_, to) => (to, review.rounds, None),
         };
         let now = time::now();
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         store::change_turn(
             &tx,
             &store::TurnChange {
@@ -929,11 +931,7 @@ impl Service {
     /// The round limit: how many times the implementer may hand a review back to the reviewer
     /// before it goes to the human (§11.5).
     pub fn round_limit(&self) -> Result<u32> {
-        let value =
-            store::get_setting(&self.conn, settings::ROUND_LIMIT_KEY)?.ok_or_else(|| {
-                Error::NotFound("the round_limit setting is missing from the database".to_string())
-            })?;
-        settings::parse_round_limit(&value)
+        round_limit(&self.conn)
     }
 
     /// Save the round limit. Only the human may change settings.
@@ -1823,6 +1821,14 @@ fn require_repo(repo: &Repo) -> Result<()> {
             repo_missing(repo)
         )))
     }
+}
+
+/// The saved round limit (§11.5).
+fn round_limit(conn: &Connection) -> Result<u32> {
+    let value = store::get_setting(conn, settings::ROUND_LIMIT_KEY)?.ok_or_else(|| {
+        Error::NotFound("the round_limit setting is missing from the database".to_string())
+    })?;
+    settings::parse_round_limit(&value)
 }
 
 fn require_human(actor: Actor, what: &str) -> Result<()> {

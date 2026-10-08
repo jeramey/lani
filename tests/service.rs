@@ -1924,3 +1924,44 @@ fn migrating_a_version_2_database_keeps_its_data_and_event_ids() {
         "old events kept, new ones numbered after them"
     );
 }
+
+#[test]
+fn a_hand_off_made_meanwhile_is_seen_not_overwritten() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut implementer = service(&home);
+    let review_id = start(&mut implementer, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    implementer
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+
+    // The human hands the review to the reviewer in another process; their transaction is open.
+    let human = rusqlite::Connection::open(home.db_path()).unwrap();
+    human.execute_batch("BEGIN IMMEDIATE").unwrap();
+    human
+        .execute(
+            "UPDATE review SET turn = 'reviewer', turn_by = 'human', turn_at = 't', rounds = 0
+             WHERE id = ?1",
+            [review_id],
+        )
+        .unwrap();
+    // Meanwhile the implementer hands the review to the human. It must wait for the human's
+    // change and then refuse, because it is no longer the implementer's turn.
+    let racing = std::thread::spawn(move || {
+        let result = implementer.hand_off(Actor::Implementer, review_id, Some(Actor::Human), None);
+        (result.map(|handed| handed.review.turn), implementer)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    human.execute_batch("COMMIT").unwrap();
+    let (result, implementer) = racing.join().unwrap();
+    expect_invalid(result, "it is the reviewer's turn");
+    let review = implementer.get_review(review_id, None).unwrap().view.review;
+    assert_eq!(
+        (review.turn, review.turn_by),
+        (Some(Actor::Reviewer), Some(Actor::Human)),
+        "the human's hand-off stands"
+    );
+}
