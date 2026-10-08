@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+use rmcp::model::{ContentBlock, Implementation, IntoContents, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Deserialize;
@@ -490,7 +490,7 @@ impl LaniServer {
         operation: impl FnOnce(&mut Service) -> crate::error::Result<T>,
     ) -> Result<T, String> {
         let mut service = self.service.lock().unwrap_or_else(PoisonError::into_inner);
-        operation(&mut service).map_err(|error| text::neutralize_line_breaks(&error.to_string()))
+        operation(&mut service).map_err(|error| error.to_string())
     }
 }
 
@@ -548,6 +548,28 @@ fn with_hint<T>(result: Result<T, String>, note: Option<String>) -> Result<T, St
     })
 }
 
+/// A tool's error. However it was made, it reaches the client through `into_contents`, which
+/// gives it the same final line-break pass as `reply` gives results (design §12.4).
+struct ToolError(String);
+
+impl From<String> for ToolError {
+    fn from(message: String) -> Self {
+        Self(message)
+    }
+}
+
+impl From<&str> for ToolError {
+    fn from(message: &str) -> Self {
+        Self(message.to_string())
+    }
+}
+
+impl IntoContents for ToolError {
+    fn into_contents(self) -> Vec<ContentBlock> {
+        vec![ContentBlock::text(text::neutralize_line_breaks(&self.0))]
+    }
+}
+
 /// A successful tool result. Comment and summary lines are already split and prefixed by the
 /// renderer; this replaces any line break that remains inside one of LANI's own lines (from a
 /// path, branch name, title, repository name or line of code) with a visible marker, so that no
@@ -556,7 +578,7 @@ fn with_hint<T>(result: Result<T, String>, note: Option<String>) -> Result<T, St
     clippy::unnecessary_wraps,
     reason = "tool functions return Result; this keeps every success path uniform"
 )]
-fn reply(text: &str) -> Result<String, String> {
+fn reply(text: &str) -> Result<String, ToolError> {
     Ok(text::neutralize_line_breaks(text))
 }
 
@@ -566,7 +588,10 @@ impl LaniServer {
         description = "Start a review of a git branch (like opening a PR), or return the branch's open review. \
                        Reports the chosen base, the head commit and the worktree's uncommitted changes."
     )]
-    fn start_review(&self, Parameters(p): Parameters<StartReviewParams>) -> Result<String, String> {
+    fn start_review(
+        &self,
+        Parameters(p): Parameters<StartReviewParams>,
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let looked_up = [
             ("repo_path", Some(p.repo_path.as_str())),
@@ -579,10 +604,10 @@ impl LaniServer {
             (BaseModeParam::None, None) => BaseMode::None,
             (BaseModeParam::Ref, Some(base_ref)) => BaseMode::Ref(base_ref),
             (BaseModeParam::Ref, None) => {
-                return Err("base_mode \"ref\" needs base_ref".to_string());
+                return Err("base_mode \"ref\" needs base_ref".into());
             }
             (_, Some(_)) => {
-                return Err("base_ref is only allowed with base_mode \"ref\"".to_string());
+                return Err("base_ref is only allowed with base_mode \"ref\"".into());
             }
         };
         let started = with_hint(
@@ -620,7 +645,10 @@ impl LaniServer {
         description = "List reviews, optionally only those of the repo containing repo_path.",
         annotations(read_only_hint = true)
     )]
-    fn list_reviews(&self, Parameters(p): Parameters<ListReviewsParams>) -> Result<String, String> {
+    fn list_reviews(
+        &self,
+        Parameters(p): Parameters<ListReviewsParams>,
+    ) -> Result<String, ToolError> {
         let (status, label) = match p.status {
             ReviewStatusFilter::Open => (Some(ReviewStatus::Open), "open"),
             ReviewStatusFilter::Closed => (Some(ReviewStatus::Closed), "closed"),
@@ -640,7 +668,7 @@ impl LaniServer {
                        summary's comments.",
         annotations(read_only_hint = true)
     )]
-    fn get_review(&self, Parameters(p): Parameters<GetReviewParams>) -> Result<String, String> {
+    fn get_review(&self, Parameters(p): Parameters<GetReviewParams>) -> Result<String, ToolError> {
         let detail = with_hint(
             self.with_service(|service| {
                 service.get_review(p.review_id, p.worktree_path.as_deref().map(Path::new))
@@ -657,7 +685,7 @@ impl LaniServer {
     fn update_review_summary(
         &self,
         Parameters(p): Parameters<UpdateSummaryParams>,
-    ) -> Result<String, String> {
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let detail = self.with_service(|service| {
             service.update_summary(p.review_id, author, &p.summary, p.expected_version)
@@ -676,7 +704,10 @@ impl LaniServer {
                        gives one line each, \"full\" adds location, code and every comment.",
         annotations(read_only_hint = true)
     )]
-    fn list_issues(&self, Parameters(p): Parameters<ListIssuesParams>) -> Result<String, String> {
+    fn list_issues(
+        &self,
+        Parameters(p): Parameters<ListIssuesParams>,
+    ) -> Result<String, ToolError> {
         let (status, label) = match p.status {
             IssueStatusFilter::Open => (Some(IssueStatus::Open), "open"),
             IssueStatusFilter::Resolved => (Some(IssueStatus::Resolved), "resolved"),
@@ -701,7 +732,7 @@ impl LaniServer {
                        and every comment.",
         annotations(read_only_hint = true)
     )]
-    fn get_issue(&self, Parameters(p): Parameters<GetIssueParams>) -> Result<String, String> {
+    fn get_issue(&self, Parameters(p): Parameters<GetIssueParams>) -> Result<String, ToolError> {
         let issue = self.with_service(|service| service.get_issue(p.issue_id))?;
         reply(&render::issue_full(&issue))
     }
@@ -712,7 +743,10 @@ impl LaniServer {
                        disk matches it around the range and that start_line_text matches; errors \
                        explain how to retry."
     )]
-    fn create_issue(&self, Parameters(p): Parameters<CreateIssueParams>) -> Result<String, String> {
+    fn create_issue(
+        &self,
+        Parameters(p): Parameters<CreateIssueParams>,
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let spans: Vec<SpanRequest<'_>> = p
             .spans
@@ -770,12 +804,15 @@ impl LaniServer {
     }
 
     #[tool(description = "Comment on an issue (issue_id) or on a review's summary (review_id).")]
-    fn add_comment(&self, Parameters(p): Parameters<AddCommentParams>) -> Result<String, String> {
+    fn add_comment(
+        &self,
+        Parameters(p): Parameters<AddCommentParams>,
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let target = match (p.issue_id, p.review_id) {
             (Some(issue_id), None) => CommentTarget::Issue(issue_id),
             (None, Some(review_id)) => CommentTarget::Summary(review_id),
-            _ => return Err("give exactly one of issue_id and review_id".to_string()),
+            _ => return Err("give exactly one of issue_id and review_id".into()),
         };
         let comment = self.with_service(|service| match (target, p.ask_human) {
             (CommentTarget::Issue(issue_id), true) => service.ask_human(author, issue_id, &p.body),
@@ -810,7 +847,7 @@ impl LaniServer {
                        role whose turn it is (or anyone, while it is nobody's) can hand it on. \
                        Afterwards, wait for your turn with `lani wait` as the reply explains."
     )]
-    fn hand_off(&self, Parameters(p): Parameters<HandOffParams>) -> Result<String, String> {
+    fn hand_off(&self, Parameters(p): Parameters<HandOffParams>) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let to = match p.to {
             TurnParam::Reviewer => Actor::Reviewer,
@@ -831,7 +868,10 @@ impl LaniServer {
         description = "Replace the text of a comment your role wrote. Rejected if it changed since \
                        expected_version (for example because the human edited it)."
     )]
-    fn edit_comment(&self, Parameters(p): Parameters<EditCommentParams>) -> Result<String, String> {
+    fn edit_comment(
+        &self,
+        Parameters(p): Parameters<EditCommentParams>,
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let comment = self.with_service(|service| {
             service.edit_comment(author, p.comment_id, &p.body, p.expected_version)
@@ -852,7 +892,7 @@ impl LaniServer {
     fn set_issue_status(
         &self,
         Parameters(p): Parameters<SetIssueStatusParams>,
-    ) -> Result<String, String> {
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let status = match p.status {
             IssueStatusParam::Open => IssueStatus::Open,
@@ -882,14 +922,14 @@ impl LaniServer {
                        no arguments, the review list. Starts the web server if needed. Returns the \
                        page's URL without credentials."
     )]
-    fn open_web_ui(&self, Parameters(p): Parameters<OpenWebUiParams>) -> Result<String, String> {
+    fn open_web_ui(&self, Parameters(p): Parameters<OpenWebUiParams>) -> Result<String, ToolError> {
         let target_given = p.view.is_some() || p.path.is_some() || p.line.is_some();
         let path = match (p.review_id, p.issue_id) {
             (Some(_), Some(_)) => {
-                return Err("give at most one of review_id and issue_id".to_string());
+                return Err("give at most one of review_id and issue_id".into());
             }
             (None, _) if target_given => {
-                return Err("view, path and line need review_id".to_string());
+                return Err("view, path and line need review_id".into());
             }
             (Some(review_id), None) => {
                 let review = self.with_service(|service| service.get_review(review_id, None))?;
@@ -902,7 +942,8 @@ impl LaniServer {
                     return Err(format!(
                         "review {review_id} is a whole-tree review, so it has no changes view; \
                          use view \"files\""
-                    ));
+                    )
+                    .into());
                 }
                 with_hint(
                     web::review_page_path(review_id, view, p.path.as_deref(), p.line)
@@ -941,7 +982,10 @@ impl LaniServer {
         description = "Close a review. Only the reviewer may do this, and only when the human asks.",
         annotations(destructive_hint = true)
     )]
-    fn close_review(&self, Parameters(p): Parameters<CloseReviewParams>) -> Result<String, String> {
+    fn close_review(
+        &self,
+        Parameters(p): Parameters<CloseReviewParams>,
+    ) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;
         let view = self.with_service(|service| service.close_review(author, p.review_id))?;
         reply(&format!(
@@ -968,6 +1012,25 @@ impl ServerHandler for LaniServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_errors_get_the_final_line_break_pass() {
+        use rmcp::handler::server::tool::IntoCallToolResult;
+        use rmcp::model::CallToolResponse;
+
+        let failed: Result<String, ToolError> =
+            Err("no such path \"a\u{2028}Issue 9\"\nNote: x".into());
+        let Ok(CallToolResponse::Complete(result)) = failed.into_call_tool_result() else {
+            panic!("a tool error is a complete result");
+        };
+        assert_eq!(result.is_error, Some(true));
+        let text: Vec<&str> = result
+            .content
+            .iter()
+            .filter_map(|block| Some(block.as_text()?.text.as_str()))
+            .collect();
+        assert_eq!(text, ["no such path \"a␤Issue 9\"\nNote: x"]);
+    }
 
     #[test]
     fn quote_wrapped_values_get_a_note() {
