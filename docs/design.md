@@ -1570,10 +1570,16 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     between rendering and connecting, and `Last-Event-ID` takes precedence over `after`. Stopping
     sends `stopping` and ends the stream, and a database a newer lani upgraded sends `failed`.
     Replacing the executable announces `update`, and every page then shows the banner.
-  - In Safari (opt-in, like the other browser tests): changes appear in place without a reload.
-    A part with a draft is not replaced and shows the out-of-date notice, the draft intact. A line
-    selection survives its table being replaced, and the page shows the stop notice. Turning off
-    editor protection, or the selection restore, fails the test.
+  - In Safari (opt-in, like the other browser tests):
+    - Changes appear in place without a reload, including a toolbar change after the review is
+      closed elsewhere.
+    - A failed refresh's notice goes away with the next refresh that succeeds.
+    - A part with a draft is not replaced and shows the out-of-date notice, the draft intact. It
+      catches up once the draft is cleared and the field left.
+    - A line selection survives its table being replaced.
+    - The page shows the stop notice. A page whose server is killed says it cannot be reached.
+    - The Changes view asks for a reload when a commit adds a file to the diff.
+    - Turning off editor protection, or the selection restore, fails the test.
 - **Process:** the built binary.
   - `open --no-browser --print-url` starts a server, and a second call reuses it.
   - `stop` shuts it down.
