@@ -251,6 +251,37 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         "the comment and the turn, in place",
     );
 
+    // A refresh that fails says so, and the next one that succeeds takes the notice away.
+    let refresh_failed = "[...document.querySelectorAll('.live-notice')]\
+                          .some(notice => notice.textContent.includes('could not be updated'))";
+    browser.run(
+        "window.laniFetch = window.fetch; \
+         window.fetch = () => Promise.reject(new Error('offline')); return true;",
+    );
+    service
+        .add_comment(
+            Actor::Implementer,
+            CommentTarget::Summary(review_id),
+            "While offline.",
+        )
+        .unwrap();
+    browser.wait_for(&format!("return {refresh_failed};"), "the failed refresh");
+    browser.run("window.fetch = window.laniFetch; return true;");
+    service
+        .add_comment(
+            Actor::Implementer,
+            CommentTarget::Summary(review_id),
+            "Back online.",
+        )
+        .unwrap();
+    browser.wait_for(
+        &format!(
+            "return {in_place} && !({refresh_failed}) \
+             && document.querySelector('#conversation').textContent.includes('Back online.');"
+        ),
+        "the next refresh, without the notice",
+    );
+
     // A draft in progress is never replaced; its part says it is out of date instead.
     browser.type_text("#new-summary-comment", "My draft");
     service
@@ -342,8 +373,8 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     let stopped = lani(&fixture.home.path, &["stop"]);
     assert!(stopped.status.success());
     browser.wait_for(
-        "const notice = document.querySelector('#live-notice'); \
-         return !!notice && notice.textContent.startsWith('LANI was stopped.');",
+        "return [...document.querySelectorAll('.live-notice')]\
+           .some(notice => notice.textContent.startsWith('LANI was stopped.'));",
         "the stop notice",
     );
 }

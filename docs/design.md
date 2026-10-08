@@ -1221,7 +1221,8 @@ work on the review.
 - **Refresh.** On `changed`, `lani.js` fetches the page again and compares each part marked
   `data-live` with the HTML the server last sent for it. It does not compare with the page as
   shown, which the script and the reader change (a line selection, an opened thread). Parts that
-  differ are replaced, and a code view's line selection is restored from the URL afterwards.
+  differ are replaced, and a code view's line selection is restored from the URL afterwards. If
+  the fetch fails, a notice says so until a later refresh succeeds.
 - **Open editors.** A part is never replaced while someone may be writing in it: a field in it
   has focus or unsaved changes, or an inline editor (`<details class="inline-edit">`) or the
   new-issue form is open. It shows *"Updated elsewhere. Reload to see the changes; copy anything

@@ -228,7 +228,7 @@
       stream.addEventListener(name, (event) => {
         ended = true;
         disconnect();
-        showNotice(event.data);
+        showNotice("ended", event.data);
       });
     }
   }
@@ -258,14 +258,19 @@
         });
         if (!response.ok) {
           showNotice(
+            "refresh",
             "This page could not be updated (HTTP " + response.status + "). Reload it to see why."
           );
           return;
         }
         update(new DOMParser().parseFromString(await response.text(), "text/html"));
+        clearNotice("refresh");
       } while (refreshAgain);
     } catch (error) {
-      showNotice("This page could not be updated: " + error.message + ". Reload it to try again.");
+      showNotice(
+        "refresh",
+        "This page could not be updated: " + error.message + ". Reload it to try again."
+      );
     } finally {
       refreshing = false;
     }
@@ -349,16 +354,25 @@
     part.prepend(notice);
   }
 
-  // A notice above the page, for the server stopping or the page failing to update.
-  function showNotice(text) {
-    let notice = document.getElementById("live-notice");
+  // Notices above the page, at most one of each kind:
+  // - "ended": the server stopped, or this page can no longer be updated. It stays.
+  // - "refresh": fetching the page failed. The next refresh that succeeds removes it.
+  function showNotice(kind, text) {
+    let notice = document.getElementById("live-notice-" + kind);
     if (!notice) {
       notice = document.createElement("p");
-      notice.id = "live-notice";
+      notice.id = "live-notice-" + kind;
       notice.className = "notice live-notice";
       document.querySelector("main").prepend(notice);
     }
     notice.textContent = text;
+  }
+
+  function clearNotice(kind) {
+    const notice = document.getElementById("live-notice-" + kind);
+    if (notice) {
+      notice.remove();
+    }
   }
 
   document.addEventListener("visibilitychange", () => {
