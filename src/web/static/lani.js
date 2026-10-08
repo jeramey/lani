@@ -210,6 +210,11 @@
   let stream = null;
   // Set once the server has said it stopped, or that this page can no longer be updated.
   let ended = false;
+  // Failed attempts in a row to reach the server. The first can be a dropped connection that the
+  // browser restores at once; the second means the server is gone. A page that was hidden when
+  // the server stopped never heard `stopping`, so this is how it finds out.
+  let failures = 0;
+  const UNREACHABLE_AFTER = 2;
 
   // Only a visible page keeps a stream open: browsers allow a handful of connections per host,
   // and every open stream holds one. A page shown again catches up through `after`.
@@ -231,6 +236,27 @@
         showNotice("ended", event.data);
       });
     }
+    stream.addEventListener("open", () => {
+      failures = 0;
+      clearNotice("unreachable");
+    });
+    stream.addEventListener("error", (event) => {
+      if (event.target.readyState === EventSource.CLOSED) {
+        // The server answered, but not with a stream, so the browser gives up.
+        ended = true;
+        disconnect();
+        showNotice("ended", "Live updates could not start. Reload the page to see why.");
+        return;
+      }
+      // The browser keeps trying to reconnect.
+      failures += 1;
+      if (failures >= UNREACHABLE_AFTER) {
+        showNotice(
+          "unreachable",
+          "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open it again."
+        );
+      }
+    });
   }
 
   function disconnect() {
@@ -356,6 +382,7 @@
 
   // Notices above the page, at most one of each kind:
   // - "ended": the server stopped, or this page can no longer be updated. It stays.
+  // - "unreachable": the stream cannot reach the server. Reconnecting removes it.
   // - "refresh": fetching the page failed. The next refresh that succeeds removes it.
   function showNotice(kind, text) {
     let notice = document.getElementById("live-notice-" + kind);

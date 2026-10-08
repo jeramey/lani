@@ -379,6 +379,27 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     );
 }
 
+#[test]
+#[ignore = "needs Safari with remote automation enabled; run with --ignored"]
+fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
+    let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
+    let fixture = Fixture::new();
+    let browser = WebDriver::safari();
+    let overview = format!("/reviews/{}", fixture.review_id);
+    browser.sign_in(&fixture, &overview);
+    browser.watch_for_problems();
+    // A server that dies without a word: the case of a page that was hidden when its server
+    // stopped, and finds it gone when shown again.
+    let server = lani::daemon::ServerFile::read(&fixture.home.path).unwrap();
+    let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
+    assert!(killed.status.success());
+    browser.wait_for(
+        "return [...document.querySelectorAll('.live-notice')]\
+           .some(notice => notice.textContent.startsWith('LANI cannot be reached'));",
+        "the unreachable notice",
+    );
+}
+
 /// Reply to and resolve an issue from its inline thread; both return to the same view.
 fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str, issue_id: i64) {
     let thread = format!("#issue-{issue_id}");

@@ -1065,7 +1065,8 @@ warning suggesting `lani stop && lani open`. The MCP tool includes the same warn
 - **Before stopping.** Whatever stops it, the server sends a final `stopping` message on open
   live-update streams (§13.5). Pages then show *"LANI stopped after 3h idle. Run lani open, or
   ask Claude to open it again."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
-  it.
+  it. A page that had no stream open, because it was hidden (§13.5), or whose server died without
+  a word, shows *"LANI cannot be reached; it may have stopped. …"* once it finds the server gone.
 - **Status.** `lani status` shows the effective timeout and the time remaining.
 
 ### 13.2 Authentication and browser security (R10)
@@ -1231,6 +1232,12 @@ work on the review.
 - **Hidden pages.** Browsers allow about six HTTP/1.1 connections per host, and every open stream
   holds one. A page therefore closes its stream while it is hidden, and reconnects with `?after`
   when it is shown again, so many open LANI tabs cannot starve each other.
+- **Losing the server.** A hidden page never hears `stopping`. When it is shown again, or when a
+  stream drops without a final message, the browser keeps trying to reconnect. After two failed
+  attempts in a row the page shows *"LANI cannot be reached; it may have stopped. Run lani open,
+  or ask Claude to open it again."*, and a successful reconnect removes it. If the server answers
+  the stream request with an error page instead (it cannot watch the review), the browser gives
+  up and the page says live updates could not start.
 - **Idle timer.** Streams do not count as activity (§13.1). The page fetches that follow a change
   do, since something did change.
 - **Update banner.** The server records the executable it started from (§12.5). Once a newer lani
