@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use rmcp::ServiceExt as _;
 
 use lani::daemon::{self, RunningServer};
@@ -9,7 +9,7 @@ use lani::mcp::LaniServer;
 use lani::paths;
 use lani::service::Service;
 use lani::settings::{self, IdleTimeout};
-use lani::web::{self, ServeOptions};
+use lani::web::{self, ServeOptions, View};
 
 /// LANI — Local Annotations, No Internet: a local code-review loop for Claude Code.
 #[derive(Parser)]
@@ -31,6 +31,12 @@ enum Command {
         /// Show this issue.
         #[arg(long)]
         issue: Option<i64>,
+        /// With --review: the view to show (default: overview, or files with --file).
+        #[arg(long, value_enum, requires = "review")]
+        view: Option<ViewArg>,
+        /// With --review: a file or directory to show, optionally at a line: src/main.rs:42.
+        #[arg(long, value_name = "PATH[:LINE]", requires = "review")]
+        file: Option<String>,
         /// Print the sign-in URL to stdout. It contains the access token, so keep it private.
         #[arg(long)]
         print_url: bool,
@@ -66,9 +72,18 @@ fn main() -> anyhow::Result<()> {
         Command::Open {
             review,
             issue,
+            view,
+            file,
             print_url,
             no_browser,
-        } => open(review, issue, print_url, no_browser),
+        } => {
+            let path = match (review, issue) {
+                (_, Some(issue)) => format!("/issues/{issue}"),
+                (Some(review), None) => review_path(review, view, file.as_deref())?,
+                (None, None) => "/".to_string(),
+            };
+            open(&path, print_url, no_browser)
+        }
         Command::Serve {
             port,
             idle_timeout,
@@ -122,18 +137,38 @@ fn run_mcp() -> anyhow::Result<()> {
     })
 }
 
-fn open(
-    review: Option<i64>,
-    issue: Option<i64>,
-    print_url: bool,
-    no_browser: bool,
-) -> anyhow::Result<()> {
-    let home = home()?;
-    let path = match (review, issue) {
-        (_, Some(issue)) => format!("/issues/{issue}"),
-        (Some(review), None) => format!("/reviews/{review}"),
-        (None, None) => "/".to_string(),
+/// The views `lani open --view` accepts.
+#[derive(Clone, Copy, ValueEnum)]
+enum ViewArg {
+    Overview,
+    Changes,
+    Files,
+}
+
+/// The page path for `lani open --review` with an optional view and `PATH[:LINE]`. A trailing
+/// `:<digits>` is a line number; any other colon is part of the path.
+fn review_path(review: i64, view: Option<ViewArg>, file: Option<&str>) -> anyhow::Result<String> {
+    let (path, line) = match file.and_then(|file| file.rsplit_once(':')) {
+        Some((path, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => (
+            Some(path),
+            Some(
+                line.parse::<u32>()
+                    .context("the line number is too large")?,
+            ),
+        ),
+        _ => (file, None),
     };
+    let view = match (view, path) {
+        (Some(ViewArg::Overview), _) | (None, None) => View::Overview,
+        (Some(ViewArg::Changes), _) => View::Changes,
+        (Some(ViewArg::Files), _) | (None, Some(_)) => View::Files,
+    };
+    Ok(web::review_page_path(review, view, path, line)?)
+}
+
+fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
+    let home = home()?;
+    let path = path.to_string();
     let (server, started) = daemon::ensure_running(&home)?;
     warn_on_version_mismatch(&server);
     if started {

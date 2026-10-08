@@ -332,6 +332,32 @@ fn open_web_ui_starts_the_server_and_opens_the_browser() {
     assert!(missing.contains("review 99 does not exist"), "{missing}");
 
     let opened = client.ok("open_web_ui", json!({"review_id": 1}));
+    // Views, files and lines: a path alone means the Files view.
+    let file = client.ok(
+        "open_web_ui",
+        json!({"review_id": 1, "path": "src/lib.rs", "line": 5}),
+    );
+    assert!(file.contains("/reviews/1/files/src/lib.rs#L5 in"), "{file}");
+    let diff = client.ok(
+        "open_web_ui",
+        json!({"review_id": 1, "view": "changes", "path": "src/lib.rs"}),
+    );
+    assert!(
+        diff.contains("/reviews/1/changes#file-7372632f6c69622e7273 in"),
+        "{diff}"
+    );
+    let no_review = client.err("open_web_ui", json!({"path": "src/lib.rs"}));
+    assert!(no_review.contains("need review_id"), "{no_review}");
+    let no_file = client.err("open_web_ui", json!({"review_id": 1, "line": 5}));
+    assert!(no_file.contains("a line needs a file"), "{no_file}");
+    let quoted = client.err(
+        "open_web_ui",
+        json!({"review_id": 1, "path": "\"src/../x\""}),
+    );
+    assert!(
+        quoted.contains("wrapped in double quotes"),
+        "copied quotes get a hint: {quoted}"
+    );
     let stop = common::output(
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .arg("stop")
@@ -351,6 +377,20 @@ fn open_web_ui_starts_the_server_and_opens_the_browser() {
         String::from_utf8_lossy(&stop.stdout).starts_with("Stopped"),
         "server was running"
     );
+}
+
+#[test]
+fn open_web_ui_refuses_the_changes_view_of_a_whole_tree_review() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut client = McpClient::start_with_env(&home.path, &[("BROWSER", "true")]);
+    client.ok(
+        "start_review",
+        json!({"repo_path": repo.path.to_str().unwrap(), "title": "t", "author": "reviewer",
+               "base_mode": "none"}),
+    );
+    let refused = client.err("open_web_ui", json!({"review_id": 1, "view": "changes"}));
+    assert!(refused.contains("whole-tree review"), "{refused}");
 }
 
 #[test]

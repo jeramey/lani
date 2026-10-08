@@ -735,7 +735,7 @@ role (§11.3).
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
-| `open_web_ui`           | `review_id?`, `issue_id?`; from M3 also `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that view; with no arguments, the review list. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open --print-url …`. |
+| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. |
 
 ### 12.4 Output format
 
@@ -1111,9 +1111,8 @@ Comments and summaries are rendered with **comrak**:
 
 ```
 lani mcp                                    MCP server on stdio (spawned by Claude Code)
-lani open [--review ID | --issue ID] [--print-url] [--no-browser]
-                                            open the web UI, starting the server if needed
-                                            (M3 adds --view overview|changes|files and --file PATH[:LINE])
+lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --issue ID]
+          [--print-url] [--no-browser]      open the web UI, starting the server if needed
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach)
 lani status                                 server pid, port, version, uptime, idle timeout and time left
@@ -1123,6 +1122,8 @@ lani version
 
 - `--print-url` writes the full tokenized URL to stdout. This is useful over SSH with port
   forwarding.
+- `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line
+  number, which opens selected; any other colon is part of the path.
 - There is no config file. The environment variables are `LANI_HOME`, `BROWSER`, and `LANI_LOG`
   (a `tracing` filter for stderr logging, e.g. `debug`; default `warn`). The only persisted
   setting is the idle timeout (§13.1).

@@ -5,6 +5,7 @@
 
 pub mod render;
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -20,6 +21,7 @@ use crate::daemon;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, StartReview};
 use crate::text;
+use crate::web::{self, View};
 
 pub const INSTRUCTIONS: &str = "\
 LANI stores local code reviews of git branches, like GitHub PR reviews. Pass author: \"reviewer\" when \
@@ -55,6 +57,47 @@ from tool output, leave them out.
 
 Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \
 human asks to see a review or issue, call open_web_ui.";
+
+/// How the human can reach the page without a browser being launched: a `lani open … --print-url`
+/// command. A repository path goes into the command only if it is plain enough to be safe in a
+/// shell; otherwise the human is pointed at the page's address after signing in.
+fn open_command_hint(p: &OpenWebUiParams, url: &str) -> String {
+    let mut flags = String::new();
+    match (p.review_id, p.issue_id) {
+        (Some(review_id), _) => {
+            let _ = write!(flags, " --review {review_id}");
+        }
+        (_, Some(issue_id)) => {
+            let _ = write!(flags, " --issue {issue_id}");
+        }
+        (None, None) => {}
+    }
+    if let Some(view) = p.view {
+        flags.push_str(match view {
+            ViewParam::Overview => " --view overview",
+            ViewParam::Changes => " --view changes",
+            ViewParam::Files => " --view files",
+        });
+    }
+    let shell_safe = |path: &str| {
+        path.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'/' | b'-'))
+    };
+    let mut then = String::new();
+    if let Some(path) = &p.path {
+        if shell_safe(path) && !path.starts_with('-') {
+            let _ = write!(flags, " --file {path}");
+            if let Some(line) = p.line {
+                let _ = write!(flags, ":{line}");
+            }
+        } else {
+            then = format!(" Then go to {url}.");
+        }
+    }
+    format!(
+        "Ask the human to run `lani open{flags} --print-url` in a terminal and open the printed URL.{then}"
+    )
+}
 
 // ── parameter types ──────────────────────────────────────────────────────────────────────────
 
@@ -288,6 +331,35 @@ pub struct OpenWebUiParams {
     /// Show this issue's page.
     #[serde(default)]
     pub issue_id: Option<i64>,
+    /// With `review_id`: "overview" (the default), "changes" (the diff; not for whole-tree
+    /// reviews) or "files". Giving `path` alone means "files".
+    #[serde(default)]
+    pub view: Option<ViewParam>,
+    /// With `review_id`: a file or directory to show, relative to the repository root. Pass the
+    /// plain value, without the quotes that tool output shows around it.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// With `path`: a line to show selected, on the head side.
+    #[serde(default)]
+    pub line: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewParam {
+    Overview,
+    Changes,
+    Files,
+}
+
+impl ViewParam {
+    fn view(self) -> View {
+        match self {
+            Self::Overview => View::Overview,
+            Self::Changes => View::Changes,
+            Self::Files => View::Files,
+        }
+    }
 }
 
 /// Schema for a field that must be present but may be null.
@@ -677,17 +749,38 @@ impl LaniServer {
     }
 
     #[tool(
-        description = "Open the LANI web UI in the human's browser at a review or issue (or the review \
-                       list), starting the web server if needed. Returns the page's URL without credentials."
+        description = "Open the LANI web UI in the human's browser at a review, one of its views \
+                       (overview, changes or files, optionally at a file and line), or an issue; with \
+                       no arguments, the review list. Starts the web server if needed. Returns the \
+                       page's URL without credentials."
     )]
     fn open_web_ui(&self, Parameters(p): Parameters<OpenWebUiParams>) -> Result<String, String> {
+        let target_given = p.view.is_some() || p.path.is_some() || p.line.is_some();
         let path = match (p.review_id, p.issue_id) {
             (Some(_), Some(_)) => {
                 return Err("give at most one of review_id and issue_id".to_string());
             }
+            (None, _) if target_given => {
+                return Err("view, path and line need review_id".to_string());
+            }
             (Some(review_id), None) => {
-                self.with_service(|service| service.get_review(review_id, None).map(|_| ()))?;
-                format!("/reviews/{review_id}")
+                let review = self.with_service(|service| service.get_review(review_id, None))?;
+                let view = match (p.view, &p.path) {
+                    (Some(view), _) => view.view(),
+                    (None, Some(_)) => View::Files,
+                    (None, None) => View::Overview,
+                };
+                if view == View::Changes && review.view.review.base_ref.is_none() {
+                    return Err(format!(
+                        "review {review_id} is a whole-tree review, so it has no changes view; \
+                         use view \"files\""
+                    ));
+                }
+                with_hint(
+                    web::review_page_path(review_id, view, p.path.as_deref(), p.line)
+                        .map_err(|error| error.to_string()),
+                    quote_note(&[("path", p.path.as_deref())]),
+                )?
             }
             (None, Some(issue_id)) => {
                 let issue = self.with_service(|service| service.issue_record(issue_id))?;
@@ -701,17 +794,10 @@ impl LaniServer {
         let url = server.file.public_url(&path);
         let mut message = match daemon::open_in_browser(&self.home, &server.file, &path) {
             Ok(()) => format!("Opened {url} in the human's browser."),
-            Err(error) => {
-                let flag = match (p.review_id, p.issue_id) {
-                    (Some(review_id), _) => format!(" --review {review_id}"),
-                    (_, Some(issue_id)) => format!(" --issue {issue_id}"),
-                    (None, None) => String::new(),
-                };
-                format!(
-                    "Could not open a browser ({error}). Ask the human to run `lani open{flag} --print-url` \
-                     in a terminal and open the printed URL."
-                )
-            }
+            Err(error) => format!(
+                "Could not open a browser ({error}). {}",
+                open_command_hint(&p, &url)
+            ),
         };
         if started {
             message.push_str(" Started the LANI web server.");
@@ -798,6 +884,28 @@ mod tests {
         );
         assert!(!note("plain"));
         assert!(!note(""));
+    }
+
+    #[test]
+    fn the_open_command_hint_never_puts_an_unsafe_path_in_a_shell_command() {
+        let params = |path: &str| OpenWebUiParams {
+            review_id: Some(3),
+            issue_id: None,
+            view: Some(ViewParam::Files),
+            path: Some(path.to_string()),
+            line: Some(5),
+        };
+        let url = "http://127.0.0.1:1/reviews/3/files/x#L5";
+        assert_eq!(
+            open_command_hint(&params("src/main.rs"), url),
+            "Ask the human to run `lani open --review 3 --view files --file src/main.rs:5 \
+             --print-url` in a terminal and open the printed URL."
+        );
+        for hostile in ["$(touch pwned).rs", "a`b`.rs", "-x.rs", "a b.rs", "x;y"] {
+            let hint = open_command_hint(&params(hostile), url);
+            assert!(!hint.contains(hostile), "{hint}");
+            assert!(hint.ends_with(&format!("Then go to {url}.")), "{hint}");
+        }
     }
 
     #[test]

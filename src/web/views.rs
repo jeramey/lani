@@ -48,6 +48,52 @@ pub fn changes_url(review_id: i64) -> String {
     format!("/reviews/{review_id}/changes")
 }
 
+/// A view of a review that `lani open` and the `open_web_ui` tool can open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    Overview,
+    Changes,
+    Files,
+}
+
+/// The page path for a review's `view`, at `file` and `line` when given: the Files view at
+/// `#L<line>`, or the Changes view at the file's diff (and the line on its head side).
+pub fn review_page_path(
+    review_id: i64,
+    view: View,
+    file: Option<&str>,
+    line: Option<u32>,
+) -> crate::error::Result<String> {
+    if let Some(file) = file {
+        crate::anchor::validate_path(file)?;
+    }
+    let invalid = |message: &str| Err(Error::Invalid(message.to_string()));
+    match (view, file, line) {
+        (_, None, Some(_)) => invalid("a line needs a file: give the file's path too"),
+        (View::Overview, Some(_), _) => {
+            invalid("the overview shows no file; choose the files or changes view")
+        }
+        (View::Overview, None, None) => Ok(review_url(review_id)),
+        (View::Files, None, None) => Ok(files_url(review_id, "", true)),
+        (View::Files, Some(file), line) => {
+            // A directory's URL ends with "/"; the server redirects there if `file` is one.
+            let url = files_url(review_id, file, false);
+            Ok(match line {
+                Some(line) => format!("{url}#L{line}"),
+                None => url,
+            })
+        }
+        (View::Changes, None, None) => Ok(changes_url(review_id)),
+        (View::Changes, Some(file), line) => {
+            let anchor = file_anchor(file);
+            Ok(match line {
+                Some(line) => format!("{}#{anchor}-H{line}", changes_url(review_id)),
+                None => format!("{}#{anchor}", changes_url(review_id)),
+            })
+        }
+    }
+}
+
 /// A repository path as a URL path: every byte outside `A-Z a-z 0-9 - . _ ~` is
 /// percent-encoded, except the `/` between segments.
 #[must_use]
@@ -715,6 +761,37 @@ impl IntoResponse for PageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_page_paths() {
+        let path = |view, file, line| review_page_path(7, view, file, line);
+        assert_eq!(path(View::Overview, None, None).unwrap(), "/reviews/7");
+        assert_eq!(path(View::Files, None, None).unwrap(), "/reviews/7/files/");
+        assert_eq!(
+            path(View::Files, Some("src/a b.rs"), Some(12)).unwrap(),
+            "/reviews/7/files/src/a%20b.rs#L12"
+        );
+        assert_eq!(
+            path(View::Changes, None, None).unwrap(),
+            "/reviews/7/changes"
+        );
+        assert_eq!(
+            path(View::Changes, Some("a.rs"), Some(3)).unwrap(),
+            "/reviews/7/changes#file-612e7273-H3"
+        );
+        assert!(path(View::Overview, Some("a.rs"), None).is_err());
+        assert!(path(View::Files, None, Some(3)).is_err());
+        assert!(path(View::Files, Some("../etc/passwd"), None).is_err());
+        for valid in [
+            path(View::Files, Some("src/a b.rs"), Some(12)).unwrap(),
+            path(View::Changes, Some("a.rs"), Some(3)).unwrap(),
+        ] {
+            assert!(
+                crate::web::is_safe_next(&valid),
+                "{valid} must survive sign-in"
+            );
+        }
+    }
 
     #[test]
     fn repo_locations() {

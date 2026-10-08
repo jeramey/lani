@@ -24,7 +24,7 @@ use crate::service::Service;
 use crate::settings::IdleTimeout;
 
 pub use auth::{allowed_host, is_safe_next, same_origin};
-pub use views::repo_location;
+pub use views::{View, repo_location, review_page_path};
 
 /// How often the background task checks the idle timer and sweeps redirect files.
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(15);

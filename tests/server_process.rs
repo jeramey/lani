@@ -110,6 +110,53 @@ fn open_starts_a_server_once_and_stop_removes_it() {
 }
 
 #[test]
+fn open_reaches_views_files_and_lines() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let url = |args: &[&str]| {
+        let mut all = vec!["open", "--no-browser", "--print-url", "--review", "3"];
+        all.extend_from_slice(args);
+        stdout(&lani(&home, &all))
+    };
+    // `next` is percent-encoded, so the `#` of a line reaches the sign-in page intact.
+    assert!(
+        url(&["--file", "src/a b.rs:12"]).ends_with("&next=/reviews/3/files/src/a%2520b.rs%23L12"),
+        "a file alone opens the Files view at the line"
+    );
+    assert!(url(&["--view", "files"]).ends_with("&next=/reviews/3/files/"));
+    assert!(
+        url(&["--view", "changes", "--file", "a.rs"])
+            .ends_with("&next=/reviews/3/changes%23file-612e7273")
+    );
+    assert!(
+        url(&["--file", "notes:v2.txt"]).ends_with("&next=/reviews/3/files/notes%253Av2.txt"),
+        "a colon not followed by digits is part of the path"
+    );
+
+    let without_review = lani(&home, &["open", "--no-browser", "--file", "a.rs"]);
+    assert!(!without_review.status.success(), "--file needs --review");
+    let overview_file = lani(
+        &home,
+        &[
+            "open",
+            "--no-browser",
+            "--review",
+            "3",
+            "--view",
+            "overview",
+            "--file",
+            "a.rs",
+        ],
+    );
+    assert!(!overview_file.status.success());
+    assert!(
+        String::from_utf8_lossy(&overview_file.stderr).contains("the overview shows no file"),
+        "{}",
+        String::from_utf8_lossy(&overview_file.stderr)
+    );
+}
+
+#[test]
 fn concurrent_opens_start_exactly_one_server() {
     let home = TestHome::new();
     let _stop = StopOnDrop(&home);
