@@ -1255,12 +1255,14 @@ lani status                                 server pid, port, version, uptime, i
 lani stop                                   stop the running server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
                                             wait until it is that role's turn (§11.5); exits 0 on
-                                            its turn, 3 if the review is closed, 2 on timeout
+                                            its turn, 3 if the review is closed, 4 on timeout
 lani version
 ```
 
 - `--print-url` writes the full tokenized URL to stdout. This is useful over SSH with port
   forwarding.
+- Every command exits 1 on an error and 2 on a usage error (from clap). `lani wait` therefore
+  uses 3 and 4 for its other outcomes, so a mistyped command never looks like a timeout.
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line
   number, which opens selected; any other colon is part of the path.
 - There is no config file. The environment variables are `LANI_HOME`, `BROWSER`, and `LANI_LOG`

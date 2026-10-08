@@ -379,7 +379,7 @@ fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() 
     let timed_out = wait("reviewer", &["--timeout", "1s"])
         .wait_with_output()
         .unwrap();
-    assert_eq!(timed_out.status.code(), Some(2));
+    assert_eq!(timed_out.status.code(), Some(4), "not 2, a usage error");
     assert!(
         String::from_utf8_lossy(&timed_out.stdout).contains("it is the implementer's turn"),
         "{}",
@@ -393,5 +393,5 @@ fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() 
     let bad = wait("reviewer", &["--timeout", "soon"])
         .wait_with_output()
         .unwrap();
-    assert!(!bad.status.success());
+    assert_eq!(bad.status.code(), Some(1), "an error, not a timeout");
 }

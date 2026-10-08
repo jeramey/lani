@@ -65,7 +65,7 @@ enum Command {
     Stop,
     /// Wait until it is a role's turn on a review, then print what to do (§11.5). Claude runs this
     /// as a background command after `hand_off`. Exits 0 when it is the role's turn, 3 if the
-    /// review is closed, and 2 when --timeout passes.
+    /// review is closed, and 4 when --timeout passes; 1 and 2 are errors, as for every command.
     Wait {
         /// The review to watch.
         #[arg(long)]
@@ -171,7 +171,8 @@ fn wait(review_id: i64, role: RoleArg, timeout: Option<&str>) -> anyhow::Result<
             print(&format!(
                 "Still not your turn on review {review_id}: it is {holder}'s turn.\n"
             ));
-            std::process::exit(2);
+            // Not 2, which clap uses for usage errors.
+            std::process::exit(4);
         }
     }
 }
