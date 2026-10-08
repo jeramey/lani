@@ -25,7 +25,7 @@ All of it happens on your machine. You open a GitHub PR only after the loop has 
 | R10 | Localhost URL protected by a hard-to-guess token (Jupyter-style)                              | §13.2, §15      |
 | R11 | It is always clear whether you or Claude Code wrote an issue or comment; text stays editable  | §11.1, §13.4    |
 | R12 | Each review has a title and a summary of intent with its own comment thread; one review per branch | §4, §7     |
-| R13 | Every issue is anchored to specific lines; issues have no titles                              | §4, §10         |
+| R13 | Every issue is anchored to specific lines and has a one-line title and a severity             | §4, §10         |
 | R14 | Only committed code is reviewable                                                             | §10.1           |
 | R15 | Only the reviewer and you can resolve issues; the implementer cannot                          | §11.2, §11.3    |
 | R16 | Web server stops after 3 h idle by default; tunable (including "never") in the web UI and with a CLI flag | §13.1 |
@@ -119,7 +119,7 @@ fixes so the reviewer can diff them.
 | Pull request                    | **Review**             | A head branch under review, with a title. A *diff review* compares it to a base branch; a *whole-tree review* has no base (§9). |
 | PR description                  | **Review summary**     | Markdown describing the intent of the change, editable by everyone. |
 | PR conversation                 | **Summary comments**   | A linear comment thread attached to the summary. |
-| Review thread / line comment    | **Issue**              | Anchored to a line range in one file. It has no title, an `open`/`resolved` status, and a linear chain of comments. |
+| Review thread / line comment    | **Issue**              | Anchored to a line range in one file. It has a one-line title, a severity (`high`, `medium`, `low` or `nit`), an `open`/`resolved` status, and a linear chain of comments. |
 | Comment / reply                 | **Comment**            | Markdown. An issue's first comment is its description. |
 | Resolve conversation            | **Resolve**            | Done by the reviewer or you, never the implementer. |
 | Outdated comment                | **Outdated** anchor    | The anchored lines changed after the issue was created. |
@@ -135,8 +135,11 @@ branch's earlier reviews are all closed, `start_review` creates a new review, an
 remain as history. Closed reviews are read-only until you reopen them in the web UI. Reopening fails
 if the branch already has another open review.
 
-**Issue labels.** Issues have no titles. Lists show an issue by its location and the first line of
-its first comment, truncated to 80 characters.
+**Issue titles and severity.** Every issue has a title, one line of at most 200 characters naming
+the problem, and a severity: `high`, `medium`, `low`, or `nit` for a minor polish point. Lists show
+an issue by its title, severity and location. The author sets both when opening the issue, and only
+you can change them later, in the web UI (§11.2). The severity is its own field, so it does not
+belong in the title.
 
 **IDs.** Reviews, issues and comments have global integer IDs, shown as `Review 3`, `Issue 57` and
 `c201`. A single integer addresses anything, which keeps tool parameters simple.
@@ -261,6 +264,8 @@ CREATE TABLE issue (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id     INTEGER NOT NULL REFERENCES review(id),
   author        TEXT NOT NULL CHECK (author IN ('human', 'reviewer', 'implementer')),
+  title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 200),  -- one line
+  severity      TEXT NOT NULL CHECK (severity IN ('high', 'medium', 'low', 'nit')),
   status        TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
   resolved_by   TEXT CHECK (resolved_by IN ('human', 'reviewer')),  -- implementers cannot resolve
   resolved_at   TEXT,
@@ -272,9 +277,13 @@ CREATE TABLE issue (
   snippet       TEXT NOT NULL,                      -- anchored lines ±3 context lines, at creation
   snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
   created_at    TEXT NOT NULL,
+  edited_by     TEXT CHECK (edited_by IN ('human', 'reviewer', 'implementer')),  -- title/severity
+  edited_at     TEXT,
+  version       INTEGER NOT NULL,                   -- of title and severity (§11.4)
   UNIQUE (id, review_id),                           -- parent key for comment's composite FK
   CHECK ((status = 'open'     AND resolved_by IS NULL     AND resolved_at IS NULL)
-      OR (status = 'resolved' AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL))
+      OR (status = 'resolved' AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL)),
+  CHECK ((edited_by IS NULL) = (edited_at IS NULL))
 ) STRICT;
 CREATE INDEX issue_by_review ON issue(review_id, status);
 
@@ -303,7 +312,7 @@ CREATE TABLE event (
   comment_id INTEGER REFERENCES comment(id),
   kind       TEXT NOT NULL CHECK (kind IN (
                'review_created', 'review_retitled', 'review_base_changed', 'review_closed',
-               'review_reopened', 'summary_updated', 'issue_created', 'issue_resolved',
+               'review_reopened', 'summary_updated', 'issue_created', 'issue_edited', 'issue_resolved',
                'issue_reopened', 'comment_added', 'comment_edited')),
   actor      TEXT NOT NULL CHECK (actor IN ('human', 'reviewer', 'implementer')),
   created_at TEXT NOT NULL
@@ -334,7 +343,12 @@ Notes:
 
 Migrations are numbered SQL files embedded in the binary and tracked with `PRAGMA user_version`.
 They are applied on open inside `BEGIN IMMEDIATE`, so concurrent first runs are safe. Migrations
-only move forward. A binary that finds `user_version` higher than it knows refuses to run and asks
+only move forward.
+
+The schema starts from a baseline at version 2 (`0002_baseline.sql`). Version 1 was the schema of
+development builds before issues gained titles and severity; it was restructured rather than
+migrated, because no data needed keeping. A database at version 1 is refused with instructions to
+stop the server and move the file aside, after which LANI creates a new one. A binary that finds `user_version` higher than it knows refuses to run and asks
 you to upgrade. For example, an old web server still running after a new binary migrated the DB is
 fixed with `lani stop && lani open`.
 
@@ -639,6 +653,7 @@ object database, the issue is treated as outdated.
 | Comment on the summary or an issue        | ✓            | ✓                  | ✓                  |
 | Create an issue                           | ✓            | ✓                  | ✓                  |
 | Edit a comment                            | any          | own role's only    | own role's only    |
+| Change an issue's title or severity       | ✓            | —                  | —                  |
 | Resolve or reopen an issue                | ✓            | ✓                  | **✗**              |
 | Close a review                            | ✓            | only when you ask  | ✗                  |
 | Reopen a closed review                    | ✓            | —                  | —                  |
@@ -730,7 +745,7 @@ role (§11.3).
 | `update_review_summary` | `review_id`, `author`, `summary`, `expected_version` | Replace the summary. Rejected if it changed after `expected_version`. |
 | `list_issues`           | `review_id`, `status` (`open`\|`resolved`\|`all`), `detail` (`summary`\|`full`), `path?` | **R5.** `summary` gives one line per issue. `full` gives the anchor, current or original code, and the whole comment chain. `path` keeps the issues in that file: the file an issue was opened on, or the file its lines are in now after a rename. The header's "not shown" count of issues left out by `status` covers the same file, or the whole review without `path`. |
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
-| `create_issue`          | `review_id`, `author`, `body`, `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`, `commit`, `worktree_path` | §10.1. `worktree_path` is a string or explicitly `null`. |
+| `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`, `commit`, `worktree_path` | §10.1. `title` is one line naming the problem, without the severity. `worktree_path` is a string or explicitly `null`. |
 | `add_comment`           | `author`, `body`, `issue_id?`, `review_id?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
@@ -814,9 +829,9 @@ issues: 3 open, 5 resolved
 Review 3 "Add token-bucket rate limiter" · "feature/rate-limit" → "main"
 head 3f9c2a1 · merge-base 9e8d7c6 · showing 3 open · not shown: 5 resolved
 
-Issue 57 · open · "src/limiter.rs":42-44 (outdated) · "`elapsed_ms * self.rate` overflows u64 after a long…" · 2 comments, last: implementer
-Issue 58 · open · "src/limiter.rs":88-90 · "No test covers a burst larger than capacity." · 1 comment, last: reviewer
-Issue 61 · open · "README.md":12 · "Document the refill algorithm here." · 1 comment, last: human
+Issue 57 · open · high · "Refill overflows u64 after a long idle period" · "src/limiter.rs":42-44 (outdated) · 2 comments, last: implementer
+Issue 58 · open · medium · "No test covers a burst larger than capacity" · "src/limiter.rs":88-90 · 1 comment, last: reviewer
+Issue 61 · open · nit · "Document the refill algorithm" · "README.md":12 · 1 comment, last: human
 ```
 
 For a whole-tree review the header reads, for example, `Review 4 "Audit of main" · "main" (whole
@@ -825,7 +840,8 @@ tree) · head 77ab12c`.
 `get_issue(issue_id=57)`:
 
 ````
-Issue 57 · open · review 3 · opened by reviewer
+Issue 57 · open · high · review 3 · opened by reviewer
+Title: "Refill overflows u64 after a long idle period"
 Location: "src/limiter.rs":42-44 (head side) @ a1b2c3d — OUTDATED: the lines changed between a1b2c3d and 3f9c2a1
 Original code @ a1b2c3d:
 ```rust
@@ -1084,7 +1100,6 @@ Comments and summaries are rendered with **comrak**:
   (` ```rust `); unknown languages are shown as plain text.
 - Links open in the same tab, and `Referrer-Policy: same-origin` keeps LANI URLs from leaking to
   linked sites, so no `rel` attributes are needed.
-- One-line previews in lists render the first line of a description as inline Markdown.
 - Markdown is rendered on every request. A cache keyed by (object, version) is deferred until
   the M4 benchmarks show rendering matters (§21).
 
@@ -1389,7 +1404,7 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Interdiff: "changes since the last round".
 - Side-by-side diff view, and expanding context lines in the diff. v1 links to the file view
   instead.
-- Issue severity or category labels, with filters.
+- Issue category labels ("correctness", "docs"…), and filtering issues by severity or category.
 - Filtering the overview's issue list by author and by file (§13.3). The overview filters by
   status only; to be designed later.
 - Suggested-change blocks that can be applied as patches.
@@ -1428,7 +1443,7 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 | D5  | Resolving issues               | The reviewer and you only. The implementer is blocked by the service layer, a DB constraint and the session role lock (§11). |
 | D6  | Review types and bases         | Diff reviews against an auto-detected parent or an explicit base; whole-tree reviews with no base, which is the automatic choice on the default branch. The base can be changed in the web UI (§9). |
 | D7  | Web server lifetime            | 3 h idle timeout by default, set in the web UI (saved) or with `--idle-timeout` (one run); `never` is allowed (§13.1). |
-| D8  | Titles, anchors and threads    | Reviews have titles and issues do not. Every issue anchors to lines. Comments are linear. The summary has its own comment thread (§4). |
+| D8  | Titles, anchors and threads    | Reviews and issues have titles; issues also have a severity (`high`, `medium`, `low`, `nit`), revised 2026-10-08. Every issue anchors to lines. Comments are linear. The summary has its own comment thread (§4). |
 | D9  | Anchor commit                  | Claude passes the commit it read plus its worktree path, and LANI verifies the file on disk matches (§10.1). |
 | D10 | Branch with a closed review    | `start_review` creates a new review; closed reviews remain as history (§4). |
 | D11 | Role enforcement               | The per-session role lock is enough. Separate per-role MCP configurations were considered and rejected because they make setup harder (§11.3). |

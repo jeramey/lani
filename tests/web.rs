@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
-use lani::model::{Actor, IssueStatus, Side};
+use lani::model::{Actor, IssueStatus, Severity, Side};
 use lani::service::{CommentTarget, CreateIssue, Service, StartReview};
 use lani::settings::IdleTimeout;
 use lani::web::{self, AppState, Instance, TimeoutSource};
@@ -61,6 +61,8 @@ fn fixture() -> Fixture {
         .create_issue(&CreateIssue {
             review_id,
             author: Actor::Reviewer,
+            title: "A problem",
+            severity: Severity::Medium,
             body: "Use a digit.\n\n<script>alert('pwned')</script>",
             path: "src/lib.rs",
             side: Side::Head,
@@ -1109,6 +1111,8 @@ async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
             let issue = |side, line, text| CreateIssue {
                 review_id,
                 author: Actor::Reviewer,
+                title: "A problem",
+                severity: Severity::Medium,
                 body: "Another.",
                 path: "src/lib.rs",
                 side,
@@ -1199,8 +1203,8 @@ async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
     let back = format!("/reviews/{}/files/src/lib.rs", f.review_id);
     let form = |side: &str, line: u32, merge_base: &str, back: &str| {
         format!(
-            "path=src%2Flib.rs&side={side}&start_line={line}&end_line={}&commit={head}\
-             &merge_base={merge_base}&body=Mine.&back={}",
+            "title=Seven+is+odd&severity=low&path=src%2Flib.rs&side={side}&start_line={line}\
+             &end_line={}&commit={head}&merge_base={merge_base}&body=Mine.&back={}",
             line + 1,
             back.replace('/', "%2F")
         )
@@ -1216,6 +1220,8 @@ async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
         .await
         .unwrap();
     assert_eq!(view.issue.author, Actor::Human);
+    assert_eq!(view.issue.title, "Seven is odd");
+    assert_eq!(view.issue.severity, Severity::Low);
     assert_eq!(
         view.issue.anchor.commit, head,
         "anchored to the rendered commit"
@@ -1238,6 +1244,18 @@ async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
 
     let (status, _, _) = send(&f.app, post(&create, &form("left", 5, "", &back))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    // A severity must be chosen, and a title is one line.
+    let no_severity = form("head", 5, "", &back).replace("severity=low", "severity=");
+    let (status, _, page) = send(&f.app, post(&create, &no_severity)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        page.contains("Choose a severity") && page.contains("Mine."),
+        "{page}"
+    );
+    let two_lines = form("head", 5, "", &back).replace("Seven+is+odd", "One%0ATwo");
+    let (status, _, page) = send(&f.app, post(&create, &two_lines)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains("single line"), "{page}");
     // A return address outside LANI is ignored.
     let (_, headers, _) = send(
         &f.app,
@@ -1247,6 +1265,69 @@ async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
     assert!(
         location(&headers).starts_with(&format!("/reviews/{}#issue-", f.review_id)),
         "{headers:?}"
+    );
+}
+
+#[tokio::test]
+async fn titles_and_severities_are_shown_and_edited_with_version_checks() {
+    let f = fixture();
+    let review = format!("/reviews/{}", f.review_id);
+    let issue = format!("{review}/issues/{}", f.issue_id);
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert!(
+        page.contains(">A problem</a>"),
+        "the list shows the title: {page}"
+    );
+    assert!(
+        page.contains("class=\"badge sev-medium\">medium<"),
+        "{page}"
+    );
+
+    let details = format!("{issue}/details");
+    let (status, headers, _) = send(
+        &f.app,
+        post(&details, "title=Use+a+digit&severity=nit&version=1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&headers), issue);
+    let (_, _, page) = send(&f.app, get(&issue)).await;
+    assert!(
+        page.contains("Use a digit <span class=\"muted\">#"),
+        "{page}"
+    );
+    assert!(page.contains("class=\"badge sev-nit\">nit<"), "{page}");
+    assert!(page.contains("title or severity edited by you"), "{page}");
+    assert!(
+        page.contains("<option value=\"nit\" selected>"),
+        "the picker shows it: {page}"
+    );
+
+    // A stale version is refused and says what the issue is now.
+    let (status, _, page) =
+        send(&f.app, post(&details, "title=Mine&severity=high&version=1")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(page.contains("now version 2"), "{page}");
+    // Saving unchanged values is not an edit.
+    send(
+        &f.app,
+        post(&details, "title=Use+a+digit&severity=nit&version=2"),
+    )
+    .await;
+    let issue_id = f.issue_id;
+    let view = f
+        .state
+        .call(move |service| service.get_issue(issue_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        (view.issue.version, view.issue.edited_by),
+        (2, Some(Actor::Human))
+    );
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert!(
+        page.contains("changed the title or severity of issue #"),
+        "{page}"
     );
 }
 

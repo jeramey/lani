@@ -75,10 +75,10 @@
       <div class="row-main">
         <a href="{{ issue.url }}" class="issue-link">#{{ issue.id }}</a>
         <span class="badge {{ issue.status_class }}">{{ issue.status_label }}</span>
-        <code class="location">{{ issue.location }}</code>
-        {% if issue.outdated %}<span class="badge outdated">Outdated</span>{% endif %}
+        <span class="badge {{ issue.severity.class }}">{{ issue.severity.label }}</span>
+        <a href="{{ issue.url }}" class="issue-title">{{ issue.title }}</a>
       </div>
-      <a href="{{ issue.url }}" class="preview">{{ issue.preview_html|safe }}</a>
+      <p class="meta"><code class="location">{{ issue.location }}</code>{% if issue.outdated %} <span class="badge outdated">Outdated</span>{% endif %}</p>
       <p class="meta">{{ issue.comments }}{% if let Some(last) = issue.last_author %} · last by <span class="author {{ last.class }}">{{ last.label }}</span>{% endif %}</p>
     </li>
     {% endfor %}

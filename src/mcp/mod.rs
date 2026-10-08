@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::base::BaseMode;
 use crate::daemon;
-use crate::model::{Actor, IssueStatus, ReviewStatus, Side};
+use crate::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, StartReview};
 use crate::text;
 use crate::web::{self, View};
@@ -33,7 +33,8 @@ Each review has a summary of the change's intent. Read it first, and keep it acc
 update_review_summary without discarding what others wrote.
 
 Reviewer: call start_review (base_mode \"auto\" unless the human names a base or asks for a whole-tree \
-review), then create_issue once per finding, anchored to the lines concerned. Pass commit = the SHA of the \
+review), then create_issue once per finding, anchored to the lines concerned, with a one-line title \
+naming the problem and a severity (high, medium, low or nit); keep the severity out of the title. Pass commit = the SHA of the \
 commit whose files you read (what `git rev-parse HEAD` prints there, not `HEAD` itself; it should equal \
 the review head) and worktree_path = where you read them. Then call open_web_ui so the human can read \
 and edit. Only committed code can be reviewed: if start_review reports uncommitted changes, tell the \
@@ -163,6 +164,26 @@ pub enum SideParam {
     Base,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SeverityParam {
+    High,
+    Medium,
+    Low,
+    Nit,
+}
+
+impl SeverityParam {
+    fn severity(self) -> Severity {
+        match self {
+            Self::High => Severity::High,
+            Self::Medium => Severity::Medium,
+            Self::Low => Severity::Low,
+            Self::Nit => Severity::Nit,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StartReviewParams {
     /// Absolute path of your worktree (normally your current working directory). Pass the plain
@@ -248,8 +269,14 @@ pub struct CreateIssueParams {
     pub review_id: i64,
     /// Your role in this session.
     pub author: Role,
-    /// The issue description (Markdown). Its first line is used as the issue's label in lists. If
-    /// you quote text from tool output, leave out its `│ ` prefixes.
+    /// One line naming the problem, shown in issue lists: at most 200 characters, without the
+    /// severity (that is its own field). Pass the plain value, without the quotes that tool output
+    /// shows around titles.
+    pub title: String,
+    /// How much the issue matters: "high", "medium", "low", or "nit" for a minor polish point.
+    pub severity: SeverityParam,
+    /// The issue description (Markdown): what is wrong, why it matters, and how to fix it. If you
+    /// quote text from tool output, leave out its `│ ` prefixes.
     pub body: String,
     /// File path relative to the repository root, e.g. "src/main.rs". Pass the plain value, without
     /// the quotes that tool output shows around it.
@@ -644,6 +671,7 @@ impl LaniServer {
             SideParam::Base => Side::Base,
         };
         let hint = quote_note(&[
+            ("title", Some(p.title.as_str())),
             ("path", Some(p.path.as_str())),
             ("worktree_path", p.worktree_path.as_deref()),
         ]);
@@ -652,6 +680,8 @@ impl LaniServer {
                 service.create_issue(&CreateIssue {
                     review_id: p.review_id,
                     author,
+                    title: &p.title,
+                    severity: p.severity.severity(),
                     body: &p.body,
                     path: &p.path,
                     side,
@@ -665,15 +695,19 @@ impl LaniServer {
             }),
             hint,
         )?;
-        reply(&with_prefix_note(
-            format!(
-                "Created issue {} in review {}.\nLocation: {}\n",
-                issue.issue.id,
-                issue.issue.review_id,
-                render::location_text(&issue)
-            ),
-            &p.body,
-        ))
+        let mut message = format!(
+            "Created issue {} in review {}.\nLocation: {}\n",
+            issue.issue.id,
+            issue.issue.review_id,
+            render::location_text(&issue)
+        );
+        if let Some(note) = quote_note(&[("title", Some(p.title.as_str()))]) {
+            let _ = writeln!(
+                message,
+                "{note} It was stored as sent; the human can change it in the web UI."
+            );
+        }
+        reply(&with_prefix_note(message, &p.body))
     }
 
     #[tool(description = "Comment on an issue (issue_id) or on a review's summary (review_id).")]
@@ -911,7 +945,7 @@ mod tests {
     #[test]
     fn worktree_path_is_required_but_nullable() {
         let base = serde_json::json!({
-            "review_id": 1, "author": "reviewer", "body": "b", "path": "a.rs", "side": "head",
+            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "a.rs", "side": "head",
             "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"
         });
         assert!(serde_json::from_value::<CreateIssueParams>(base.clone()).is_err());

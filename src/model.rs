@@ -61,6 +61,16 @@ db_enum!(ReviewStatus { Open => "open", Closed => "closed" });
 db_enum!(IssueStatus { Open => "open", Resolved => "resolved" });
 
 db_enum!(
+    /// How much an issue matters, as its author judged it.
+    Severity {
+        High => "high",
+        Medium => "medium",
+        Low => "low",
+        Nit => "nit",
+    }
+);
+
+db_enum!(
     /// Which version of a file an issue's line numbers refer to: the head commit, or the
     /// merge-base with the review's base branch (for lines the branch deleted).
     Side {
@@ -87,6 +97,7 @@ db_enum!(
         ReviewReopened => "review_reopened",
         SummaryUpdated => "summary_updated",
         IssueCreated => "issue_created",
+        IssueEdited => "issue_edited",
         IssueResolved => "issue_resolved",
         IssueReopened => "issue_reopened",
         CommentAdded => "comment_added",
@@ -141,11 +152,19 @@ pub struct Issue {
     pub id: i64,
     pub review_id: i64,
     pub author: Actor,
+    /// One line naming the problem, shown in lists.
+    pub title: String,
+    pub severity: Severity,
     pub status: IssueStatus,
     pub resolved_by: Option<Actor>,
     pub resolved_at: Option<String>,
     pub anchor: Anchor,
     pub created_at: String,
+    /// Who last changed the title or severity, if anyone did after creation.
+    pub edited_by: Option<Actor>,
+    pub edited_at: Option<String>,
+    /// The version of the title and severity, for optimistic concurrency (§11.4).
+    pub version: i64,
 }
 
 #[derive(Clone, Debug)]

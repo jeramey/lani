@@ -14,11 +14,16 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use crate::error::{Error, Result};
 use crate::model::{
     Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
-    ReviewStatus,
+    ReviewStatus, Severity,
 };
 
-/// Migrations in order; migration `n` (1-based) brings the schema to `user_version = n`.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_initial.sql")];
+/// Migrations in order. The first creates the baseline schema at [`BASELINE_VERSION`]; each
+/// later one brings the schema to the next `user_version`.
+const MIGRATIONS: &[&str] = &[include_str!("migrations/0002_baseline.sql")];
+
+/// The schema version the baseline migration creates. Databases at an earlier version come from
+/// development builds before the schema was restructured; they are refused, not upgraded.
+const BASELINE_VERSION: i64 = 2;
 
 /// Open (creating if needed) the database at `path` and bring its schema up to date.
 pub fn open(path: &Path) -> Result<Connection> {
@@ -46,7 +51,8 @@ pub fn open(path: &Path) -> Result<Connection> {
 }
 
 fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
-    let known = i64::try_from(MIGRATIONS.len()).expect("migration count fits in i64");
+    let count = i64::try_from(MIGRATIONS.len()).expect("migration count fits in i64");
+    let known = BASELINE_VERSION + count - 1;
     if schema_version(conn)? == known {
         return Ok(());
     }
@@ -59,10 +65,23 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<()> {
             path.display()
         )));
     }
-    let start = usize::try_from(current).expect("schema version is non-negative");
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(start) {
+    if current != 0 && current < BASELINE_VERSION {
+        return Err(Error::Invalid(format!(
+            "{} was created by a development version of LANI (schema version {current}) whose \
+             data cannot be carried over. Stop the server with `lani stop`, move the file (and \
+             its -wal and -shm files) aside, and LANI will create a new database.",
+            path.display()
+        )));
+    }
+    // Version 0 is a new database: apply everything, starting with the baseline.
+    let applied = if current == 0 {
+        0
+    } else {
+        usize::try_from(current - BASELINE_VERSION + 1).expect("schema version is in range")
+    };
+    for (index, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
         tx.execute_batch(sql)?;
-        let version = i64::try_from(index + 1).expect("migration count fits in i64");
+        let version = BASELINE_VERSION + i64::try_from(index).expect("migration count fits in i64");
         tx.pragma_update(None, "user_version", version)?;
     }
     tx.commit()?;
@@ -299,45 +318,60 @@ pub fn issue_counts(conn: &Connection, review_id: i64) -> Result<IssueCounts> {
 
 // ── issues ───────────────────────────────────────────────────────────────────────────────────
 
-const ISSUE_COLUMNS: &str = "id, review_id, author, status, resolved_by, resolved_at, \
-     anchor_commit, path, side, start_line, end_line, snippet, snippet_start, created_at";
+const ISSUE_COLUMNS: &str = "id, review_id, author, title, severity, status, resolved_by, \
+     resolved_at, anchor_commit, path, side, start_line, end_line, snippet, snippet_start, \
+     created_at, edited_by, edited_at, version";
 
 fn issue_from_row(row: &Row<'_>) -> rusqlite::Result<Issue> {
     Ok(Issue {
         id: row.get(0)?,
         review_id: row.get(1)?,
         author: row.get(2)?,
-        status: row.get(3)?,
-        resolved_by: row.get(4)?,
-        resolved_at: row.get(5)?,
+        title: row.get(3)?,
+        severity: row.get(4)?,
+        status: row.get(5)?,
+        resolved_by: row.get(6)?,
+        resolved_at: row.get(7)?,
         anchor: Anchor {
-            commit: row.get(6)?,
-            path: row.get(7)?,
-            side: row.get(8)?,
-            start_line: row.get(9)?,
-            end_line: row.get(10)?,
-            snippet: row.get(11)?,
-            snippet_start: row.get(12)?,
+            commit: row.get(8)?,
+            path: row.get(9)?,
+            side: row.get(10)?,
+            start_line: row.get(11)?,
+            end_line: row.get(12)?,
+            snippet: row.get(13)?,
+            snippet_start: row.get(14)?,
         },
-        created_at: row.get(13)?,
+        created_at: row.get(15)?,
+        edited_by: row.get(16)?,
+        edited_at: row.get(17)?,
+        version: row.get(18)?,
     })
 }
 
+/// A new issue's own fields; its first comment is inserted separately, in the same transaction.
+pub struct NewIssue<'a> {
+    pub review_id: i64,
+    pub author: Actor,
+    pub title: &'a str,
+    pub severity: Severity,
+    pub anchor: &'a Anchor,
+    pub now: &'a str,
+}
+
 /// Insert an open issue. Its first comment must be inserted in the same transaction.
-pub fn insert_issue(
-    conn: &Connection,
-    review_id: i64,
-    author: Actor,
-    anchor: &Anchor,
-    now: &str,
-) -> Result<i64> {
+pub fn insert_issue(conn: &Connection, issue: &NewIssue<'_>) -> Result<i64> {
+    let anchor = issue.anchor;
     conn.execute(
-        "INSERT INTO issue (review_id, author, status, resolved_by, resolved_at, anchor_commit,
-                            path, side, start_line, end_line, snippet, snippet_start, created_at)
-         VALUES (?1, ?2, 'open', NULL, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO issue (review_id, author, title, severity, status, resolved_by, resolved_at,
+                            anchor_commit, path, side, start_line, end_line, snippet,
+                            snippet_start, created_at, edited_by, edited_at, version)
+         VALUES (?1, ?2, ?3, ?4, 'open', NULL, NULL, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                 NULL, NULL, 1)",
         params![
-            review_id,
-            author,
+            issue.review_id,
+            issue.author,
+            issue.title,
+            issue.severity,
             anchor.commit,
             anchor.path,
             anchor.side,
@@ -345,10 +379,30 @@ pub fn insert_issue(
             anchor.end_line,
             anchor.snippet,
             anchor.snippet_start,
-            now,
+            issue.now,
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Change an issue's title and severity if it is still at `expected_version`; returns whether it
+/// was.
+pub fn update_issue_details(
+    conn: &Connection,
+    issue_id: i64,
+    title: &str,
+    severity: Severity,
+    actor: Actor,
+    now: &str,
+    expected_version: i64,
+) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE issue
+         SET title = ?1, severity = ?2, edited_by = ?3, edited_at = ?4, version = version + 1
+         WHERE id = ?5 AND version = ?6",
+        params![title, severity, actor, now, issue_id, expected_version],
+    )?;
+    Ok(changed == 1)
 }
 
 pub fn get_issue(conn: &Connection, id: i64) -> Result<Issue> {

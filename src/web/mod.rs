@@ -215,6 +215,10 @@ pub fn router(state: AppState) -> Router {
             "/reviews/{review_id}/issues/{issue_id}/status",
             post(actions::set_issue_status),
         )
+        .route(
+            "/reviews/{review_id}/issues/{issue_id}/details",
+            post(actions::edit_issue),
+        )
         .route("/comments/{comment_id}/edit", post(actions::edit_comment))
         .route("/reviews/{review_id}/issues", post(actions::create_issue))
         .route("/preview", post(actions::preview))

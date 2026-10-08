@@ -1,4 +1,4 @@
--- LANI schema v1. See docs/design.md §7.3.
+-- LANI schema version 2, the baseline. See docs/design.md §7.3 and §7.4.
 
 CREATE TABLE repo (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +32,8 @@ CREATE TABLE issue (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id     INTEGER NOT NULL REFERENCES review(id),
   author        TEXT NOT NULL CHECK (author IN ('human', 'reviewer', 'implementer')),
+  title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 200),  -- one line
+  severity      TEXT NOT NULL CHECK (severity IN ('high', 'medium', 'low', 'nit')),
   status        TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
   resolved_by   TEXT CHECK (resolved_by IN ('human', 'reviewer')),  -- implementers cannot resolve
   resolved_at   TEXT,
@@ -43,9 +45,13 @@ CREATE TABLE issue (
   snippet       TEXT NOT NULL,                      -- anchored lines ±3 context lines, at creation
   snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
   created_at    TEXT NOT NULL,
+  edited_by     TEXT CHECK (edited_by IN ('human', 'reviewer', 'implementer')),  -- title/severity
+  edited_at     TEXT,
+  version       INTEGER NOT NULL,                   -- of title and severity (§11.4)
   UNIQUE (id, review_id),                           -- parent key for comment's composite FK
   CHECK ((status = 'open'     AND resolved_by IS NULL     AND resolved_at IS NULL)
-      OR (status = 'resolved' AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL))
+      OR (status = 'resolved' AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL)),
+  CHECK ((edited_by IS NULL) = (edited_at IS NULL))
 ) STRICT;
 CREATE INDEX issue_by_review ON issue(review_id, status);
 
@@ -74,7 +80,7 @@ CREATE TABLE event (
   comment_id INTEGER REFERENCES comment(id),
   kind       TEXT NOT NULL CHECK (kind IN (
                'review_created', 'review_retitled', 'review_base_changed', 'review_closed',
-               'review_reopened', 'summary_updated', 'issue_created', 'issue_resolved',
+               'review_reopened', 'summary_updated', 'issue_created', 'issue_edited', 'issue_resolved',
                'issue_reopened', 'comment_added', 'comment_edited')),
   actor      TEXT NOT NULL CHECK (actor IN ('human', 'reviewer', 'implementer')),
   created_at TEXT NOT NULL

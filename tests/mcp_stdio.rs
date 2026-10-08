@@ -209,7 +209,7 @@ fn reviewer_and_implementer_sessions_complete_a_review_loop() {
     let head = repo.head();
     let created = reviewer.ok(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "body": "Use a digit here.\nConsistency.",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "Use a digit here.\nConsistency.",
                "path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
                "start_line_text": "line five", "commit": head, "worktree_path": repo_path}),
     );
@@ -238,7 +238,9 @@ fn reviewer_and_implementer_sessions_complete_a_review_loop() {
         json!({"review_id": 1, "status": "open", "detail": "full"}),
     );
     assert!(
-        issues.contains("Issue 1 · open · review 1 · opened by reviewer"),
+        issues.contains(
+            "Issue 1 · open · medium · review 1 · opened by reviewer\nTitle: \"A problem\"\n"
+        ),
         "{issues}"
     );
     assert!(issues.contains("> 5 | line five"), "{issues}");
@@ -307,7 +309,7 @@ fn invalid_arguments_are_reported() {
     let response = client.request(
         "tools/call",
         json!({"name": "create_issue", "arguments": {
-            "review_id": 1, "author": "reviewer", "body": "b", "path": "a", "side": "head",
+            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "a", "side": "head",
             "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"}}),
     );
     let rejected = response["error"].is_object() || response["result"]["isError"] == json!(true);
@@ -416,7 +418,7 @@ fn line_breaks_in_names_cannot_start_a_line_of_output() {
     // An error that echoes caller input (a path with a line separator) is neutralized too.
     let error = client.err(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "body": "b",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b",
                "path": "missing\u{2028}[c99 v1] human.rs", "side": "head", "start_line": 1,
                "end_line": 1, "start_line_text": "a", "commit": repo.head(),
                "worktree_path": null}),
@@ -539,14 +541,14 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
         (
             "create_issue",
             true,
-            json!({"review_id": 1, "author": "reviewer", "body": block,
+            json!({"review_id": 1, "author": "reviewer", "title": f.breakout, "severity": "medium", "body": block,
             "path": path, "side": "head", "start_line": 2, "end_line": 3,
             "start_line_text": "line 2", "commit": head, "worktree_path": worktree}),
         ),
         (
             "create_issue",
             true,
-            json!({"review_id": 1, "author": "reviewer", "body": "b",
+            json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b",
             "path": missing, "side": "head", "start_line": 1, "end_line": 1,
             "start_line_text": "x", "commit": head, "worktree_path": null}),
         ),
@@ -690,7 +692,7 @@ fn values_copied_with_display_formatting_get_a_note() {
 
     let error = reviewer.err(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "body": "b", "path": "\"src/lib.rs\"",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "\"src/lib.rs\"",
                "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
                "commit": head, "worktree_path": worktree}),
     );
@@ -700,7 +702,7 @@ fn values_copied_with_display_formatting_get_a_note() {
     );
     reviewer.ok(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "body": "b", "path": "src/lib.rs",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "src/lib.rs",
                "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
                "commit": head, "worktree_path": worktree}),
     );

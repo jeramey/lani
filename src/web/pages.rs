@@ -12,7 +12,7 @@ use serde::Deserialize;
 use super::AppState;
 use super::views::{
     self, AuthorView, CodeView, CommentView, EventView, FilterLink, IssueRow, Link, PageError,
-    ReviewHeader, author, review_url,
+    ReviewHeader, SeverityOption, SeverityView, author, review_url,
 };
 use crate::daemon::{self, Health};
 use crate::model::{IssueStatus, ReviewStatus, short_ref};
@@ -262,6 +262,13 @@ struct IssuePage {
     review: ReviewHeader,
     editable: bool,
     id: i64,
+    title: String,
+    severity: SeverityView,
+    /// E.g. "title or severity edited by you".
+    details_edited: Option<String>,
+    version: i64,
+    severity_options: Vec<SeverityOption>,
+    details_action: String,
     status_label: String,
     status_class: &'static str,
     resolved: bool,
@@ -302,6 +309,19 @@ pub async fn issue(
         review: views::review_header(&detail.view),
         editable: detail.view.review.status == ReviewStatus::Open,
         id: issue.id,
+        title: issue.title.clone(),
+        severity: views::severity(issue.severity),
+        details_edited: issue.edited_by.map(|editor| {
+            let who = if editor == crate::model::Actor::Human {
+                "you"
+            } else {
+                author(editor).label
+            };
+            format!("title or severity edited by {who}")
+        }),
+        version: issue.version,
+        severity_options: views::severity_options(Some(issue.severity)),
+        details_action: format!("{}/details", views::issue_url(review_id, issue_id)),
         status_label,
         status_class,
         resolved: issue.status == IssueStatus::Resolved,

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
-use lani::model::{Actor, IssueStatus, Side};
+use lani::model::{Actor, IssueStatus, Severity, Side};
 use lani::service::{Service, StartReview};
 use serde_json::{Value, json};
 
@@ -79,11 +79,12 @@ fn selecting_lines_in_the_file_view_opens_an_issue_at_the_rendered_commit() {
     assert_eq!(fields["back"], file.as_str());
     assert_eq!(
         browser.run(
-            "return document.activeElement === document.querySelector('form.new-issue textarea');"
+            "return document.activeElement === document.querySelector('form.new-issue input[name=\"title\"]');"
         ),
         true,
-        "the description has focus"
+        "the title has focus"
     );
+    browser.fill_title_and_severity("Lines 10 to 12 need work", "low");
 
     browser.type_text(
         "form.new-issue textarea",
@@ -117,6 +118,8 @@ fn selecting_lines_in_the_file_view_opens_an_issue_at_the_rendered_commit() {
     );
     let view = fixture.service().get_issue(issue_id).unwrap();
     assert_eq!(view.issue.author, Actor::Human);
+    assert_eq!(view.issue.title, "Lines 10 to 12 need work");
+    assert_eq!(view.issue.severity, Severity::Low);
     assert_eq!(view.issue.anchor.side, Side::Head);
     assert_eq!(
         view.issue.anchor.commit, fixture.head,
@@ -178,12 +181,15 @@ fn removed_lines_in_the_changes_view_open_base_side_issues_and_threads_return_th
         "the merge-base shown"
     );
     assert_eq!(fields["back"], changes.as_str());
+    browser.fill_title_and_severity("Line 20 is gone", "nit");
     browser.type_text("form.new-issue textarea", "Why was line 20 removed?");
     browser.click("form.new-issue button[type=\"submit\"]");
     let issue_id = browser.wait_for_new_issue(&changes);
     assert_eq!(browser.row_above_thread(issue_id), removed_row);
     let view = fixture.service().get_issue(issue_id).unwrap();
     assert_eq!(view.issue.anchor.side, Side::Base);
+    assert_eq!(view.issue.title, "Line 20 is gone");
+    assert_eq!(view.issue.severity, Severity::Nit);
     assert_eq!(view.issue.anchor.commit, fixture.merge_base);
     assert_eq!(
         (view.issue.anchor.start_line, view.issue.anchor.end_line),
@@ -235,7 +241,7 @@ fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str
     assert_eq!(
         browser.run(&format!(
             "return !document.querySelector('{thread} details').open \
-             && document.querySelector('{thread} .badge').textContent.startsWith('Resolved');"
+             && document.querySelector('{thread} summary .badge.resolved').textContent.startsWith('Resolved');"
         )),
         true,
         "the resolved thread is collapsed"
@@ -452,12 +458,31 @@ impl WebDriver {
         found[ELEMENT].as_str().unwrap().to_string()
     }
 
+    /// Scroll `selector` into view and wait until it stops moving. Safari keeps scrolling for a
+    /// moment after the page focuses a field, and a click whose position is computed meanwhile
+    /// lands nowhere: no event reaches the page, although WebDriver reports success.
     fn scroll_to(&self, selector: &str) {
         let script = format!(
             "document.querySelector({}).scrollIntoView({{ block: 'center' }}); return true;",
             json!(selector)
         );
         self.run(&script);
+        let position = format!(
+            "const r = document.querySelector({}).getBoundingClientRect(); \
+             return r.left + ',' + r.top + ',' + window.scrollY;",
+            json!(selector)
+        );
+        let deadline = Instant::now() + TIMEOUT;
+        let mut last = self.text(&position);
+        loop {
+            std::thread::sleep(Duration::from_millis(50));
+            let now = self.text(&position);
+            if now == last {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{selector} kept moving");
+            last = now;
+        }
     }
 
     fn click(&self, selector: &str) {
@@ -497,6 +522,17 @@ impl WebDriver {
             &format!("/element/{element}/value"),
             Some(&json!({ "text": text })),
         );
+    }
+
+    /// Type the new-issue form's title and pick its severity, as a person would.
+    fn fill_title_and_severity(&self, title: &str, severity: &str) {
+        self.type_text("form.new-issue input[name=\"title\"]", title);
+        self.click(&format!(
+            "form.new-issue select[name=\"severity\"] option[value=\"{severity}\"]"
+        ));
+        let chosen =
+            "return document.querySelector('form.new-issue select[name=\"severity\"]').value;";
+        assert_eq!(self.text(chosen), severity);
     }
 
     fn selected_lines(&self) -> String {

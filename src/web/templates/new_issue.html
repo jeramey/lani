@@ -13,6 +13,16 @@
       <input type="hidden" name="merge_base">
       <input type="hidden" name="back">
       <p class="new-issue-title"></p>
+      <div class="issue-fields">
+        <input type="text" name="title" maxlength="200" required aria-label="Title" placeholder="Title: one line naming the problem">
+        <select name="severity" required aria-label="Severity">
+          <option value="" selected disabled>Severity…</option>
+          <option value="high">high</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+          <option value="nit">nit</option>
+        </select>
+      </div>
       <div class="editor-tabs">
         <button type="button" class="active" data-tab="write">Write</button>
         <button type="button" data-tab="preview">Preview</button>

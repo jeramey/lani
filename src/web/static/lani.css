@@ -132,6 +132,14 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .badge.resolved { background: var(--resolved); }
 .badge.closed { background: var(--closed); }
 .badge.outdated { background: var(--outdated); }
+/* Severity: one hue each, strongest for high; nit is an outline so it reads as minor. */
+.badge.sev-high { background: #c4314b; }
+.badge.sev-medium { background: #b35900; }
+.badge.sev-low { background: #5d6670; }
+.badge.sev-nit { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.badges { display: inline-flex; gap: 6px; }
+.issue-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.issue-heading { overflow-wrap: anywhere; }
 
 /* Who wrote what must be obvious at a glance (design §11.1). */
 .author { font-weight: 600; }
@@ -402,6 +410,9 @@ form.new-issue {
   font-size: 15px;
 }
 .new-issue-title { margin: 0 0 6px; font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.issue-fields { display: flex; gap: 8px; margin-bottom: 6px; }
+.issue-fields input { flex: 1; }
+.issue-fields select { width: auto; }
 .editor-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
 .editor-tabs button {
   background: transparent;

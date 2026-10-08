@@ -1,7 +1,8 @@
 <div class="thread {{ thread.status_class }}" id="{{ thread.anchor }}">
   <details{% if !thread.resolved %} open{% endif %}>
     <summary>
-      <a href="{{ thread.url }}">Issue #{{ thread.id }}</a>
+      <a href="{{ thread.url }}">#{{ thread.id }} {{ thread.title }}</a>
+      <span class="badge {{ thread.severity.class }}">{{ thread.severity.label }}</span>
       <span class="badge {{ thread.status_class }}">{{ thread.status_label }}</span>
       <span class="author {{ thread.opened_by.class }}">{{ thread.opened_by.label }}</span>
       <code class="location">{{ thread.location }}</code>

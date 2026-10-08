@@ -11,8 +11,8 @@ use axum::response::{Html, IntoResponse, Response};
 
 use crate::error::Error;
 use crate::model::{
-    Actor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Side, short_ref,
-    short_sha,
+    Actor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Severity, Side,
+    short_ref, short_sha,
 };
 use crate::service::{IssueView, Location, ReviewView};
 use crate::{highlight, markdown, time};
@@ -320,8 +320,8 @@ pub struct IssueRow {
     pub status_class: &'static str,
     pub location: String,
     pub outdated: bool,
-    /// The first line of the issue's description as inline HTML (sanitized by the renderer).
-    pub preview_html: String,
+    pub title: String,
+    pub severity: SeverityView,
     pub comments: String,
     pub last_author: Option<AuthorView>,
 }
@@ -358,17 +358,57 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
         status_class,
         location,
         outdated,
-        preview_html: view
-            .comments
-            .first()
-            .map(|comment| markdown::render_inline(&first_line(&comment.body)))
-            .unwrap_or_default(),
+        title: issue.title.clone(),
+        severity: severity(issue.severity),
         comments: match view.comments.len() {
             1 => "1 comment".to_string(),
             count => format!("{count} comments"),
         },
         last_author: view.comments.last().map(|comment| author(comment.author)),
     }
+}
+
+/// How a severity is shown: its name, and a CSS class for its badge colour.
+#[derive(Clone, Copy, Debug)]
+pub struct SeverityView {
+    pub label: &'static str,
+    pub class: &'static str,
+}
+
+#[must_use]
+pub fn severity(severity: Severity) -> SeverityView {
+    SeverityView {
+        label: severity.as_str(),
+        class: match severity {
+            Severity::High => "sev-high",
+            Severity::Medium => "sev-medium",
+            Severity::Low => "sev-low",
+            Severity::Nit => "sev-nit",
+        },
+    }
+}
+
+/// One choice in a severity picker.
+pub struct SeverityOption {
+    pub value: &'static str,
+    pub selected: bool,
+}
+
+/// Every severity, most severe first, with `current` selected (none when `None`).
+#[must_use]
+pub fn severity_options(current: Option<Severity>) -> Vec<SeverityOption> {
+    [
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::Nit,
+    ]
+    .into_iter()
+    .map(|option| SeverityOption {
+        value: option.as_str(),
+        selected: current == Some(option),
+    })
+    .collect()
 }
 
 #[must_use]
@@ -439,6 +479,8 @@ pub fn code(view: &IssueView) -> Option<CodeView> {
 /// An issue shown inside a code view: its thread, with forms that return to the view.
 pub struct ThreadView {
     pub id: i64,
+    pub title: String,
+    pub severity: SeverityView,
     pub url: String,
     /// The element id, e.g. "issue-12".
     pub anchor: String,
@@ -466,6 +508,8 @@ pub fn thread(view: &IssueView, back: &str, with_code: bool) -> ThreadView {
     let url = issue_url(issue.review_id, issue.id);
     ThreadView {
         id: issue.id,
+        title: issue.title.clone(),
+        severity: severity(issue.severity),
         anchor: format!("issue-{}", issue.id),
         status_label,
         status_class,
@@ -560,6 +604,7 @@ pub fn event(event: &Event) -> EventView {
         EventKind::ReviewReopened => "reopened the review".to_string(),
         EventKind::SummaryUpdated => "edited the summary".to_string(),
         EventKind::IssueCreated => format!("opened {issue}"),
+        EventKind::IssueEdited => format!("changed the title or severity of {issue}"),
         EventKind::IssueResolved => format!("resolved {issue}"),
         EventKind::IssueReopened => format!("reopened {issue}"),
         EventKind::CommentAdded if event.issue_id.is_some() => format!("commented on {issue}"),
@@ -639,23 +684,6 @@ pub struct FilterLink {
     pub label: String,
     pub url: String,
     pub active: bool,
-}
-
-/// The first non-empty line of a body, shortened for lists.
-#[must_use]
-pub fn first_line(body: &str) -> String {
-    const MAX_CHARS: usize = 100;
-    let line = crate::text::split_lines(body)
-        .into_iter()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
-    if line.chars().count() > MAX_CHARS {
-        let shortened: String = line.chars().take(MAX_CHARS - 1).collect();
-        format!("{shortened}…")
-    } else {
-        line.to_string()
-    }
 }
 
 // ── errors ───────────────────────────────────────────────────────────────────────────────────
@@ -800,12 +828,6 @@ mod tests {
         if let Ok(home) = std::env::var("HOME") {
             assert_eq!(repo_location(&format!("{home}/src/api/.git")), "~/src/api");
         }
-    }
-
-    #[test]
-    fn first_line_skips_blank_lines_and_truncates() {
-        assert_eq!(first_line("\n  Hello  \nworld"), "Hello");
-        assert_eq!(first_line(&"x".repeat(150)).chars().count(), 100);
     }
 
     #[test]

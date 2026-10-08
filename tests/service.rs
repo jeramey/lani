@@ -7,7 +7,7 @@ use std::path::Path;
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
 use lani::error::Error;
-use lani::model::{Actor, IssueStatus, ReviewStatus, Side};
+use lani::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use lani::service::{
     CommentTarget, CreateIssue, IssueView, Location, Service, StartReview, StartedReview,
 };
@@ -41,6 +41,8 @@ fn issue_request<'a>(
     CreateIssue {
         review_id,
         author: Actor::Reviewer,
+        title: "A problem",
+        severity: Severity::Medium,
         body: "Something is wrong here.\nMore detail.",
         path: "src/lib.rs",
         side: Side::Head,
@@ -897,6 +899,8 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
         service.create_issue(&CreateIssue {
             review_id,
             author: Actor::Reviewer,
+            title: "A problem",
+            severity: Severity::Medium,
             body: "Wrong.",
             path: "f.rs",
             side: Side::Head,
@@ -1091,7 +1095,7 @@ fn reopening_the_database_keeps_the_schema() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2, "the baseline schema");
     let timeout: String = conn
         .query_row(
             "SELECT value FROM setting WHERE key = 'idle_timeout'",
@@ -1100,6 +1104,62 @@ fn reopening_the_database_keeps_the_schema() {
         )
         .unwrap();
     assert_eq!(timeout, "3h");
+}
+
+#[test]
+fn only_the_human_changes_titles_and_severities_and_titles_are_checked() {
+    let (_home, repo, mut service, issue_id) = repo_with_issue(3, 3);
+    let issue = service.get_issue(issue_id).unwrap().issue;
+    assert_eq!(
+        (issue.title.as_str(), issue.severity),
+        ("A problem", Severity::Medium)
+    );
+    for claude in [Actor::Reviewer, Actor::Implementer] {
+        let result = service.edit_issue(claude, issue_id, "Better", Severity::High, 1);
+        assert!(
+            matches!(result, Err(Error::Forbidden(_))),
+            "{claude:?}: {result:?}"
+        );
+    }
+    let edited = service
+        .edit_issue(Actor::Human, issue_id, "  Better  ", Severity::High, 1)
+        .unwrap();
+    assert_eq!(
+        (edited.title.as_str(), edited.severity, edited.version),
+        ("Better", Severity::High, 2)
+    );
+
+    let review_id = issue.review_id;
+    let head = repo.head();
+    for (title, problem) in [
+        ("   ", "must not be empty"),
+        (&*"x".repeat(201), "at most 200"),
+    ] {
+        let mut request = issue_request(review_id, &repo, &head, 3, 3, "line 3");
+        request.title = title;
+        expect_invalid(service.create_issue(&request), problem);
+    }
+}
+
+#[test]
+fn databases_from_before_the_baseline_or_from_newer_lani_are_refused() {
+    let home = TestHome::new();
+    let path = home.db_path();
+    let set_version = |version: i64| {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", version).unwrap();
+    };
+    // A database from a development build before the schema was restructured.
+    set_version(1);
+    let error = Service::open(&path).map(|_| ()).unwrap_err().to_string();
+    assert!(
+        error.contains("created by a development version of LANI (schema version 1)")
+            && error.contains("move the file"),
+        "{error}"
+    );
+    set_version(99);
+    let error = Service::open(&path).map(|_| ()).unwrap_err().to_string();
+    assert!(error.contains("upgrade lani"), "{error}");
 }
 
 // ── human-only operations (M2) ───────────────────────────────────────────────────────────────

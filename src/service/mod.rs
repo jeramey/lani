@@ -22,7 +22,7 @@ use crate::error::{Error, Result};
 use crate::git::{self, Git, PathChange, Worktree};
 use crate::model::{
     Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
-    ReviewStatus, Side, short_ref, short_sha,
+    ReviewStatus, Severity, Side, short_ref, short_sha,
 };
 use crate::settings::{self, IdleTimeout};
 use crate::store::{self, IssueCounts, NewComment, NewEvent, NewReview};
@@ -54,6 +54,9 @@ pub struct StartReview<'a> {
 pub struct CreateIssue<'a> {
     pub review_id: i64,
     pub author: Actor,
+    /// One line naming the problem.
+    pub title: &'a str,
+    pub severity: Severity,
     pub body: &'a str,
     pub path: &'a str,
     pub side: Side,
@@ -451,6 +454,7 @@ impl Service {
     pub fn create_issue(&mut self, request: &CreateIssue<'_>) -> Result<IssueView> {
         let review = store::get_review(&self.conn, request.review_id)?;
         require_open(&review)?;
+        let title = validate_title(request.title)?;
         let body = require_text("body", request.body)?;
         let repo = store::get_repo(&self.conn, review.repo_id)?;
         require_repo(&repo)?;
@@ -462,7 +466,17 @@ impl Service {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let issue_id = store::insert_issue(&tx, review.id, request.author, &anchor, &now)?;
+        let issue_id = store::insert_issue(
+            &tx,
+            &store::NewIssue {
+                review_id: review.id,
+                author: request.author,
+                title: &title,
+                severity: request.severity,
+                anchor: &anchor,
+                now: &now,
+            },
+        )?;
         let comment_id = store::insert_comment(
             &tx,
             &NewComment {
@@ -584,6 +598,63 @@ impl Service {
         )?;
         tx.commit()?;
         store::get_comment(&self.conn, comment_id)
+    }
+
+    /// Change an issue's title and severity. Only the human does this; Claude sets them when it
+    /// opens the issue (§11.2).
+    pub fn edit_issue(
+        &mut self,
+        actor: Actor,
+        issue_id: i64,
+        title: &str,
+        severity: Severity,
+        expected_version: i64,
+    ) -> Result<Issue> {
+        require_human(actor, "change an issue's title or severity")?;
+        let title = validate_title(title)?;
+        let issue = store::get_issue(&self.conn, issue_id)?;
+        require_open(&store::get_review(&self.conn, issue.review_id)?)?;
+        if title == issue.title && severity == issue.severity {
+            // Saving unchanged values is not an edit: no new version, event or "edited" marker.
+            return Ok(issue);
+        }
+
+        let now = time::now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !store::update_issue_details(
+            &tx,
+            issue_id,
+            &title,
+            severity,
+            actor,
+            &now,
+            expected_version,
+        )? {
+            let current = store::get_issue(&tx, issue_id)?;
+            return Err(Error::Conflict(format!(
+                "issue {issue_id} changed after version {expected_version}: it is now version {}, \
+                 titled {} with severity {}. Apply your change to it and pass version {}.",
+                current.version,
+                quoted(&current.title),
+                current.severity.as_str(),
+                current.version
+            )));
+        }
+        store::insert_event(
+            &tx,
+            &NewEvent {
+                review_id: issue.review_id,
+                issue_id: Some(issue_id),
+                comment_id: None,
+                kind: EventKind::IssueEdited,
+                actor,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        store::get_issue(&self.conn, issue_id)
     }
 
     /// Resolve or reopen an issue. Only the reviewer and the human may do this (§11.2).

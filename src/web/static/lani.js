@@ -99,7 +99,7 @@
     setUpEditor(form);
     row.querySelector(".cancel").addEventListener("click", () => row.remove());
     bar.replaceWith(row);
-    form.elements.body.focus();
+    form.elements.title.focus();
   }
 
   // Write and Preview tabs: the preview is rendered by the server, exactly as it will be shown.

@@ -13,7 +13,7 @@ use super::{AppState, TimeoutSource};
 use crate::base::BaseMode;
 use crate::error::Error;
 use crate::markdown;
-use crate::model::{Actor, IssueStatus, Side};
+use crate::model::{Actor, IssueStatus, Severity, Side};
 use crate::service::{CommentTarget, CreateIssue};
 use crate::settings::IdleTimeout;
 
@@ -62,6 +62,8 @@ pub struct EditForm {
 /// A new issue from a code view's line selection (§13.4).
 #[derive(Deserialize)]
 pub struct NewIssueForm {
+    title: String,
+    severity: String,
     path: String,
     side: String,
     start_line: u32,
@@ -74,6 +76,14 @@ pub struct NewIssueForm {
     body: String,
     #[serde(default)]
     back: Option<String>,
+}
+
+/// A new title and severity for an issue (§11.2: the human only).
+#[derive(Deserialize)]
+pub struct IssueDetailsForm {
+    title: String,
+    severity: String,
+    version: i64,
 }
 
 #[derive(Deserialize)]
@@ -310,7 +320,10 @@ pub async fn create_issue(
             .submitted(&form.body));
         }
     };
+    let severity = parse_severity(&form.severity)
+        .map_err(|error| error.back(back.clone(), "Back").submitted(&form.body))?;
     let (path, commit, body) = (form.path.clone(), form.commit.clone(), form.body.clone());
+    let title = form.title.clone();
     let merge_base = form.merge_base.clone().filter(|sha| !sha.is_empty());
     let (start_line, end_line) = (form.start_line, form.end_line);
     let created = state
@@ -318,6 +331,8 @@ pub async fn create_issue(
             service.create_issue(&CreateIssue {
                 review_id,
                 author: Actor::Human,
+                title: &title,
+                severity,
                 body: &body,
                 path: &path,
                 side,
@@ -332,6 +347,39 @@ pub async fn create_issue(
         .await
         .map_err(|error| failed(error, back.clone(), "Back", &form.body))?;
     Ok(redirect(&format!("{back}#issue-{}", created.issue.id)))
+}
+
+/// `POST /reviews/{id}/issues/{issue_id}/details`: change an issue's title and severity.
+pub async fn edit_issue(
+    State(state): State<AppState>,
+    Path((review_id, issue_id)): Path<(i64, i64)>,
+    Form(form): Form<IssueDetailsForm>,
+) -> Result<Response, PageError> {
+    let back = issue_url(review_id, issue_id);
+    let severity = parse_severity(&form.severity).map_err(|error| {
+        error
+            .back(back.clone(), "Back to the issue")
+            .submitted(&form.title)
+    })?;
+    let (title, version) = (form.title.clone(), form.version);
+    state
+        .call(move |service| {
+            require_issue_in_review(service, review_id, issue_id)?;
+            service.edit_issue(Actor::Human, issue_id, &title, severity, version)
+        })
+        .await
+        .map_err(|error| failed(error, back.clone(), "Back to the issue", &form.title))?;
+    Ok(redirect(&back))
+}
+
+fn parse_severity(value: &str) -> Result<Severity, PageError> {
+    Severity::parse(value).ok_or_else(|| {
+        PageError::new(
+            StatusCode::BAD_REQUEST,
+            "Choose a severity",
+            &format!("{value:?} is not a severity; choose high, medium, low or nit."),
+        )
+    })
 }
 
 /// `POST /preview`: Markdown rendered as it will be shown, for the editors' Preview tab.

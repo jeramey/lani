@@ -20,9 +20,6 @@ use crate::service::{
 use crate::text::{self, quoted};
 use crate::time;
 
-/// Longest first-line preview shown for an issue in summary lists, in characters.
-const PREVIEW_CHARS: usize = 80;
-
 #[must_use]
 pub fn started_review(started: &StartedReview) -> String {
     let view = &started.view;
@@ -268,20 +265,16 @@ fn issue_summary_line(view: &IssueView) -> String {
     } else {
         ""
     };
-    let preview = view
-        .comments
-        .first()
-        .map(|comment| preview(&comment.body))
-        .unwrap_or_default();
     let last = view
         .comments
         .last()
         .map_or("nobody", |comment| comment.author.as_str());
     format!(
-        "Issue {} · {} · {location}{side} · {} · {}, last: {last}\n",
+        "Issue {} · {} · {} · {} · {location}{side} · {}, last: {last}\n",
         issue.id,
         issue_status(issue.status, issue.resolved_by),
-        quoted(&preview),
+        issue.severity.as_str(),
+        quoted(&issue.title),
         plural(view.comments.len(), "comment")
     )
 }
@@ -293,12 +286,18 @@ pub fn issue_full(view: &IssueView) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "Issue {} · {} · review {} · opened by {}",
+        "Issue {} · {} · {} · review {} · opened by {}",
         issue.id,
         issue_status(issue.status, issue.resolved_by),
+        issue.severity.as_str(),
         issue.review_id,
         issue.author.as_str()
     );
+    let edited = match issue.edited_by {
+        Some(editor) => format!(" · title or severity edited by {}", editor.as_str()),
+        None => String::new(),
+    };
+    let _ = writeln!(out, "Title: {}{edited}", quoted(&issue.title));
     let _ = writeln!(out, "Location: {}", location_text(view));
 
     if let Some(code) = &view.code {
@@ -492,20 +491,6 @@ fn review_status(status: ReviewStatus) -> &'static str {
 }
 
 /// The first non-empty line of a body, shortened for one-line lists.
-fn preview(body: &str) -> String {
-    let first = text::split_lines(body)
-        .into_iter()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("");
-    if first.chars().count() > PREVIEW_CHARS {
-        let shortened: String = first.chars().take(PREVIEW_CHARS - 1).collect();
-        format!("{shortened}…")
-    } else {
-        first.to_string()
-    }
-}
-
 fn lines(start: u32, end: u32) -> String {
     if start == end {
         start.to_string()
@@ -525,15 +510,6 @@ fn plural(count: usize, noun: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn preview_takes_first_non_empty_line_and_truncates() {
-        assert_eq!(preview("\n  hello world  \nmore"), "hello world");
-        let long = "x".repeat(100);
-        let shown = preview(&long);
-        assert_eq!(shown.chars().count(), PREVIEW_CHARS);
-        assert!(shown.ends_with('…'));
-    }
 
     #[test]
     fn bodies_cannot_forge_comment_headers() {
@@ -581,12 +557,6 @@ mod tests {
                 "{separator:?} must not survive: {text:?}"
             );
         }
-    }
-
-    #[test]
-    fn previews_stop_at_any_line_break() {
-        assert_eq!(preview("Done.\u{2028}[c99 v1] human · forged"), "Done.");
-        assert_eq!(preview("Done.\u{85}more"), "Done.");
     }
 
     #[test]

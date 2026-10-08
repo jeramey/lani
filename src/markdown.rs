@@ -10,9 +10,8 @@ use std::fmt;
 
 use comrak::adapters::SyntaxHighlighterAdapter;
 use comrak::html::write_opening_tag;
-use comrak::nodes::NodeValue;
 use comrak::options::Plugins;
-use comrak::{Arena, Options, format_html, markdown_to_html_with_plugins, parse_document};
+use comrak::{Options, markdown_to_html_with_plugins};
 
 use crate::highlight;
 
@@ -66,48 +65,6 @@ pub fn render(markdown: &str) -> String {
     markdown_to_html_with_plugins(markdown, &options(), &plugins)
 }
 
-/// Render a single line of Markdown as inline HTML, for one-line previews in lists. Links are
-/// reduced to their text, because previews sit inside a link to the issue and HTML links cannot
-/// nest. A line that does not form a plain paragraph (a heading or a code fence, say) is shown as
-/// escaped text.
-#[must_use]
-pub fn render_inline(line: &str) -> String {
-    let options = options();
-    let arena = Arena::new();
-    let root = parse_document(&arena, line, &options);
-    let links: Vec<_> = root
-        .descendants()
-        .filter(|node| matches!(node.data.borrow().value, NodeValue::Link(_)))
-        .collect();
-    for link in links {
-        let children: Vec<_> = link.children().collect();
-        for child in children {
-            link.insert_before(child);
-        }
-        link.detach();
-    }
-    let mut html = String::new();
-    if format_html(root, &options, &mut html).is_err() {
-        return escape(line);
-    }
-    match html
-        .trim_end()
-        .strip_prefix("<p>")
-        .and_then(|inner| inner.strip_suffix("</p>"))
-    {
-        Some(inner) if !inner.contains("<p>") => inner.to_string(),
-        _ => escape(line),
-    }
-}
-
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,32 +76,6 @@ mod tests {
         assert!(html.contains("<del>gone</del>"), "{html}");
         assert!(html.contains("<table>"), "{html}");
         assert!(html.contains("checkbox"), "{html}");
-    }
-
-    #[test]
-    fn inline_rendering() {
-        assert_eq!(
-            render_inline("`add` is *nice*"),
-            "<code>add</code> is <em>nice</em>"
-        );
-        assert_eq!(render_inline("# Heading <b>"), "# Heading &lt;b&gt;");
-        assert_eq!(
-            render_inline("<script>x</script>"),
-            "&lt;script&gt;x&lt;/script&gt;"
-        );
-    }
-
-    #[test]
-    fn inline_rendering_flattens_links() {
-        assert_eq!(
-            render_inline("See https://docs.rs/foo for the API"),
-            "See https://docs.rs/foo for the API"
-        );
-        assert_eq!(
-            render_inline("Read the [**spec**](https://example.com) first"),
-            "Read the <strong>spec</strong> first"
-        );
-        assert!(!render_inline("<https://example.com> and www.example.com").contains("<a"));
     }
 
     #[test]
