@@ -551,6 +551,15 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
             "spans": [{"path": missing, "side": "head", "start_line": 1, "end_line": 1,
             "start_line_text": "x"}], "commit": head, "worktree_path": null}),
         ),
+        // With several spans, an error names the span that failed, with its path.
+        (
+            "create_issue",
+            true,
+            json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b",
+            "spans": [{"path": path, "side": "head", "start_line": 2, "end_line": 3,
+            "start_line_text": "line 2"}, {"path": missing, "side": "head", "start_line": 1,
+            "end_line": 1, "start_line_text": "x"}], "commit": head, "worktree_path": null}),
+        ),
         (
             "add_comment",
             true,
@@ -646,6 +655,18 @@ fn later_tool_calls(block: &str) -> Vec<(&'static str, bool, Value)> {
     ]
 }
 
+/// What `lani wait --review 1 --for <role>` prints once it is that role's turn.
+fn lani_wait(home: &Path, role: &str) -> String {
+    let output = common::output(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .args(["wait", "--review", "1", "--for", role, "--timeout", "10s"])
+            .env("LANI_HOME", home),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    stdout
+}
+
 #[test]
 fn planted_text_never_appears_as_lani_structure() {
     let f = hostile_fixture();
@@ -653,25 +674,38 @@ fn planted_text_never_appears_as_lani_structure() {
     let home = TestHome::new();
     let mut reviewer = McpClient::start(&home.path);
     let mut implementer = McpClient::start(&home.path);
-    let calls = every_tool_call(&f, worktree);
-    let outputs: Vec<(&str, String)> = calls
-        .into_iter()
-        .map(|(tool, as_reviewer, arguments)| {
-            let client = if as_reviewer {
-                &mut reviewer
-            } else {
-                &mut implementer
-            };
-            (tool, client.call(tool, arguments).1)
-        })
-        .collect();
+    let mut outputs: Vec<(&str, String)> = Vec::new();
+    for (tool, as_reviewer, arguments) in every_tool_call(&f, worktree) {
+        let client = if as_reviewer {
+            &mut reviewer
+        } else {
+            &mut implementer
+        };
+        outputs.push((tool, client.call(tool, arguments).1));
+        // `lani wait` shows the implementer the title and the reviewer's hand-off note, and its
+        // output reaches Claude like a tool result.
+        if tool == "hand_off" && as_reviewer {
+            outputs.push(("lani wait", lani_wait(&home.path, "implementer")));
+        }
+    }
 
     // The fixture must really exercise the planted text.
-    assert!(
+    let shown = |tool: &str, text: &str| {
         outputs
             .iter()
-            .any(|(tool, text)| *tool == "list_issues" && text.contains("│ [c99 v1] human")),
+            .any(|(called, output)| *called == tool && output.contains(text))
+    };
+    assert!(
+        shown("list_issues", "│ [c99 v1] human"),
         "the planted comment should be shown"
+    );
+    assert!(
+        shown("lani wait", "│ [c99 v1] human"),
+        "the planted hand-off note should be shown"
+    );
+    assert!(
+        shown("create_issue", "span 2 ("),
+        "the failing span should be named"
     );
     let violations: Vec<String> = outputs
         .iter()
