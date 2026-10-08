@@ -223,15 +223,32 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     let fixture = Fixture::new();
     let browser = WebDriver::safari();
     let review_id = fixture.review_id;
-    let overview = format!("/reviews/{review_id}");
-    browser.sign_in(&fixture, &overview);
+    browser.sign_in(&fixture, &format!("/reviews/{review_id}"));
     browser.watch_for_problems();
     // Gone if the page reloads: updates must arrive in place.
     browser.run("window.laniSamePage = true; return true;");
-    let in_place = "window.laniSamePage === true";
-
-    // Another session comments and hands the review on.
     let mut service = fixture.service();
+    changes_arrive_in_place(&browser, &mut service, review_id);
+    a_failed_refresh_is_reported_until_one_succeeds(&browser, &mut service, review_id);
+    a_draft_is_kept_while_the_rest_of_the_page_changes(&browser, &mut service, review_id);
+    a_selection_survives_its_table_being_replaced(&browser, &fixture, &mut service);
+    browser.assert_no_problems("live updates");
+
+    // When the server stops, the page says so.
+    let stopped = lani(&fixture.home.path, &["stop"]);
+    assert!(stopped.status.success());
+    browser.wait_for(
+        "return [...document.querySelectorAll('.live-notice')]\
+           .some(notice => notice.textContent.startsWith('LANI was stopped.'));",
+        "the stop notice",
+    );
+}
+
+/// True while the page has not reloaded since `window.laniSamePage` was set.
+const IN_PLACE: &str = "window.laniSamePage === true";
+
+fn changes_arrive_in_place(browser: &WebDriver, service: &mut Service, review_id: i64) {
+    // Another session comments and hands the review on.
     service
         .add_comment(
             Actor::Reviewer,
@@ -244,13 +261,19 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         .unwrap();
     browser.wait_for(
         &format!(
-            "return {in_place} \
+            "return {IN_PLACE} \
              && document.querySelector('#conversation').textContent.includes('From another session.') \
              && document.querySelector('#review-head .turn').textContent.includes('Claude · implementer');"
         ),
         "the comment and the turn, in place",
     );
+}
 
+fn a_failed_refresh_is_reported_until_one_succeeds(
+    browser: &WebDriver,
+    service: &mut Service,
+    review_id: i64,
+) {
     // A refresh that fails says so, and the next one that succeeds takes the notice away.
     let refresh_failed = "[...document.querySelectorAll('.live-notice')]\
                           .some(notice => notice.textContent.includes('could not be updated'))";
@@ -276,12 +299,18 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         .unwrap();
     browser.wait_for(
         &format!(
-            "return {in_place} && !({refresh_failed}) \
+            "return {IN_PLACE} && !({refresh_failed}) \
              && document.querySelector('#conversation').textContent.includes('Back online.');"
         ),
         "the next refresh, without the notice",
     );
+}
 
+fn a_draft_is_kept_while_the_rest_of_the_page_changes(
+    browser: &WebDriver,
+    service: &mut Service,
+    review_id: i64,
+) {
     // A draft in progress is never replaced; its part says it is out of date instead.
     browser.type_text("#new-summary-comment", "My draft");
     service
@@ -292,7 +321,7 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         )
         .unwrap();
     browser.wait_for(
-        &format!("return {in_place} && !!document.querySelector('#conversation > .stale-notice');"),
+        &format!("return {IN_PLACE} && !!document.querySelector('#conversation > .stale-notice');"),
         "the out-of-date notice",
     );
     assert_eq!(
@@ -310,7 +339,7 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     browser.wait_for(
         &format!(
             "const toolbar = document.querySelector('#toolbar'); \
-             return {in_place} && toolbar.textContent.includes('Reopen review') \
+             return {IN_PLACE} && toolbar.textContent.includes('Reopen review') \
              && !toolbar.querySelector('.stale-notice');"
         ),
         "the closed review's toolbar, in place",
@@ -327,12 +356,19 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     browser.wait_for(
         &format!(
             "const part = document.querySelector('#conversation'); \
-             return {in_place} && part.textContent.includes('A second comment.') \
+             return {IN_PLACE} && part.textContent.includes('A second comment.') \
              && !part.querySelector('.stale-notice');"
         ),
         "the conversation, once the draft is gone",
     );
+}
 
+fn a_selection_survives_its_table_being_replaced(
+    browser: &WebDriver,
+    fixture: &Fixture,
+    service: &mut Service,
+) {
+    let review_id = fixture.review_id;
     // In a code view, a selection survives its table being replaced.
     let file = format!("/reviews/{review_id}/files/src/lib.rs");
     browser.navigate(&format!("{}{file}", fixture.base));
@@ -378,16 +414,6 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
         browser.run("return !!document.querySelector('tr.new-issue-bar');"),
         true,
         "the selection's bar is back"
-    );
-    browser.assert_no_problems("live updates");
-
-    // When the server stops, the page says so.
-    let stopped = lani(&fixture.home.path, &["stop"]);
-    assert!(stopped.status.success());
-    browser.wait_for(
-        "return [...document.querySelectorAll('.live-notice')]\
-           .some(notice => notice.textContent.startsWith('LANI was stopped.'));",
-        "the stop notice",
     );
 }
 
@@ -760,7 +786,11 @@ impl WebDriver {
     fn clear(&self, selector: &str) {
         self.scroll_to(selector);
         let element = self.find(selector);
-        self.command("POST", &format!("/element/{element}/clear"), Some(&json!({})));
+        self.command(
+            "POST",
+            &format!("/element/{element}/clear"),
+            Some(&json!({})),
+        );
     }
 
     /// Type the new-issue form's title and pick its severity, as a person would.
