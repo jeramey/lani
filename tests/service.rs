@@ -9,7 +9,8 @@ use lani::base::BaseMode;
 use lani::error::Error;
 use lani::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use lani::service::{
-    CommentTarget, CreateIssue, IssueView, Location, Service, StartReview, StartedReview,
+    CommentTarget, CreateIssue, IssueView, Location, Service, SpanRequest, StartReview,
+    StartedReview,
 };
 
 fn service(home: &TestHome) -> Service {
@@ -44,11 +45,13 @@ fn issue_request<'a>(
         title: "A problem",
         severity: Severity::Medium,
         body: "Something is wrong here.\nMore detail.",
-        path: "src/lib.rs",
-        side: Side::Head,
-        start_line: start,
-        end_line: end,
-        start_line_text: Some(start_text),
+        spans: vec![SpanRequest {
+            path: "src/lib.rs",
+            side: Side::Head,
+            start_line: start,
+            end_line: end,
+            start_line_text: Some(start_text),
+        }],
         commit,
         worktree_path: Some(&repo.path),
         read_merge_base: None,
@@ -78,7 +81,7 @@ fn expect_invalid<T: std::fmt::Debug>(result: lani::error::Result<T>, needle: &s
 }
 
 fn current(view: &IssueView) -> (String, u32, u32) {
-    match &view.location {
+    match &view.locations[0] {
         Location::Current {
             path,
             start_line,
@@ -92,7 +95,7 @@ fn current(view: &IssueView) -> (String, u32, u32) {
 }
 
 fn is_outdated(view: &IssueView) -> bool {
-    matches!(view.location, Location::Outdated { .. })
+    matches!(view.locations[0], Location::Outdated { .. })
 }
 
 // ── base selection ───────────────────────────────────────────────────────────────────────────
@@ -255,10 +258,10 @@ fn create_issue_stores_anchor_snippet_and_root_comment() {
         .create_issue(&issue_request(review_id, &repo, &head, 5, 6, "  line 5 "))
         .unwrap();
     assert_eq!(current(&view), ("src/lib.rs".to_string(), 5, 6));
-    assert_eq!(view.issue.anchor.commit, head);
-    assert_eq!(view.issue.anchor.snippet_start, 2);
+    assert_eq!(view.issue.anchors[0].commit, head);
+    assert_eq!(view.issue.anchors[0].snippet_start, 2);
     assert_eq!(
-        view.issue.anchor.snippet,
+        view.issue.anchors[0].snippet,
         "line 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9"
     );
     assert_eq!(view.comments.len(), 1);
@@ -279,7 +282,7 @@ fn create_issue_accepts_an_abbreviated_commit() {
     let view = service
         .create_issue(&issue_request(review_id, &repo, &short, 1, 1, "line 1"))
         .unwrap();
-    assert_eq!(view.issue.anchor.commit, repo.head());
+    assert_eq!(view.issue.anchors[0].commit, repo.head());
 }
 
 #[test]
@@ -335,11 +338,11 @@ fn create_issue_rejects_bad_ranges_and_paths() {
         "invalid line range",
     );
     let mut request = issue_request(review_id, &repo, &head, 1, 1, "x");
-    request.path = "../outside";
+    request.spans[0].path = "../outside";
     expect_invalid(service.create_issue(&request), "invalid path");
-    request.path = "src";
+    request.spans[0].path = "src";
     expect_invalid(service.create_issue(&request), "is not a file");
-    request.path = "missing.rs";
+    request.spans[0].path = "missing.rs";
     assert!(matches!(
         service.create_issue(&request),
         Err(Error::NotFound(_))
@@ -503,11 +506,14 @@ fn base_side_needs_a_diff_review_and_a_null_worktree() {
     let head = repo.head();
 
     let mut request = issue_request(review_id, &repo, &head, 4, 4, "line 4");
-    request.side = Side::Base;
+    request.spans[0].side = Side::Base;
     expect_invalid(service.create_issue(&request), "worktree_path must be null");
     request.worktree_path = None;
     let view = service.create_issue(&request).unwrap();
-    assert_eq!(view.issue.anchor.commit, repo.git(&["rev-parse", "main"]));
+    assert_eq!(
+        view.issue.anchors[0].commit,
+        repo.git(&["rev-parse", "main"])
+    );
     assert_eq!(current(&view), ("src/lib.rs".to_string(), 4, 4));
 
     service.close_review(Actor::Human, review_id).unwrap();
@@ -516,7 +522,7 @@ fn base_side_needs_a_diff_review_and_a_null_worktree() {
         .review
         .id;
     let mut request = issue_request(whole_tree, &repo, &head, 4, 4, "line 5");
-    request.side = Side::Base;
+    request.spans[0].side = Side::Base;
     request.worktree_path = None;
     expect_invalid(service.create_issue(&request), "whole-tree review");
 }
@@ -534,7 +540,7 @@ fn binary_files_cannot_be_anchored() {
         .id;
     let head = repo.head();
     let mut request = issue_request(review_id, &repo, &head, 1, 1, "x");
-    request.path = "image.bin";
+    request.spans[0].path = "image.bin";
     expect_invalid(service.create_issue(&request), "binary file");
 }
 
@@ -567,7 +573,7 @@ fn issue_follows_lines_when_code_is_inserted_above() {
     let new_head = repo.commit_all("insert above");
     let view = service.get_issue(issue_id).unwrap();
     assert_eq!(current(&view), ("src/lib.rs".to_string(), 13, 14));
-    let code = view.code.unwrap();
+    let code = &view.code.unwrap()[0];
     assert_eq!(code.commit, new_head);
     assert_eq!(code.first_line, 10);
 }
@@ -580,7 +586,7 @@ fn issue_is_outdated_when_its_lines_change() {
     let view = service.get_issue(issue_id).unwrap();
     assert!(is_outdated(&view));
     // The stored snippet is shown instead of current code.
-    assert_eq!(view.code.unwrap().first_line, 7);
+    assert_eq!(view.code.unwrap()[0].first_line, 7);
 }
 
 #[test]
@@ -732,7 +738,7 @@ fn list_issues_filters_by_status_and_path() {
     let review_id = service.get_issue(first).unwrap().issue.review_id;
     let head = repo.head();
     let mut request = issue_request(review_id, &repo, &head, 1, 1, "readme");
-    request.path = "README.md";
+    request.spans[0].path = "README.md";
     let second = service.create_issue(&request).unwrap().issue.id;
     service
         .set_issue_status(Actor::Reviewer, first, IssueStatus::Resolved, None)
@@ -769,7 +775,7 @@ fn the_path_filter_follows_renames_and_counts_only_that_file() {
         .issue
         .id;
     let mut request = issue_request(review_id, &repo, &head, 1, 1, "readme");
-    request.path = "README.md";
+    request.spans[0].path = "README.md";
     let resolved_in_readme = service.create_issue(&request).unwrap().issue.id;
     for issue_id in [resolved_in_lib, resolved_in_readme] {
         service
@@ -902,11 +908,13 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
             title: "A problem",
             severity: Severity::Medium,
             body: "Wrong.",
-            path: "f.rs",
-            side: Side::Head,
-            start_line: 6,
-            end_line: 6,
-            start_line_text: Some("}"),
+            spans: vec![SpanRequest {
+                path: "f.rs",
+                side: Side::Head,
+                start_line: 6,
+                end_line: 6,
+                start_line_text: Some("}"),
+            }],
             commit,
             worktree_path,
             read_merge_base: None,
@@ -935,7 +943,7 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
     assert!(!message.contains("Uncommitted"), "{message}");
 
     let view = create(&feature_sha, Some(&linked)).unwrap();
-    assert_eq!(view.issue.anchor.commit, feature_sha);
+    assert_eq!(view.issue.anchors[0].commit, feature_sha);
     assert_eq!(current(&view), ("f.rs".to_string(), 6, 6));
 }
 
@@ -1104,6 +1112,128 @@ fn reopening_the_database_keeps_the_schema() {
         )
         .unwrap();
     assert_eq!(timeout, "3h");
+}
+
+fn span<'a>(path: &'a str, start: u32, end: u32, text: &'a str) -> SpanRequest<'a> {
+    SpanRequest {
+        path,
+        side: Side::Head,
+        start_line: start,
+        end_line: end,
+        start_line_text: Some(text),
+    }
+}
+
+#[test]
+fn an_issue_spans_several_places_and_each_span_is_followed_on_its_own() {
+    let (_home, repo, mut service, first) = repo_with_issue(1, 1);
+    let review_id = service.get_issue(first).unwrap().issue.review_id;
+    let head = repo.head();
+    let mut request = issue_request(review_id, &repo, &head, 3, 3, "line 3");
+    request.spans = vec![
+        span("src/lib.rs", 10, 11, "line 10"),
+        span("README.md", 2, 2, "more"),
+        span("src/lib.rs", 3, 3, "line 3"),
+    ];
+    let view = service.create_issue(&request).unwrap();
+    let stored: Vec<_> = view
+        .issue
+        .anchors
+        .iter()
+        .map(|anchor| (anchor.path.as_str(), anchor.start_line, anchor.end_line))
+        .collect();
+    assert_eq!(
+        stored,
+        [
+            ("src/lib.rs", 10, 11),
+            ("README.md", 2, 2),
+            ("src/lib.rs", 3, 3)
+        ],
+        "kept in the author's order"
+    );
+    assert_eq!(view.issue.anchors[1].snippet, "readme\nmore");
+    let issue_id = view.issue.id;
+
+    // Lines inserted at the top of src/lib.rs move both of its spans; README's line changes.
+    repo.write("src/lib.rs", &format!("new\n{}", numbered(20)));
+    repo.write("README.md", "readme\nchanged\n");
+    repo.commit_all("move and change");
+    let view = service.get_issue(issue_id).unwrap();
+    let placed: Vec<_> = view
+        .locations
+        .iter()
+        .map(|location| match location {
+            Location::Current {
+                start_line,
+                end_line,
+                ..
+            } => format!("{start_line}-{end_line}"),
+            Location::Outdated { .. } => "outdated".to_string(),
+        })
+        .collect();
+    assert_eq!(placed, ["11-12", "outdated", "4-4"], "partly outdated");
+    assert_eq!(view.code.as_ref().unwrap().len(), 3, "code for each span");
+
+    for path in ["README.md", "src/lib.rs"] {
+        let listed = service
+            .list_issues(review_id, None, Some(path), false)
+            .unwrap();
+        assert!(
+            listed.issues.iter().any(|issue| issue.issue.id == issue_id),
+            "any span puts the issue in {path}"
+        );
+    }
+}
+
+#[test]
+fn spans_are_validated_one_by_one_and_must_not_overlap() {
+    let (_home, repo, mut service, first) = repo_with_issue(1, 1);
+    let review_id = service.get_issue(first).unwrap().issue.review_id;
+    let head = repo.head();
+    let mut request = issue_request(review_id, &repo, &head, 3, 3, "line 3");
+
+    request.spans = vec![
+        span("src/lib.rs", 3, 3, "line 3"),
+        span("src/lib.rs", 8, 8, "line 9"),
+    ];
+    let message = expect_invalid(
+        service.create_issue(&request),
+        "span 2 (\"src/lib.rs\":8-8): ",
+    );
+    assert!(
+        message.contains("start_line_text does not match line 8"),
+        "{message}"
+    );
+
+    request.spans = vec![
+        span("src/lib.rs", 3, 6, "line 3"),
+        span("src/lib.rs", 5, 9, "line 5"),
+    ];
+    expect_invalid(service.create_issue(&request), "spans 1 and 2 overlap");
+    // The same lines on different sides do not overlap.
+    request.spans = vec![
+        span("src/lib.rs", 3, 3, "line 3"),
+        SpanRequest {
+            side: Side::Base,
+            ..span("src/lib.rs", 3, 3, "line 3")
+        },
+    ];
+    expect_invalid(
+        service.create_issue(&request),
+        "worktree_path must be null when a span",
+    );
+    request.worktree_path = None;
+    service.create_issue(&request).unwrap();
+
+    request.spans = Vec::new();
+    expect_invalid(
+        service.create_issue(&request),
+        "an issue needs 1 to 20 spans, not 0",
+    );
+    request.spans = (1..=21)
+        .map(|line| span("src/lib.rs", line, line, "x"))
+        .collect();
+    expect_invalid(service.create_issue(&request), "not 21");
 }
 
 #[test]
@@ -1333,12 +1463,12 @@ fn a_moved_repository_degrades_to_stored_data() {
     assert!(reason.contains("no longer at"), "{reason}");
 
     let list = service.list_issues(review_id, None, None, true).unwrap();
-    match &list.issues[0].location {
+    match &list.issues[0].locations[0] {
         Location::Outdated { reason } => assert!(reason.contains("no longer at"), "{reason}"),
         Location::Current { .. } => panic!("cannot be current without the repository"),
     }
     assert_eq!(
-        list.issues[0].code.as_ref().unwrap().first_line,
+        list.issues[0].code.as_ref().unwrap()[0].first_line,
         7,
         "stored snippet"
     );
@@ -1391,7 +1521,7 @@ fn issues_sharing_an_anchor_commit_are_placed_from_one_tree_diff() {
         .id;
     for path in ["a.rs", "b.rs", "c.rs"] {
         let mut request = issue_request(review_id, &repo, &anchor, 5, 5, "line 5");
-        request.path = path;
+        request.spans[0].path = path;
         service.create_issue(&request).unwrap();
     }
     // One later commit renames b.rs, inserts a line at the top of a.rs and leaves c.rs alone.
@@ -1429,7 +1559,7 @@ fn issues_are_listed_by_issue_number() {
     for (path, line) in [("b.rs", 9), ("a.rs", 7), ("b.rs", 2), ("a.rs", 1)] {
         let text = format!("line {line}");
         let mut request = issue_request(review_id, &repo, &head, line, line, &text);
-        request.path = path;
+        request.spans[0].path = path;
         created.push(service.create_issue(&request).unwrap().issue.id);
     }
     let listed: Vec<i64> = service
@@ -1502,7 +1632,7 @@ fn lines_changed_in_a_file_that_became_binary_are_outdated() {
     repo.write("src/lib.rs", &changed);
     repo.commit_all("binary now");
     let view = service.get_issue(issue_id).unwrap();
-    assert!(is_outdated(&view), "{:?}", view.location);
+    assert!(is_outdated(&view), "{:?}", view.locations);
 }
 
 #[test]
@@ -1522,7 +1652,7 @@ fn uncommitted_edits_in_a_diff_disabled_file_are_still_rejected() {
         .id;
     repo.write("gen.txt", &numbered(12).replace("line 5\n", "edited\n"));
     let mut request = issue_request(review_id, &repo, &head, 5, 5, "line 5");
-    request.path = "gen.txt";
+    request.spans[0].path = "gen.txt";
     expect_invalid(service.create_issue(&request), "differ from commit");
 }
 

@@ -14,7 +14,7 @@ use crate::base::BaseMode;
 use crate::error::Error;
 use crate::markdown;
 use crate::model::{Actor, IssueStatus, Severity, Side};
-use crate::service::{CommentTarget, CreateIssue};
+use crate::service::{CommentTarget, CreateIssue, SpanRequest};
 use crate::settings::IdleTimeout;
 
 #[derive(Deserialize)]
@@ -334,11 +334,13 @@ pub async fn create_issue(
                 title: &title,
                 severity,
                 body: &body,
-                path: &path,
-                side,
-                start_line,
-                end_line,
-                start_line_text: None,
+                spans: vec![SpanRequest {
+                    path: &path,
+                    side,
+                    start_line,
+                    end_line,
+                    start_line_text: None,
+                }],
                 commit: &commit,
                 worktree_path: None,
                 read_merge_base: merge_base.as_deref(),

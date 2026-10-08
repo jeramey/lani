@@ -120,24 +120,37 @@ impl Service {
         let mut placer = Placer::new(view);
         let mut issues = Vec::new();
         for issue in store::list_issues(&self.conn, view.review.id)? {
-            let location = placer.place(&issue.anchor);
-            if is_in_file(&issue.anchor, &location, path) {
-                issues.push(self.placed_issue_view(&mut placer, issue, location, true)?);
+            let locations = placer.place_all(&issue.anchors);
+            let in_file = issue
+                .anchors
+                .iter()
+                .zip(&locations)
+                .any(|(anchor, location)| is_in_file(anchor, location, path));
+            if in_file {
+                issues.push(self.placed_issue_view(&mut placer, issue, locations, true)?);
             }
         }
         Ok(issues)
     }
 
-    /// The path each open issue is in now: its current path, or where it was opened when it
-    /// is outdated.
-    fn open_issue_paths(&self, view: &ReviewView) -> Result<Vec<String>> {
+    /// For each open issue, the paths its spans are in now: each span's current path, or where
+    /// it was opened when it is outdated.
+    fn open_issue_paths(&self, view: &ReviewView) -> Result<Vec<Vec<String>>> {
         let mut placer = Placer::new(view);
         Ok(store::list_issues(&self.conn, view.review.id)?
             .into_iter()
             .filter(|issue: &Issue| issue.status == IssueStatus::Open)
-            .map(|issue| match placer.place(&issue.anchor) {
-                Location::Current { path, .. } => path,
-                Location::Outdated { .. } => issue.anchor.path,
+            .map(|issue| {
+                let locations = placer.place_all(&issue.anchors);
+                issue
+                    .anchors
+                    .into_iter()
+                    .zip(locations)
+                    .map(|(anchor, location)| match location {
+                        Location::Current { path, .. } => path,
+                        Location::Outdated { .. } => anchor.path,
+                    })
+                    .collect()
             })
             .collect())
     }
@@ -178,7 +191,13 @@ fn changed_paths(git: &Git, view: &ReviewView) -> Result<HashSet<String>> {
         .collect())
 }
 
-fn directory_entry(entry: TreeEntry, changed: &HashSet<String>, open: &[String]) -> DirectoryEntry {
+/// A directory entry with its marks. `open` holds each open issue's paths; an issue counts once
+/// for an entry however many of its spans are inside it.
+fn directory_entry(
+    entry: TreeEntry,
+    changed: &HashSet<String>,
+    open: &[Vec<String>],
+) -> DirectoryEntry {
     let inside = |path: &str| {
         path == entry.path
             || (entry.kind == EntryKind::Directory
@@ -188,7 +207,10 @@ fn directory_entry(entry: TreeEntry, changed: &HashSet<String>, open: &[String])
     };
     DirectoryEntry {
         changed: changed.iter().any(|path| inside(path)),
-        open_issues: open.iter().filter(|path| inside(path)).count() as u64,
+        open_issues: open
+            .iter()
+            .filter(|paths| paths.iter().any(|path| inside(path)))
+            .count() as u64,
         entry,
     }
 }
@@ -235,7 +257,8 @@ pub struct ChangedFile {
     pub added: u32,
     pub removed: u32,
     pub diff: FileDiff,
-    /// Every issue on either path of this file, open or resolved, placed in the current code.
+    /// Every issue with a span on either path of this file, open or resolved, placed in the
+    /// current code. An issue with spans in several files is listed with each of them.
     pub issues: Vec<IssueView>,
 }
 
@@ -288,15 +311,13 @@ impl Service {
             })?;
         let git = Git::new(&view.repo.git_dir);
         let mut placer = Placer::new(&view);
-        // Each issue is shown with the first file it belongs to; `None` once it is.
-        let mut unclaimed: Vec<Option<(Issue, Location)>> =
-            store::list_issues(&self.conn, review_id)?
-                .into_iter()
-                .map(|issue| {
-                    let location = placer.place(&issue.anchor);
-                    Some((issue, location))
-                })
-                .collect();
+        let all_issues: Vec<(Issue, Vec<Location>)> = store::list_issues(&self.conn, review_id)?
+            .into_iter()
+            .map(|issue| {
+                let locations = placer.place_all(&issue.anchors);
+                (issue, locations)
+            })
+            .collect();
         let mut files = Vec::new();
         for (change, added, removed, diff) in load_diffs(&git, &merge_base, &head, expand)? {
             let paths: Vec<&str> = [&change.old, &change.new]
@@ -304,15 +325,24 @@ impl Service {
                 .flatten()
                 .map(|version| version.path.as_str())
                 .collect();
+            // An issue with spans in several files belongs to each of them; the page decides
+            // where its thread goes.
             let mut issues = Vec::new();
-            for slot in &mut unclaimed {
-                let belongs = slot.as_ref().is_some_and(|(issue, location)| {
-                    paths
-                        .iter()
-                        .any(|path| is_in_file(&issue.anchor, location, path))
-                });
-                if belongs && let Some((issue, location)) = slot.take() {
-                    issues.push(self.placed_issue_view(&mut placer, issue, location, true)?);
+            for (issue, locations) in &all_issues {
+                let belongs = issue
+                    .anchors
+                    .iter()
+                    .zip(locations)
+                    .any(|(anchor, location)| {
+                        paths.iter().any(|path| is_in_file(anchor, location, path))
+                    });
+                if belongs {
+                    issues.push(self.placed_issue_view(
+                        &mut placer,
+                        issue.clone(),
+                        locations.clone(),
+                        true,
+                    )?);
                 }
             }
             files.push(ChangedFile {

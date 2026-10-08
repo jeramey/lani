@@ -319,9 +319,9 @@ pub fn issue_counts(conn: &Connection, review_id: i64) -> Result<IssueCounts> {
 // ── issues ───────────────────────────────────────────────────────────────────────────────────
 
 const ISSUE_COLUMNS: &str = "id, review_id, author, title, severity, status, resolved_by, \
-     resolved_at, anchor_commit, path, side, start_line, end_line, snippet, snippet_start, \
-     created_at, edited_by, edited_at, version";
+     resolved_at, created_at, edited_by, edited_at, version";
 
+/// An issue row; its spans are loaded separately.
 fn issue_from_row(row: &Row<'_>) -> rusqlite::Result<Issue> {
     Ok(Issue {
         id: row.get(0)?,
@@ -332,20 +332,30 @@ fn issue_from_row(row: &Row<'_>) -> rusqlite::Result<Issue> {
         status: row.get(5)?,
         resolved_by: row.get(6)?,
         resolved_at: row.get(7)?,
-        anchor: Anchor {
-            commit: row.get(8)?,
-            path: row.get(9)?,
-            side: row.get(10)?,
-            start_line: row.get(11)?,
-            end_line: row.get(12)?,
-            snippet: row.get(13)?,
-            snippet_start: row.get(14)?,
-        },
-        created_at: row.get(15)?,
-        edited_by: row.get(16)?,
-        edited_at: row.get(17)?,
-        version: row.get(18)?,
+        anchors: Vec::new(),
+        created_at: row.get(8)?,
+        edited_by: row.get(9)?,
+        edited_at: row.get(10)?,
+        version: row.get(11)?,
     })
+}
+
+const SPAN_COLUMNS: &str =
+    "issue_id, anchor_commit, path, side, start_line, end_line, snippet, snippet_start";
+
+fn span_from_row(row: &Row<'_>) -> rusqlite::Result<(i64, Anchor)> {
+    Ok((
+        row.get(0)?,
+        Anchor {
+            commit: row.get(1)?,
+            path: row.get(2)?,
+            side: row.get(3)?,
+            start_line: row.get(4)?,
+            end_line: row.get(5)?,
+            snippet: row.get(6)?,
+            snippet_start: row.get(7)?,
+        },
+    ))
 }
 
 /// A new issue's own fields; its first comment is inserted separately, in the same transaction.
@@ -354,24 +364,36 @@ pub struct NewIssue<'a> {
     pub author: Actor,
     pub title: &'a str,
     pub severity: Severity,
-    pub anchor: &'a Anchor,
+    /// One or more spans, in the author's order.
+    pub anchors: &'a [Anchor],
     pub now: &'a str,
 }
 
-/// Insert an open issue. Its first comment must be inserted in the same transaction.
+/// Insert an open issue and its spans. Its first comment must be inserted in the same
+/// transaction.
 pub fn insert_issue(conn: &Connection, issue: &NewIssue<'_>) -> Result<i64> {
-    let anchor = issue.anchor;
     conn.execute(
         "INSERT INTO issue (review_id, author, title, severity, status, resolved_by, resolved_at,
-                            anchor_commit, path, side, start_line, end_line, snippet,
-                            snippet_start, created_at, edited_by, edited_at, version)
-         VALUES (?1, ?2, ?3, ?4, 'open', NULL, NULL, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                 NULL, NULL, 1)",
+                            created_at, edited_by, edited_at, version)
+         VALUES (?1, ?2, ?3, ?4, 'open', NULL, NULL, ?5, NULL, NULL, 1)",
         params![
             issue.review_id,
             issue.author,
             issue.title,
             issue.severity,
+            issue.now
+        ],
+    )?;
+    let issue_id = conn.last_insert_rowid();
+    let mut insert = conn.prepare(
+        "INSERT INTO issue_span (issue_id, position, anchor_commit, path, side, start_line,
+                                 end_line, snippet, snippet_start)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    )?;
+    for (position, anchor) in (1_i64..).zip(issue.anchors) {
+        insert.execute(params![
+            issue_id,
+            position,
             anchor.commit,
             anchor.path,
             anchor.side,
@@ -379,10 +401,9 @@ pub fn insert_issue(conn: &Connection, issue: &NewIssue<'_>) -> Result<i64> {
             anchor.end_line,
             anchor.snippet,
             anchor.snippet_start,
-            issue.now,
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
+        ])?;
+    }
+    Ok(issue_id)
 }
 
 /// Change an issue's title and severity if it is still at `expected_version`; returns whether it
@@ -406,22 +427,54 @@ pub fn update_issue_details(
 }
 
 pub fn get_issue(conn: &Connection, id: i64) -> Result<Issue> {
-    conn.query_row(
-        &format!("SELECT {ISSUE_COLUMNS} FROM issue WHERE id = ?1"),
-        [id],
-        issue_from_row,
-    )
-    .optional()?
-    .ok_or_else(|| Error::NotFound(format!("issue {id} does not exist")))
+    let mut issue = conn
+        .query_row(
+            &format!("SELECT {ISSUE_COLUMNS} FROM issue WHERE id = ?1"),
+            [id],
+            issue_from_row,
+        )
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("issue {id} does not exist")))?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT {SPAN_COLUMNS} FROM issue_span WHERE issue_id = ?1 ORDER BY position"
+    ))?;
+    for span in statement.query_map([id], span_from_row)? {
+        issue.anchors.push(span?.1);
+    }
+    Ok(issue)
 }
 
-/// List all of a review's issues by issue number, oldest first.
+/// List all of a review's issues with their spans, by issue number, oldest first.
 pub fn list_issues(conn: &Connection, review_id: i64) -> Result<Vec<Issue>> {
     let mut statement = conn.prepare(&format!(
         "SELECT {ISSUE_COLUMNS} FROM issue WHERE review_id = ?1 ORDER BY id"
     ))?;
-    let rows = statement.query_map([review_id], issue_from_row)?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut issues = statement
+        .query_map([review_id], issue_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut statement = conn.prepare(
+        "SELECT s.issue_id, s.anchor_commit, s.path, s.side, s.start_line, s.end_line,
+                s.snippet, s.snippet_start
+         FROM issue_span s JOIN issue i ON i.id = s.issue_id
+         WHERE i.review_id = ?1 ORDER BY s.issue_id, s.position",
+    )?;
+    // Both queries are ordered by issue id, so the spans can be handed out in one pass.
+    let mut next = issues.iter_mut().peekable();
+    for span in statement.query_map([review_id], span_from_row)? {
+        let (issue_id, anchor) = span?;
+        while next.peek().is_some_and(|issue| issue.id < issue_id) {
+            next.next();
+        }
+        match next.peek_mut() {
+            Some(issue) if issue.id == issue_id => issue.anchors.push(anchor),
+            _ => {
+                return Err(Error::Internal(format!(
+                    "span of issue {issue_id} has no issue in review {review_id}"
+                )));
+            }
+        }
+    }
+    Ok(issues)
 }
 
 /// Set an issue's status; `resolved_by` must be `Some` exactly when resolving.

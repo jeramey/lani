@@ -47,7 +47,7 @@
       <td class="ln">{% if let Some(old) = row.old %}{% if row.side == "base" %}<a href="#{{ row.id }}">{{ old }}</a>{% else %}{{ old }}{% endif %}{% endif %}</td>
       <td class="ln">{% if let Some(new) = row.new %}<a href="#{{ row.id }}">{{ new }}</a>{% endif %}</td>
       <td class="mark">{{ row.mark }}</td>
-      <td class="src"><code>{{ row.html|safe }}</code></td>
+      <td class="src">{% for marker in row.markers %}<a class="span-marker" href="{{ marker.url }}" title="{{ marker.tooltip }}">◆ #{{ marker.id }}</a>{% endfor %}<code>{{ row.html|safe }}</code></td>
     </tr>
     {% for thread in row.threads %}
     <tr class="thread-row"><td colspan="4">{% include "thread.html" %}</td></tr>

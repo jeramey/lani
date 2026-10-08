@@ -5,10 +5,8 @@
       <span class="badge {{ thread.severity.class }}">{{ thread.severity.label }}</span>
       <span class="badge {{ thread.status_class }}">{{ thread.status_label }}</span>
       <span class="author {{ thread.opened_by.class }}">{{ thread.opened_by.label }}</span>
-      <code class="location">{{ thread.location }}</code>
     </summary>
-    {% if let Some(reason) = thread.outdated_reason %}<p class="notice">Outdated: {{ reason }}.</p>{% endif %}
-    {% if let Some(excerpt) = thread.code %}{% include "code_excerpt.html" %}{% endif %}
+    <div class="thread-spans">{% for span in thread.spans %}{% include "span.html" %}{% endfor %}</div>
     {% for comment in thread.comments %}{% include "comment.html" %}{% endfor %}
     {% if editable %}
     <form method="post" action="{{ thread.comment_action }}" class="new-comment">

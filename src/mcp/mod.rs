@@ -19,7 +19,7 @@ use serde::Deserialize;
 use crate::base::BaseMode;
 use crate::daemon;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
-use crate::service::{CommentTarget, CreateIssue, Service, StartReview};
+use crate::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use crate::text;
 use crate::web::{self, View};
 
@@ -33,8 +33,9 @@ Each review has a summary of the change's intent. Read it first, and keep it acc
 update_review_summary without discarding what others wrote.
 
 Reviewer: call start_review (base_mode \"auto\" unless the human names a base or asks for a whole-tree \
-review), then create_issue once per finding, anchored to the lines concerned, with a one-line title \
-naming the problem and a severity (high, medium, low or nit); keep the severity out of the title. Pass commit = the SHA of the \
+review), then create_issue once per finding, anchored to the lines concerned (one issue with several \
+spans when the same problem appears in more than one place), with a one-line title naming the problem \
+and a severity (high, medium, low or nit); keep the severity out of the title. Pass commit = the SHA of the \
 commit whose files you read (what `git rev-parse HEAD` prints there, not `HEAD` itself; it should equal \
 the review head) and worktree_path = where you read them. Then call open_web_ui so the human can read \
 and edit. Only committed code can be reviewed: if start_review reports uncommitted changes, tell the \
@@ -278,6 +279,25 @@ pub struct CreateIssueParams {
     /// The issue description (Markdown): what is wrong, why it matters, and how to fix it. If you
     /// quote text from tool output, leave out its `│ ` prefixes.
     pub body: String,
+    /// The line ranges the issue is about: usually one, or several when the same problem
+    /// appears in more than one place (at most 20). List the main place first. They must not
+    /// overlap.
+    #[schemars(length(min = 1, max = 20))]
+    pub spans: Vec<SpanParams>,
+    /// The SHA of the commit whose files you read: what `git rev-parse HEAD` prints in that
+    /// worktree. Pass the SHA itself, not `HEAD` or a branch name.
+    pub commit: String,
+    /// Absolute path of the worktree you read the files from, or null if you read them from git
+    /// (`git show <commit>:<path>`). Must be null if any span is on side "base". Pass the plain
+    /// value, without the quotes that tool output shows around it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(schema_with = "nullable_string")]
+    pub worktree_path: Option<String>,
+}
+
+/// One line range of an issue.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpanParams {
     /// File path relative to the repository root, e.g. "src/main.rs". Pass the plain value, without
     /// the quotes that tool output shows around it.
     pub path: String,
@@ -291,15 +311,6 @@ pub struct CreateIssueParams {
     /// The exact text of `start_line`, used to catch wrong line numbers: the line's text alone,
     /// without line numbers or the `> 12 | ` gutter of code excerpts.
     pub start_line_text: String,
-    /// The SHA of the commit whose files you read: what `git rev-parse HEAD` prints in that
-    /// worktree. Pass the SHA itself, not `HEAD` or a branch name.
-    pub commit: String,
-    /// Absolute path of the worktree you read the file from, or null if you read it from git
-    /// (`git show <commit>:<path>`). Must be null for side "base". Pass the plain value, without
-    /// the quotes that tool output shows around it.
-    #[serde(deserialize_with = "Option::deserialize")]
-    #[schemars(schema_with = "nullable_string")]
-    pub worktree_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -660,21 +671,37 @@ impl LaniServer {
     }
 
     #[tool(
-        description = "Open an issue on a line range of committed code. LANI checks that the commit is on the \
-                       review branch, that the file on disk matches it around the range, and that \
-                       start_line_text matches; errors explain how to retry."
+        description = "Open an issue on one or more line ranges (spans) of committed code. LANI checks \
+                       that the commit is on the review branch, and for each span that the file on \
+                       disk matches it around the range and that start_line_text matches; errors \
+                       explain how to retry."
     )]
     fn create_issue(&self, Parameters(p): Parameters<CreateIssueParams>) -> Result<String, String> {
         let author = self.claim_role(p.author)?;
-        let side = match p.side {
-            SideParam::Head => Side::Head,
-            SideParam::Base => Side::Base,
-        };
-        let hint = quote_note(&[
+        let spans: Vec<SpanRequest<'_>> = p
+            .spans
+            .iter()
+            .map(|span| SpanRequest {
+                path: &span.path,
+                side: match span.side {
+                    SideParam::Head => Side::Head,
+                    SideParam::Base => Side::Base,
+                },
+                start_line: span.start_line,
+                end_line: span.end_line,
+                start_line_text: Some(&span.start_line_text),
+            })
+            .collect();
+        let mut quotable = vec![
             ("title", Some(p.title.as_str())),
-            ("path", Some(p.path.as_str())),
             ("worktree_path", p.worktree_path.as_deref()),
-        ]);
+        ];
+        quotable.extend(
+            p.spans
+                .iter()
+                .map(|span| ("path", Some(span.path.as_str()))),
+        );
+        let hint = quote_note(&quotable);
         let issue = with_hint(
             self.with_service(|service| {
                 service.create_issue(&CreateIssue {
@@ -683,11 +710,7 @@ impl LaniServer {
                     title: &p.title,
                     severity: p.severity.severity(),
                     body: &p.body,
-                    path: &p.path,
-                    side,
-                    start_line: p.start_line,
-                    end_line: p.end_line,
-                    start_line_text: Some(&p.start_line_text),
+                    spans: spans.clone(),
                     commit: &p.commit,
                     worktree_path: p.worktree_path.as_deref().map(Path::new),
                     read_merge_base: None,
@@ -696,10 +719,10 @@ impl LaniServer {
             hint,
         )?;
         let mut message = format!(
-            "Created issue {} in review {}.\nLocation: {}\n",
+            "Created issue {} in review {}.\n{}",
             issue.issue.id,
             issue.issue.review_id,
-            render::location_text(&issue)
+            render::locations_text(&issue)
         );
         if let Some(note) = quote_note(&[("title", Some(p.title.as_str()))]) {
             let _ = writeln!(
@@ -774,7 +797,7 @@ impl LaniServer {
         let message = format!(
             "{verb} issue {} ({}).",
             issue.issue.id,
-            render::location_text(&issue)
+            render::locations_summary(&issue)
         );
         reply(&match &p.comment {
             Some(comment) => with_prefix_note(message, comment),
@@ -945,8 +968,7 @@ mod tests {
     #[test]
     fn worktree_path_is_required_but_nullable() {
         let base = serde_json::json!({
-            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "a.rs", "side": "head",
-            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"
+            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "spans": [{"path": "a.rs", "side": "head", "start_line": 1, "end_line": 1, "start_line_text": "x"}], "commit": "4526852"
         });
         assert!(serde_json::from_value::<CreateIssueParams>(base.clone()).is_err());
 

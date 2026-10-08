@@ -11,7 +11,7 @@
 use std::fmt::Write as _;
 
 use crate::model::{
-    Actor, BaseSource, Comment, IssueStatus, ReviewStatus, Side, short_ref, short_sha,
+    Actor, Anchor, BaseSource, Comment, IssueStatus, ReviewStatus, Side, short_ref, short_sha,
 };
 use crate::service::{
     CodeExcerpt, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
@@ -247,7 +247,29 @@ pub fn issue_list(list: &IssueList, status_label: &str, full: bool, path: Option
 
 fn issue_summary_line(view: &IssueView) -> String {
     let issue = &view.issue;
-    let location = match &view.location {
+    let last = view
+        .comments
+        .last()
+        .map_or("nobody", |comment| comment.author.as_str());
+    format!(
+        "Issue {} · {} · {} · {} · {} · {}, last: {last}\n",
+        issue.id,
+        issue_status(issue.status, issue.resolved_by),
+        issue.severity.as_str(),
+        quoted(&issue.title),
+        locations_summary(view),
+        plural(view.comments.len(), "comment")
+    )
+}
+
+/// Where an issue is, briefly: its first span, and how many more it has.
+#[must_use]
+pub fn locations_summary(view: &IssueView) -> String {
+    let mut spans = view.spans();
+    let Some((anchor, location)) = spans.next() else {
+        return String::new();
+    };
+    let mut text = match location {
         Location::Current {
             path,
             start_line,
@@ -256,33 +278,40 @@ fn issue_summary_line(view: &IssueView) -> String {
         } => format!("{}:{}", quoted(path), lines(*start_line, *end_line)),
         Location::Outdated { .. } => format!(
             "{}:{} (outdated)",
-            quoted(&issue.anchor.path),
-            lines(issue.anchor.start_line, issue.anchor.end_line)
+            quoted(&anchor.path),
+            lines(anchor.start_line, anchor.end_line)
         ),
     };
-    let side = if issue.anchor.side == Side::Base {
-        " (base side)"
-    } else {
-        ""
-    };
-    let last = view
-        .comments
-        .last()
-        .map_or("nobody", |comment| comment.author.as_str());
-    format!(
-        "Issue {} · {} · {} · {} · {location}{side} · {}, last: {last}\n",
-        issue.id,
-        issue_status(issue.status, issue.resolved_by),
-        issue.severity.as_str(),
-        quoted(&issue.title),
-        plural(view.comments.len(), "comment")
-    )
+    if anchor.side == Side::Base {
+        text.push_str(" (base side)");
+    }
+    let more = spans.count();
+    if more > 0 {
+        let _ = write!(text, " + {}", plural(more, "more span"));
+    }
+    text
+}
+
+/// Where each span of an issue is: a `Location:` line for one span, or a numbered list.
+#[must_use]
+pub fn locations_text(view: &IssueView) -> String {
+    let spans: Vec<String> = view
+        .spans()
+        .map(|(anchor, location)| span_text(anchor, location))
+        .collect();
+    if let [only] = spans.as_slice() {
+        return format!("Location: {only}\n");
+    }
+    let mut out = String::from("Locations:\n");
+    for (number, span) in (1..).zip(&spans) {
+        let _ = writeln!(out, "  {number}. {span}");
+    }
+    out
 }
 
 #[must_use]
 pub fn issue_full(view: &IssueView) -> String {
     let issue = &view.issue;
-    let anchor = &issue.anchor;
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -298,26 +327,33 @@ pub fn issue_full(view: &IssueView) -> String {
         None => String::new(),
     };
     let _ = writeln!(out, "Title: {}{edited}", quoted(&issue.title));
-    let _ = writeln!(out, "Location: {}", location_text(view));
+    out.push_str(&locations_text(view));
 
     if let Some(code) = &view.code {
-        let (label, highlighted) = match &view.location {
-            Location::Current {
-                commit,
-                start_line,
-                end_line,
-                ..
-            } if *commit == code.commit => (
-                format!("Code @ {}", short_sha(&code.commit)),
-                (*start_line, *end_line),
-            ),
-            _ => (
-                format!("Original code @ {}", short_sha(&code.commit)),
-                (anchor.start_line, anchor.end_line),
-            ),
-        };
-        let _ = writeln!(out, "{label}:");
-        out.push_str(&code_block(code, highlighted));
+        let numbered = code.len() > 1;
+        for ((number, (anchor, location)), code) in (1..).zip(view.spans()).zip(code) {
+            let (label, highlighted) = match location {
+                Location::Current {
+                    commit,
+                    start_line,
+                    end_line,
+                    ..
+                } if *commit == code.commit => (
+                    format!("Code @ {}", short_sha(&code.commit)),
+                    (*start_line, *end_line),
+                ),
+                _ => (
+                    format!("Original code @ {}", short_sha(&code.commit)),
+                    (anchor.start_line, anchor.end_line),
+                ),
+            };
+            if numbered {
+                let _ = writeln!(out, "Span {number}, {label}:");
+            } else {
+                let _ = writeln!(out, "{label}:");
+            }
+            out.push_str(&code_block(code, highlighted));
+        }
     }
 
     for comment in &view.comments {
@@ -327,11 +363,10 @@ pub fn issue_full(view: &IssueView) -> String {
     out
 }
 
-/// One line describing where an issue is, e.g.
+/// Where one span is, e.g.
 /// `"src/a.rs":44-46 (head side) @ 3f9c2a1 (opened at "src/a.rs":42-44 (head side) @ a1b2c3d)`.
 #[must_use]
-pub fn location_text(view: &IssueView) -> String {
-    let anchor = &view.issue.anchor;
+pub fn span_text(anchor: &Anchor, location: &Location) -> String {
     let side = match anchor.side {
         Side::Head => "head side",
         Side::Base => "base side",
@@ -342,7 +377,7 @@ pub fn location_text(view: &IssueView) -> String {
         lines(anchor.start_line, anchor.end_line),
         short_sha(&anchor.commit)
     );
-    match &view.location {
+    match location {
         Location::Current {
             commit,
             path,

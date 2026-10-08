@@ -11,10 +11,10 @@ use axum::response::{Html, IntoResponse, Response};
 
 use crate::error::Error;
 use crate::model::{
-    Actor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Severity, Side,
-    short_ref, short_sha,
+    Actor, Anchor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Severity,
+    Side, short_ref, short_sha,
 };
-use crate::service::{IssueView, Location, ReviewView};
+use crate::service::{CodeExcerpt, IssueView, Location, ReviewView};
 use crate::{highlight, markdown, time};
 
 // ── URLs ─────────────────────────────────────────────────────────────────────────────────────
@@ -318,8 +318,10 @@ pub struct IssueRow {
     pub url: String,
     pub status_label: String,
     pub status_class: &'static str,
+    /// The first span, and how many more there are.
     pub location: String,
-    pub outdated: bool,
+    /// "Outdated" when every span is, "Partly outdated" when some are.
+    pub outdated: Option<&'static str>,
     pub title: String,
     pub severity: SeverityView,
     pub comments: String,
@@ -329,26 +331,42 @@ pub struct IssueRow {
 #[must_use]
 pub fn issue_row(view: &IssueView) -> IssueRow {
     let issue = &view.issue;
-    let (location, outdated) = match &view.location {
-        Location::Current {
-            path,
-            start_line,
-            end_line,
-            ..
-        } => (format!("{path}:{}", lines(*start_line, *end_line)), false),
-        Location::Outdated { .. } => (
-            format!(
-                "{}:{}",
-                issue.anchor.path,
-                lines(issue.anchor.start_line, issue.anchor.end_line)
-            ),
-            true,
-        ),
-    };
-    let location = if issue.anchor.side == Side::Base {
-        format!("{location} (base side)")
-    } else {
-        location
+    let mut location = view
+        .spans()
+        .next()
+        .map(|(anchor, location)| {
+            let side = if anchor.side == Side::Base {
+                " (base side)"
+            } else {
+                ""
+            };
+            match location {
+                Location::Current {
+                    path,
+                    start_line,
+                    end_line,
+                    ..
+                } => format!("{path}:{}{side}", lines(*start_line, *end_line)),
+                Location::Outdated { .. } => format!(
+                    "{}:{}{side}",
+                    anchor.path,
+                    lines(anchor.start_line, anchor.end_line)
+                ),
+            }
+        })
+        .unwrap_or_default();
+    if view.locations.len() > 1 {
+        let _ = write!(location, " + {} more", view.locations.len() - 1);
+    }
+    let outdated_spans = view
+        .locations
+        .iter()
+        .filter(|location| matches!(location, Location::Outdated { .. }))
+        .count();
+    let outdated = match outdated_spans {
+        0 => None,
+        count if count == view.locations.len() => Some("Outdated"),
+        _ => Some("Partly outdated"),
     };
     let (status_label, status_class) = issue_status(issue.status, issue.resolved_by);
     IssueRow {
@@ -439,12 +457,50 @@ pub struct CodeView {
     pub lines: Vec<CodeLine>,
 }
 
-/// The code shown on an issue page: current lines, or the stored snippet when outdated.
+/// One span of an issue, as the issue page and threads show it.
+pub struct SpanView {
+    /// Where the span is, e.g. "src/a.rs:42-44 @ a1b2c3d".
+    pub location: String,
+    /// Why the span is outdated, if it is.
+    pub outdated_reason: Option<String>,
+    /// The span's code, when shown.
+    pub code: Option<CodeView>,
+    /// The span's lines in the Files and Changes views.
+    pub links: Vec<Link>,
+}
+
+/// The spans of an issue. `with_code` adds each span's code (the view must have been loaded with
+/// code); `has_diff` adds links to the Changes view.
 #[must_use]
-pub fn code(view: &IssueView) -> Option<CodeView> {
-    let excerpt = view.code.as_ref()?;
-    let anchor = &view.issue.anchor;
-    let (label, highlighted, path) = match &view.location {
+pub fn span_views(view: &IssueView, with_code: bool, has_diff: bool) -> Vec<SpanView> {
+    let codes = view.code.as_deref().unwrap_or_default();
+    let numbered = view.locations.len() > 1;
+    (1..)
+        .zip(view.spans())
+        .map(|(number, (anchor, location))| SpanView {
+            location: span_location(anchor, location),
+            outdated_reason: match location {
+                Location::Outdated { reason } => Some(reason.clone()),
+                Location::Current { .. } => None,
+            },
+            code: codes
+                .get(number - 1)
+                .filter(|_| with_code)
+                .map(|excerpt| span_code(anchor, location, excerpt, numbered.then_some(number))),
+            links: span_links(view.issue.review_id, anchor, location, has_diff),
+        })
+        .collect()
+}
+
+/// A span's code: current lines, or its stored snippet when outdated. `number` labels the span
+/// when the issue has several.
+fn span_code(
+    anchor: &Anchor,
+    location: &Location,
+    excerpt: &CodeExcerpt,
+    number: Option<usize>,
+) -> CodeView {
+    let (label, highlighted, path) = match location {
         Location::Current {
             commit,
             path,
@@ -461,6 +517,10 @@ pub fn code(view: &IssueView) -> Option<CodeView> {
             anchor.path.as_str(),
         ),
     };
+    let label = match number {
+        Some(number) => format!("Span {number} · {label}"),
+        None => label,
+    };
     // The excerpt is highlighted on its own; a construct that starts above it, such as a long
     // comment, may be coloured as code.
     let file_name = path.rsplit('/').next().unwrap_or(path);
@@ -473,7 +533,7 @@ pub fn code(view: &IssueView) -> Option<CodeView> {
             highlighted: (highlighted.0..=highlighted.1).contains(&number),
         })
         .collect();
-    Some(CodeView { label, lines })
+    CodeView { label, lines }
 }
 
 /// An issue shown inside a code view: its thread, with forms that return to the view.
@@ -488,10 +548,8 @@ pub struct ThreadView {
     pub status_class: &'static str,
     pub resolved: bool,
     pub opened_by: AuthorView,
-    pub location: String,
-    pub outdated_reason: Option<String>,
-    /// The code, for threads shown apart from the lines they are about.
-    pub code: Option<CodeView>,
+    /// Every span, with code for threads shown apart from the lines they are about.
+    pub spans: Vec<SpanView>,
     pub comments: Vec<CommentView>,
     pub comment_action: String,
     pub status_action: String,
@@ -499,10 +557,10 @@ pub struct ThreadView {
     pub back: String,
 }
 
-/// An issue's thread for a code view at `back`. `with_code` adds the issue's code, for threads
+/// An issue's thread for a code view at `back`. `with_code` adds each span's code, for threads
 /// that are not shown under their own lines.
 #[must_use]
-pub fn thread(view: &IssueView, back: &str, with_code: bool) -> ThreadView {
+pub fn thread(view: &IssueView, back: &str, with_code: bool, has_diff: bool) -> ThreadView {
     let issue = &view.issue;
     let (status_label, status_class) = issue_status(issue.status, issue.resolved_by);
     let url = issue_url(issue.review_id, issue.id);
@@ -515,12 +573,7 @@ pub fn thread(view: &IssueView, back: &str, with_code: bool) -> ThreadView {
         status_class,
         resolved: issue.status == IssueStatus::Resolved,
         opened_by: author(issue.author),
-        location: location(view),
-        outdated_reason: match &view.location {
-            Location::Outdated { reason } => Some(reason.clone()),
-            Location::Current { .. } => None,
-        },
-        code: if with_code { code(view) } else { None },
+        spans: span_views(view, with_code, has_diff),
         comments: view
             .comments
             .iter()
@@ -536,12 +589,32 @@ pub fn thread(view: &IssueView, back: &str, with_code: bool) -> ThreadView {
     }
 }
 
-/// The issue's location in words, e.g. "src/a.rs:42-44 @ a1b2c3d", in the web's plain style
-/// rather than the quoted style of MCP output (docs/design.md §12.4). An outdated issue shows
-/// where it was opened; the page explains why it is outdated separately.
+/// A small mark on a span's last line that points to the issue's thread elsewhere on the page.
+pub struct MarkerView {
+    pub id: i64,
+    pub url: String,
+    /// Shown on hover: the issue's number and title.
+    pub tooltip: String,
+}
+
 #[must_use]
-pub fn location(view: &IssueView) -> String {
-    let anchor = &view.issue.anchor;
+pub fn marker(view: &IssueView) -> MarkerView {
+    let issue = &view.issue;
+    MarkerView {
+        id: issue.id,
+        url: format!("#issue-{}", issue.id),
+        tooltip: format!(
+            "Issue #{}: {} (also about these lines)",
+            issue.id, issue.title
+        ),
+    }
+}
+
+/// Where a span is, e.g. "src/a.rs:42-44 @ a1b2c3d", in the web's plain style rather than the
+/// quoted style of MCP output (docs/design.md §12.4). An outdated span shows where it was
+/// opened; the page says why it is outdated separately.
+#[must_use]
+pub fn span_location(anchor: &Anchor, location: &Location) -> String {
     let side = if anchor.side == Side::Base {
         " (base side)"
     } else {
@@ -553,7 +626,7 @@ pub fn location(view: &IssueView) -> String {
         lines(anchor.start_line, anchor.end_line),
         short_sha(&anchor.commit)
     );
-    match &view.location {
+    match location {
         Location::Current {
             commit,
             path,
@@ -636,22 +709,20 @@ pub struct Link {
     pub url: String,
 }
 
-/// Links from an issue to its lines in the code views: the Files view for side `head`, and the
+/// Links from a span to its lines in the code views: the Files view for side `head`, and the
 /// Changes view when the review has a diff.
-#[must_use]
-pub fn code_links(view: &IssueView, has_diff: bool) -> Vec<Link> {
+fn span_links(review_id: i64, anchor: &Anchor, location: &Location, has_diff: bool) -> Vec<Link> {
     let Location::Current {
         path,
         start_line,
         end_line,
         ..
-    } = &view.location
+    } = location
     else {
         return Vec::new();
     };
-    let review_id = view.issue.review_id;
     let mut links = Vec::new();
-    if view.issue.anchor.side == Side::Head {
+    if anchor.side == Side::Head {
         links.push(Link {
             label: "View in file".to_string(),
             url: format!(

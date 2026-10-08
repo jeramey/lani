@@ -37,13 +37,6 @@ CREATE TABLE issue (
   status        TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
   resolved_by   TEXT CHECK (resolved_by IN ('human', 'reviewer')),  -- implementers cannot resolve
   resolved_at   TEXT,
-  anchor_commit TEXT NOT NULL,                      -- commit whose content the author read
-  path          TEXT NOT NULL,
-  side          TEXT NOT NULL CHECK (side IN ('head', 'base')),
-  start_line    INTEGER NOT NULL CHECK (start_line >= 1),
-  end_line      INTEGER NOT NULL CHECK (end_line >= start_line),
-  snippet       TEXT NOT NULL,                      -- anchored lines ±3 context lines, at creation
-  snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
   created_at    TEXT NOT NULL,
   edited_by     TEXT CHECK (edited_by IN ('human', 'reviewer', 'implementer')),  -- title/severity
   edited_at     TEXT,
@@ -54,6 +47,20 @@ CREATE TABLE issue (
   CHECK ((edited_by IS NULL) = (edited_at IS NULL))
 ) STRICT;
 CREATE INDEX issue_by_review ON issue(review_id, status);
+
+-- The line ranges an issue is about (§10): one or more, inserted with the issue.
+CREATE TABLE issue_span (
+  issue_id      INTEGER NOT NULL REFERENCES issue(id),
+  position      INTEGER NOT NULL CHECK (position BETWEEN 1 AND 20),  -- the author's order
+  anchor_commit TEXT NOT NULL,                      -- commit the line numbers refer to
+  path          TEXT NOT NULL,
+  side          TEXT NOT NULL CHECK (side IN ('head', 'base')),
+  start_line    INTEGER NOT NULL CHECK (start_line >= 1),
+  end_line      INTEGER NOT NULL CHECK (end_line >= start_line),
+  snippet       TEXT NOT NULL,                      -- the lines ±3 context lines, at creation
+  snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
+  PRIMARY KEY (issue_id, position)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE comment (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

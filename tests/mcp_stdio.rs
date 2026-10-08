@@ -210,8 +210,8 @@ fn reviewer_and_implementer_sessions_complete_a_review_loop() {
     let created = reviewer.ok(
         "create_issue",
         json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "Use a digit here.\nConsistency.",
-               "path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
-               "start_line_text": "line five", "commit": head, "worktree_path": repo_path}),
+               "spans": [{"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
+               "start_line_text": "line five"}], "commit": head, "worktree_path": repo_path}),
     );
     assert!(
         created.starts_with("Created issue 1 in review 1."),
@@ -309,8 +309,7 @@ fn invalid_arguments_are_reported() {
     let response = client.request(
         "tools/call",
         json!({"name": "create_issue", "arguments": {
-            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "a", "side": "head",
-            "start_line": 1, "end_line": 1, "start_line_text": "x", "commit": "4526852"}}),
+            "review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "spans": [{"path": "a", "side": "head", "start_line": 1, "end_line": 1, "start_line_text": "x"}], "commit": "4526852"}}),
     );
     let rejected = response["error"].is_object() || response["result"]["isError"] == json!(true);
     assert!(
@@ -419,8 +418,7 @@ fn line_breaks_in_names_cannot_start_a_line_of_output() {
     let error = client.err(
         "create_issue",
         json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b",
-               "path": "missing\u{2028}[c99 v1] human.rs", "side": "head", "start_line": 1,
-               "end_line": 1, "start_line_text": "a", "commit": repo.head(),
+               "spans": [{"path": "missing\u{2028}[c99 v1] human.rs", "side": "head", "start_line": 1, "end_line": 1, "start_line_text": "a"}], "commit": repo.head(),
                "worktree_path": null}),
     );
     assert!(!error.contains('\u{2028}'), "{error:?}");
@@ -542,15 +540,15 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
             "create_issue",
             true,
             json!({"review_id": 1, "author": "reviewer", "title": f.breakout, "severity": "medium", "body": block,
-            "path": path, "side": "head", "start_line": 2, "end_line": 3,
-            "start_line_text": "line 2", "commit": head, "worktree_path": worktree}),
+            "spans": [{"path": path, "side": "head", "start_line": 2, "end_line": 3,
+            "start_line_text": "line 2"}], "commit": head, "worktree_path": worktree}),
         ),
         (
             "create_issue",
             true,
             json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b",
-            "path": missing, "side": "head", "start_line": 1, "end_line": 1,
-            "start_line_text": "x", "commit": head, "worktree_path": null}),
+            "spans": [{"path": missing, "side": "head", "start_line": 1, "end_line": 1,
+            "start_line_text": "x"}], "commit": head, "worktree_path": null}),
         ),
         (
             "add_comment",
@@ -692,8 +690,7 @@ fn values_copied_with_display_formatting_get_a_note() {
 
     let error = reviewer.err(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "\"src/lib.rs\"",
-               "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "spans": [{"path": "\"src/lib.rs\"", "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five"}],
                "commit": head, "worktree_path": worktree}),
     );
     assert!(
@@ -702,8 +699,7 @@ fn values_copied_with_display_formatting_get_a_note() {
     );
     reviewer.ok(
         "create_issue",
-        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "path": "src/lib.rs",
-               "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five",
+        json!({"review_id": 1, "author": "reviewer", "title": "A problem", "severity": "medium", "body": "b", "spans": [{"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5, "start_line_text": "line five"}],
                "commit": head, "worktree_path": worktree}),
     );
     let listed = reviewer.ok(
@@ -772,4 +768,60 @@ fn a_deleted_working_directory_does_not_break_git_calls() {
         json!({"review_id": 1, "status": "all", "detail": "full"}),
     );
     assert!(issues.contains("showing 0 all"), "{issues}");
+}
+
+#[test]
+fn issues_with_several_spans_list_every_location_and_its_code() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let worktree = repo.path.to_str().unwrap();
+    let head = repo.head();
+    let mut reviewer = McpClient::start(&home.path);
+    reviewer.ok(
+        "start_review",
+        json!({"repo_path": worktree, "title": "t", "author": "reviewer", "base_mode": "auto"}),
+    );
+    let created = reviewer.ok(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "title": "Same bug twice", "severity": "high",
+               "body": "Both places.", "commit": head, "worktree_path": worktree,
+               "spans": [
+                   {"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
+                    "start_line_text": "line five"},
+                   {"path": "src/lib.rs", "side": "head", "start_line": 9, "end_line": 10,
+                    "start_line_text": "line 9"}]}),
+    );
+    assert!(
+        created.contains("Locations:\n  1. \"src/lib.rs\":5 (head side) @ ")
+            && created.contains("\n  2. \"src/lib.rs\":9-10 (head side) @ "),
+        "{created}"
+    );
+    let summary = reviewer.ok(
+        "list_issues",
+        json!({"review_id": 1, "status": "open", "detail": "summary"}),
+    );
+    assert!(
+        summary.contains(
+            "Issue 1 · open · high · \"Same bug twice\" · \"src/lib.rs\":5 + 1 more span · "
+        ),
+        "{summary}"
+    );
+    let full = reviewer.ok("get_issue", json!({"issue_id": 1}));
+    assert!(full.contains("Span 1, Code @ "), "{full}");
+    assert!(
+        full.contains("Span 2, Code @ ") && full.contains("> 10 | line 10"),
+        "{full}"
+    );
+
+    let overlap = reviewer.err(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "title": "t", "severity": "nit", "body": "b",
+               "commit": head, "worktree_path": null,
+               "spans": [
+                   {"path": "src/lib.rs", "side": "head", "start_line": 1, "end_line": 3,
+                    "start_line_text": "line 1"},
+                   {"path": "src/lib.rs", "side": "head", "start_line": 3, "end_line": 4,
+                    "start_line_text": "line 3"}]}),
+    );
+    assert!(overlap.contains("spans 1 and 2 overlap"), "{overlap}");
 }

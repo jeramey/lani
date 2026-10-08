@@ -78,7 +78,7 @@
         <span class="badge {{ issue.severity.class }}">{{ issue.severity.label }}</span>
         <a href="{{ issue.url }}" class="issue-title">{{ issue.title }}</a>
       </div>
-      <p class="meta"><code class="location">{{ issue.location }}</code>{% if issue.outdated %} <span class="badge outdated">Outdated</span>{% endif %}</p>
+      <p class="meta"><code class="location">{{ issue.location }}</code>{% if let Some(outdated) = issue.outdated %} <span class="badge outdated">{{ outdated }}</span>{% endif %}</p>
       <p class="meta">{{ issue.comments }}{% if let Some(last) = issue.last_author %} · last by <span class="author {{ last.class }}">{{ last.label }}</span>{% endif %}</p>
     </li>
     {% endfor %}

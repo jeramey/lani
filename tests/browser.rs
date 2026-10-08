@@ -120,13 +120,16 @@ fn selecting_lines_in_the_file_view_opens_an_issue_at_the_rendered_commit() {
     assert_eq!(view.issue.author, Actor::Human);
     assert_eq!(view.issue.title, "Lines 10 to 12 need work");
     assert_eq!(view.issue.severity, Severity::Low);
-    assert_eq!(view.issue.anchor.side, Side::Head);
+    assert_eq!(view.issue.anchors[0].side, Side::Head);
     assert_eq!(
-        view.issue.anchor.commit, fixture.head,
+        view.issue.anchors[0].commit, fixture.head,
         "anchored to the rendered commit"
     );
     assert_eq!(
-        (view.issue.anchor.start_line, view.issue.anchor.end_line),
+        (
+            view.issue.anchors[0].start_line,
+            view.issue.anchors[0].end_line
+        ),
         (10, 12)
     );
     assert!(
@@ -187,12 +190,15 @@ fn removed_lines_in_the_changes_view_open_base_side_issues_and_threads_return_th
     let issue_id = browser.wait_for_new_issue(&changes);
     assert_eq!(browser.row_above_thread(issue_id), removed_row);
     let view = fixture.service().get_issue(issue_id).unwrap();
-    assert_eq!(view.issue.anchor.side, Side::Base);
+    assert_eq!(view.issue.anchors[0].side, Side::Base);
     assert_eq!(view.issue.title, "Line 20 is gone");
     assert_eq!(view.issue.severity, Severity::Nit);
-    assert_eq!(view.issue.anchor.commit, fixture.merge_base);
+    assert_eq!(view.issue.anchors[0].commit, fixture.merge_base);
     assert_eq!(
-        (view.issue.anchor.start_line, view.issue.anchor.end_line),
+        (
+            view.issue.anchors[0].start_line,
+            view.issue.anchors[0].end_line
+        ),
         (20, 20)
     );
 

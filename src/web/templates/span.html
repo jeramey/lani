@@ -1,0 +1,7 @@
+<div class="span">
+  <p><code class="location">{{ span.location }}</code>{% for link in span.links %} <a class="span-link" href="{{ link.url }}">{{ link.label }}</a>{% endfor %}</p>
+  {% if let Some(reason) = span.outdated_reason %}
+  <p class="notice">Outdated: {{ reason }}. {% if span.code.is_some() %}The code below is how it looked when the issue was opened.{% endif %}</p>
+  {% endif %}
+  {% if let Some(excerpt) = span.code %}{% include "code_excerpt.html" %}{% endif %}
+</div>

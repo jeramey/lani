@@ -58,12 +58,8 @@ pub struct CreateIssue<'a> {
     pub title: &'a str,
     pub severity: Severity,
     pub body: &'a str,
-    pub path: &'a str,
-    pub side: Side,
-    pub start_line: u32,
-    pub end_line: u32,
-    /// Required from MCP; `None` only for the web UI, whose lines come from a rendered commit.
-    pub start_line_text: Option<&'a str>,
+    /// The line ranges the issue is about: 1 to [`MAX_SPANS`], in the author's order.
+    pub spans: Vec<SpanRequest<'a>>,
     /// The commit whose content the author read.
     pub commit: &'a str,
     /// The worktree the author read the file from, or `None` if it was read from git.
@@ -72,6 +68,20 @@ pub struct CreateIssue<'a> {
     /// since, the merge-base and its line numbers may differ, so the issue is rejected. `None`
     /// skips the check.
     pub read_merge_base: Option<&'a str>,
+}
+
+/// The most spans one issue can have.
+pub const MAX_SPANS: usize = 20;
+
+/// One line range of a new issue (§10.1).
+#[derive(Clone, Copy, Debug)]
+pub struct SpanRequest<'a> {
+    pub path: &'a str,
+    pub side: Side,
+    pub start_line: u32,
+    pub end_line: u32,
+    /// Required from MCP; `None` only for the web UI, whose lines come from a rendered commit.
+    pub start_line_text: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -175,12 +185,27 @@ pub struct CodeExcerpt {
 #[derive(Clone, Debug)]
 pub struct IssueView {
     pub issue: Issue,
-    pub location: Location,
+    /// Where each span is now, in the order of `issue.anchors`.
+    pub locations: Vec<Location>,
     /// Oldest first; the first comment is the issue's description.
     pub comments: Vec<Comment>,
-    /// Current code when the location is current, otherwise the stored snippet.
-    /// `None` when not requested.
-    pub code: Option<CodeExcerpt>,
+    /// Each span's code: current lines when its location is current, otherwise its stored
+    /// snippet. `None` when not requested.
+    pub code: Option<Vec<CodeExcerpt>>,
+}
+
+impl IssueView {
+    /// Each span with where it is now.
+    pub fn spans(&self) -> impl Iterator<Item = (&Anchor, &Location)> {
+        self.issue.anchors.iter().zip(&self.locations)
+    }
+
+    /// Whether any span is in file `path`: where it was opened, or where its lines are now.
+    #[must_use]
+    pub fn is_in_file(&self, path: &str) -> bool {
+        self.spans()
+            .any(|(anchor, location)| is_in_file(anchor, location, path))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -403,15 +428,20 @@ impl Service {
         let mut issues = Vec::new();
         let mut not_shown = IssueCounts::default();
         for issue in store::list_issues(&self.conn, review_id)? {
-            let location = match path {
-                // Placing an issue finds the file its lines are in now, which may have been
-                // renamed since it was opened; the filter matches either name.
+            let locations = match path {
+                // Placing an issue finds the files its lines are in now, which may have been
+                // renamed since it was opened; the filter matches either name of any span.
                 Some(path) => {
-                    let location = placer.place(&issue.anchor);
-                    if !is_in_file(&issue.anchor, &location, path) {
+                    let locations = placer.place_all(&issue.anchors);
+                    let in_file = issue
+                        .anchors
+                        .iter()
+                        .zip(&locations)
+                        .any(|(anchor, location)| is_in_file(anchor, location, path));
+                    if !in_file {
                         continue;
                     }
-                    Some(location)
+                    Some(locations)
                 }
                 None => None,
             };
@@ -422,8 +452,8 @@ impl Service {
                 }
                 continue;
             }
-            let location = location.unwrap_or_else(|| placer.place(&issue.anchor));
-            issues.push(self.placed_issue_view(&mut placer, issue, location, with_code)?);
+            let locations = locations.unwrap_or_else(|| placer.place_all(&issue.anchors));
+            issues.push(self.placed_issue_view(&mut placer, issue, locations, with_code)?);
         }
         Ok(IssueList {
             view,
@@ -460,7 +490,7 @@ impl Service {
         require_repo(&repo)?;
         let git = Git::new(&repo.git_dir);
         let head_sha = require_head(&git, &review)?;
-        let anchor = validate_anchor(&git, &repo, &review, &head_sha, request)?;
+        let anchors = validate_anchors(&git, &repo, &review, &head_sha, request)?;
 
         let now = time::now();
         let tx = self
@@ -473,7 +503,7 @@ impl Service {
                 author: request.author,
                 title: &title,
                 severity: request.severity,
-                anchor: &anchor,
+                anchors: &anchors,
                 now: &now,
             },
         )?;
@@ -968,8 +998,8 @@ impl Service {
         issue: Issue,
         with_code: bool,
     ) -> Result<IssueView> {
-        let location = placer.place(&issue.anchor);
-        self.placed_issue_view(placer, issue, location, with_code)
+        let locations = placer.place_all(&issue.anchors);
+        self.placed_issue_view(placer, issue, locations, with_code)
     }
 
     /// An issue's view given where `placer` placed it.
@@ -977,18 +1007,21 @@ impl Service {
         &self,
         placer: &mut Placer<'_>,
         issue: Issue,
-        location: Location,
+        locations: Vec<Location>,
         with_code: bool,
     ) -> Result<IssueView> {
         let comments = store::issue_comments(&self.conn, issue.id)?;
-        let code = if with_code {
-            Some(placer.excerpt(&issue.anchor, &location))
-        } else {
-            None
-        };
+        let code = with_code.then(|| {
+            issue
+                .anchors
+                .iter()
+                .zip(&locations)
+                .map(|(anchor, location)| placer.excerpt(anchor, location))
+                .collect()
+        });
         Ok(IssueView {
             issue,
-            location,
+            locations,
             comments,
             code,
         })
@@ -1022,6 +1055,11 @@ impl<'a> Placer<'a> {
             commits_exist: HashMap::new(),
             files: HashMap::new(),
         }
+    }
+
+    /// Where each of an issue's spans is now.
+    fn place_all(&mut self, anchors: &[Anchor]) -> Vec<Location> {
+        anchors.iter().map(|anchor| self.place(anchor)).collect()
     }
 
     /// Where the anchor's lines are now. Git failures degrade to an outdated location whose
@@ -1242,26 +1280,51 @@ fn discover_in_repo(path: &Path, repo: &Repo, review_id: i64) -> Result<Worktree
     Ok(worktree)
 }
 
-/// Validate a new issue's anchor (§10.1 steps 1–4) and capture its snippet.
-fn validate_anchor(
+/// Validate a new issue's spans (§10.1 steps 1–4) and capture their snippets.
+fn validate_anchors(
     git: &Git,
     repo: &Repo,
     review: &Review,
     head_sha: &str,
     request: &CreateIssue<'_>,
-) -> Result<Anchor> {
-    anchor::validate_path(request.path)?;
-    if request.start_line == 0 || request.end_line < request.start_line {
+) -> Result<Vec<Anchor>> {
+    let spans = request.spans.as_slice();
+    if spans.is_empty() || spans.len() > MAX_SPANS {
         return Err(Error::Invalid(format!(
-            "invalid line range {}-{}: lines start at 1 and end_line must not be less than start_line",
-            request.start_line, request.end_line
+            "an issue needs 1 to {MAX_SPANS} spans, not {}",
+            spans.len()
         )));
     }
-    if request.side == Side::Base && request.worktree_path.is_some() {
+    let numbered = spans.len() > 1;
+    for (number, span) in (1..).zip(spans) {
+        check_span_shape(span).map_err(|error| in_span(error, number, span, numbered))?;
+    }
+    if request.worktree_path.is_some() && spans.iter().any(|span| span.side == Side::Base) {
         return Err(Error::Invalid(
-            "worktree_path must be null for side \"base\": the base version of a file only exists in git"
+            "worktree_path must be null when a span is on side \"base\": the base version of a \
+             file only exists in git, so read every span with git show"
                 .to_string(),
         ));
+    }
+    for (i, a) in spans.iter().enumerate() {
+        for (j, b) in spans.iter().enumerate().skip(i + 1) {
+            if a.path == b.path
+                && a.side == b.side
+                && a.start_line <= b.end_line
+                && b.start_line <= a.end_line
+            {
+                return Err(Error::Invalid(format!(
+                    "spans {} and {} overlap in {} ({}-{} and {}-{}); merge them into one span",
+                    i + 1,
+                    j + 1,
+                    quoted(a.path),
+                    a.start_line,
+                    a.end_line,
+                    b.start_line,
+                    b.end_line
+                )));
+            }
+        }
     }
 
     // Step 1: the commit the author read is on the branch. It must be given as a SHA: LANI
@@ -1277,8 +1340,8 @@ fn validate_anchor(
     }
     let commit = git.resolve_commit(request.commit)?.ok_or_else(|| {
         Error::NotFound(format!(
-            "commit {:?} does not exist in this repository",
-            request.commit
+            "commit {} does not exist in this repository",
+            quoted(request.commit)
         ))
     })?;
     if !git.is_ancestor(&commit, head_sha)? {
@@ -1290,62 +1353,120 @@ fn validate_anchor(
             short_sha(head_sha)
         )));
     }
+    let worktree = match request.worktree_path {
+        Some(path) => Some(discover_in_repo(path, repo, review.id)?),
+        None => None,
+    };
 
-    // Step 2: the path and range exist in the anchor commit.
-    let anchor_commit = anchor_commit(git, review, request.side, &commit)?;
-    if let Some(read) = request.read_merge_base
-        && request.side == Side::Base
-        && read != anchor_commit
+    // Steps 2 to 4, for each span.
+    let read = Read {
+        git,
+        review,
+        commit: &commit,
+        worktree: worktree.as_ref(),
+        shown_merge_base: request.read_merge_base,
+    };
+    (1..)
+        .zip(spans)
+        .map(|(number, span)| {
+            validate_span(&read, span).map_err(|error| in_span(error, number, span, numbered))
+        })
+        .collect()
+}
+
+/// What every span of a new issue was read from.
+struct Read<'a> {
+    git: &'a Git,
+    review: &'a Review,
+    /// The full SHA of the commit the author read.
+    commit: &'a str,
+    worktree: Option<&'a Worktree>,
+    /// For side `base` from the web UI: the merge-base the page showed.
+    shown_merge_base: Option<&'a str>,
+}
+
+/// The checks a span passes on its own: a clean path and a line range starting at 1.
+fn check_span_shape(span: &SpanRequest<'_>) -> Result<()> {
+    anchor::validate_path(span.path)?;
+    if span.start_line == 0 || span.end_line < span.start_line {
+        return Err(Error::Invalid(format!(
+            "invalid line range {}-{}: lines start at 1 and end_line must not be less than start_line",
+            span.start_line, span.end_line
+        )));
+    }
+    Ok(())
+}
+
+/// §10.1 steps 2 to 4 for one span: its lines exist, the file on disk matches, and its first
+/// line is what the author says it is.
+fn validate_span(read: &Read<'_>, span: &SpanRequest<'_>) -> Result<Anchor> {
+    let anchor_commit = anchor_commit(read.git, read.review, span.side, read.commit)?;
+    if let Some(shown) = read.shown_merge_base
+        && span.side == Side::Base
+        && shown != anchor_commit
     {
         return Err(Error::Invalid(format!(
             "the merge-base is now {}, not {} as when the lines were read: the base moved. \
              Reload the changes and select the lines again.",
             short_sha(&anchor_commit),
-            short_sha(read)
+            short_sha(shown)
         )));
     }
-    let content = git
-        .read_file(&anchor_commit, request.path)?
+    let content = read
+        .git
+        .read_file(&anchor_commit, span.path)?
         .ok_or_else(|| {
             Error::NotFound(format!(
                 "{} does not exist at commit {}",
-                quoted(request.path),
+                quoted(span.path),
                 short_sha(&anchor_commit)
             ))
         })?;
-    let file = FileLines::from_bytes(request.path, &content)?;
-    if request.end_line > file.len() {
+    let file = FileLines::from_bytes(span.path, &content)?;
+    if span.end_line > file.len() {
         return Err(Error::Invalid(format!(
             "{} has {} lines at commit {}, so lines {}-{} do not exist",
-            quoted(request.path),
+            quoted(span.path),
             file.len(),
             short_sha(&anchor_commit),
-            request.start_line,
-            request.end_line
+            span.start_line,
+            span.end_line
         )));
     }
-
-    // Step 3: the file on disk matches the commit around the range.
-    if let Some(worktree_path) = request.worktree_path {
-        let worktree = discover_in_repo(worktree_path, repo, review.id)?;
-        check_file_on_disk(&worktree, &commit, request)?;
+    if let Some(worktree) = read.worktree {
+        check_file_on_disk(worktree, read.commit, span)?;
     }
-
-    // Step 4: the first line's text matches.
-    if let Some(expected) = request.start_line_text {
-        check_start_line_text(&file, request, expected, &anchor_commit)?;
+    if let Some(expected) = span.start_line_text {
+        check_start_line_text(&file, span, expected, &anchor_commit)?;
     }
-
-    let (snippet_start, snippet_lines) = file.excerpt(request.start_line, request.end_line);
+    let (snippet_start, snippet_lines) = file.excerpt(span.start_line, span.end_line);
     Ok(Anchor {
         commit: anchor_commit,
-        path: request.path.to_string(),
-        side: request.side,
-        start_line: request.start_line,
-        end_line: request.end_line,
+        path: span.path.to_string(),
+        side: span.side,
+        start_line: span.start_line,
+        end_line: span.end_line,
         snippet: snippet_lines.join("\n"),
         snippet_start,
     })
+}
+
+/// Name the span a validation error is about, when the issue has more than one.
+fn in_span(error: Error, number: usize, span: &SpanRequest<'_>, numbered: bool) -> Error {
+    if !numbered {
+        return error;
+    }
+    let prefix = format!(
+        "span {number} ({}:{}-{}): ",
+        quoted(span.path),
+        span.start_line,
+        span.end_line
+    );
+    match error {
+        Error::Invalid(message) => Error::Invalid(prefix + &message),
+        Error::NotFound(message) => Error::NotFound(prefix + &message),
+        other => other,
+    }
 }
 
 /// Whether `commit` is a full or abbreviated object name (4 to 64 hex digits), as
@@ -1384,7 +1505,7 @@ fn anchor_commit(git: &Git, review: &Review, side: Side, commit: &str) -> Result
 }
 
 /// §10.1 step 3: reject anchors that uncommitted changes could have shifted.
-fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &CreateIssue<'_>) -> Result<()> {
+fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &SpanRequest<'_>) -> Result<()> {
     let path = request.path;
     let shown_path = quoted(path);
     let on_disk = worktree.toplevel.join(path);
@@ -1460,7 +1581,7 @@ fn check_file_on_disk(worktree: &Worktree, commit: &str, request: &CreateIssue<'
 /// §10.1 step 4: the first anchored line must match what the author says it is.
 fn check_start_line_text(
     file: &FileLines,
-    request: &CreateIssue<'_>,
+    request: &SpanRequest<'_>,
     expected: &str,
     anchor_commit: &str,
 ) -> Result<()> {

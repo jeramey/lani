@@ -1,19 +1,21 @@
 //! The code views (docs/design.md §13.3): the Files view of a directory or file at the review's
 //! head, and the Changes view of the review's diff, with issue threads shown under their lines.
 
+use std::collections::HashSet;
+
 use askama::Template;
 use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use super::AppState;
-use super::views::{self, Crumb, PageError, ReviewHeader, ThreadView};
+use super::views::{self, Crumb, MarkerView, PageError, ReviewHeader, ThreadView};
 use serde::Deserialize;
 
 use crate::git::{DiffHunk, EntryKind, RowKind};
 use crate::highlight::{self, HighlightedLines};
-use crate::model::{IssueStatus, ReviewStatus, Side, short_sha};
+use crate::model::{Anchor, IssueStatus, ReviewStatus, Side, short_sha};
 use crate::service::{
-    ChangedFile, FileContent, FileDiff, FileText, IssueView, Location, PathContent, PathView,
+    ChangedFile, FileContent, FileDiff, FileText, Location, PathContent, PathView,
 };
 
 struct EntryRow {
@@ -35,11 +37,13 @@ struct TreePage {
     entries: Vec<EntryRow>,
 }
 
-/// One line of a file, with the threads of issues that end on it.
+/// One line of a file, with the threads of issues whose first span here ends on it, and markers
+/// for issues whose later spans end on it.
 struct FileLine {
     number: u32,
     html: String,
     threads: Vec<ThreadView>,
+    markers: Vec<MarkerView>,
 }
 
 #[derive(Template)]
@@ -225,19 +229,34 @@ fn file_page(
                     number,
                     html: html.clone(),
                     threads: Vec::new(),
+                    markers: Vec::new(),
                 })
                 .collect()
         })
         .unwrap_or_default();
+    let has_diff = view.view.review.base_ref.is_some();
     let mut other_threads = Vec::new();
     for issue in &issues {
-        match inline_line(issue, &view.head, &view.path) {
-            Some(end_line) if (end_line as usize) <= lines.len() => {
-                lines[end_line as usize - 1]
+        // The last lines of this issue's current spans in this file, in file order. The thread
+        // goes under the first; the others get a marker pointing to it.
+        let mut ends: Vec<usize> = issue
+            .spans()
+            .filter_map(|(anchor, location)| inline_line(anchor, location, &view.head, &view.path))
+            .filter_map(|end_line| usize::try_from(end_line).ok())
+            .filter(|&end_line| end_line <= lines.len())
+            .collect();
+        ends.sort_unstable();
+        ends.dedup();
+        match ends.split_first() {
+            Some((&first, rest)) => {
+                lines[first - 1]
                     .threads
-                    .push(views::thread(issue, &back, false));
+                    .push(views::thread(issue, &back, false, has_diff));
+                for &end_line in rest {
+                    lines[end_line - 1].markers.push(views::marker(issue));
+                }
             }
-            _ => other_threads.push(views::thread(issue, &back, true)),
+            None => other_threads.push(views::thread(issue, &back, true, has_diff)),
         }
     }
     Ok(FilePage {
@@ -263,18 +282,16 @@ fn file_page(
     .render()?)
 }
 
-/// The line under which an issue's thread belongs in the file view: the end of its current
-/// lines, when it is on the head side of this file.
-fn inline_line(issue: &IssueView, head: &str, path: &str) -> Option<u32> {
-    match &issue.location {
+/// The line a span ends on in the file view: the end of its current lines, when it is on the
+/// head side of this file.
+fn inline_line(anchor: &Anchor, location: &Location, head: &str, path: &str) -> Option<u32> {
+    match location {
         Location::Current {
             commit,
             path: current,
             end_line,
             ..
-        } if issue.issue.anchor.side == Side::Head && commit == head && current == path => {
-            Some(*end_line)
-        }
+        } if anchor.side == Side::Head && commit == head && current == path => Some(*end_line),
         _ => None,
     }
 }
@@ -318,6 +335,7 @@ struct DiffRowView {
     id: String,
     html: String,
     threads: Vec<ThreadView>,
+    markers: Vec<MarkerView>,
 }
 
 struct HunkView {
@@ -408,17 +426,19 @@ pub async fn changes(
     };
     let (mut total_added, mut total_removed) = (0_u64, 0_u64);
     let mut files = Vec::new();
+    // An issue with spans in several files gets one thread on the page; the files after the
+    // first show markers.
+    let mut shown = HashSet::new();
     for (file, (old, new)) in view.files.iter().zip(&highlighted) {
         total_added += u64::from(file.added);
         total_removed += u64::from(file.removed);
         files.push(file_section(
             review_id,
-            &view.head,
-            &view.merge_base,
+            (&view.head, &view.merge_base),
             file,
-            old.as_deref(),
-            new.as_deref(),
+            (old.as_deref(), new.as_deref()),
             &back,
+            &mut shown,
         ));
     }
     let mut header = views::review_header(&view.view);
@@ -442,12 +462,11 @@ pub async fn changes(
 
 fn file_section(
     review_id: i64,
-    head: &str,
-    merge_base: &str,
+    (head, merge_base): (&str, &str),
     file: &ChangedFile,
-    old: Option<&HighlightedLines>,
-    new: Option<&HighlightedLines>,
+    (old, new): (Option<&HighlightedLines>, Option<&HighlightedLines>),
     back: &str,
+    shown: &mut HashSet<i64>,
 ) -> FileSection {
     let change = &file.change;
     let old_path = change.old.as_ref().map(|version| version.path.as_str());
@@ -479,6 +498,7 @@ fn file_section(
         (head, new_path),
         (merge_base, old_path),
         back,
+        shown,
     );
     FileSection {
         status_label,
@@ -546,57 +566,81 @@ fn diff_notice(
     (Some(notice), None)
 }
 
-/// Put each issue's thread under the diff row its lines end on, on the side it is anchored to.
-/// Returns the threads that are not on any row: outdated, or outside the hunks.
+/// Put each issue's thread under the diff row its first span on the page ends on, and a marker
+/// on the rows its other spans end on. An issue whose thread is already on the page (`shown`)
+/// gets only markers. Returns the threads that are on no row: outdated, or outside the hunks.
 fn place_threads(
     file: &ChangedFile,
     hunks: &mut [HunkView],
     (head, new_path): (&str, Option<&str>),
     (merge_base, old_path): (&str, Option<&str>),
     back: &str,
+    shown: &mut HashSet<i64>,
 ) -> Vec<ThreadView> {
     let mut other_threads = Vec::new();
     for issue in &file.issues {
-        let target = match (&issue.location, issue.issue.anchor.side) {
-            (
-                Location::Current {
-                    commit,
-                    path: current,
-                    end_line,
-                    ..
-                },
-                Side::Head,
-            ) if commit == head && Some(current.as_str()) == new_path => {
-                Some((Side::Head, *end_line))
+        let mut rows: Vec<(usize, usize)> = issue
+            .spans()
+            .filter_map(|(anchor, location)| match (location, anchor.side) {
+                (
+                    Location::Current {
+                        commit,
+                        path,
+                        end_line,
+                        ..
+                    },
+                    Side::Head,
+                ) if commit == head && Some(path.as_str()) == new_path => {
+                    row_position(hunks, |row| row.new == Some(*end_line))
+                }
+                (
+                    Location::Current {
+                        commit,
+                        path,
+                        end_line,
+                        ..
+                    },
+                    Side::Base,
+                ) if commit == merge_base && Some(path.as_str()) == old_path => {
+                    row_position(hunks, |row| row.old == Some(*end_line))
+                }
+                _ => None,
+            })
+            .collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let first_on_page = shown.insert(issue.issue.id);
+        let markers = match (first_on_page, rows.split_first()) {
+            (true, Some((&(hunk, row), rest))) => {
+                hunks[hunk].rows[row]
+                    .threads
+                    .push(views::thread(issue, back, false, true));
+                rest
             }
-            (
-                Location::Current {
-                    commit,
-                    path: current,
-                    end_line,
-                    ..
-                },
-                Side::Base,
-            ) if commit == merge_base && Some(current.as_str()) == old_path => {
-                Some((Side::Base, *end_line))
+            (true, None) => {
+                other_threads.push(views::thread(issue, back, true, true));
+                &[][..]
             }
-            _ => None,
+            (false, _) => &rows[..],
         };
-        let row = target.and_then(|(side, line)| {
-            hunks
-                .iter_mut()
-                .flat_map(|hunk| &mut hunk.rows)
-                .find(|row| match side {
-                    Side::Head => row.new == Some(line),
-                    Side::Base => row.old == Some(line),
-                })
-        });
-        match row {
-            Some(row) => row.threads.push(views::thread(issue, back, false)),
-            None => other_threads.push(views::thread(issue, back, true)),
+        for &(hunk, row) in markers {
+            hunks[hunk].rows[row].markers.push(views::marker(issue));
         }
     }
     other_threads
+}
+
+/// The position (hunk, row) of the first row that matches.
+fn row_position(
+    hunks: &[HunkView],
+    matches: impl Fn(&DiffRowView) -> bool,
+) -> Option<(usize, usize)> {
+    hunks.iter().enumerate().find_map(|(hunk_index, hunk)| {
+        hunk.rows
+            .iter()
+            .position(&matches)
+            .map(|row_index| (hunk_index, row_index))
+    })
 }
 
 fn hunk_view(
@@ -650,6 +694,7 @@ fn hunk_view(
                     id: format!("{anchor}-{side_letter}{line}"),
                     html,
                     threads: Vec::new(),
+                    markers: Vec::new(),
                 }
             })
             .collect(),

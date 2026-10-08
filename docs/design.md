@@ -119,7 +119,7 @@ fixes so the reviewer can diff them.
 | Pull request                    | **Review**             | A head branch under review, with a title. A *diff review* compares it to a base branch; a *whole-tree review* has no base (§9). |
 | PR description                  | **Review summary**     | Markdown describing the intent of the change, editable by everyone. |
 | PR conversation                 | **Summary comments**   | A linear comment thread attached to the summary. |
-| Review thread / line comment    | **Issue**              | Anchored to a line range in one file. It has a one-line title, a severity (`high`, `medium`, `low` or `nit`), an `open`/`resolved` status, and a linear chain of comments. |
+| Review thread / line comment    | **Issue**              | Anchored to one or more line ranges (*spans*), in one file or several. It has a one-line title, a severity (`high`, `medium`, `low` or `nit`), an `open`/`resolved` status, and a linear chain of comments. |
 | Comment / reply                 | **Comment**            | Markdown. An issue's first comment is its description. |
 | Resolve conversation            | **Resolve**            | Done by the reviewer or you, never the implementer. |
 | Outdated comment                | **Outdated** anchor    | The anchored lines changed after the issue was created. |
@@ -269,13 +269,6 @@ CREATE TABLE issue (
   status        TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
   resolved_by   TEXT CHECK (resolved_by IN ('human', 'reviewer')),  -- implementers cannot resolve
   resolved_at   TEXT,
-  anchor_commit TEXT NOT NULL,                      -- commit whose content the author read (§10)
-  path          TEXT NOT NULL,
-  side          TEXT NOT NULL CHECK (side IN ('head', 'base')),
-  start_line    INTEGER NOT NULL CHECK (start_line >= 1),
-  end_line      INTEGER NOT NULL CHECK (end_line >= start_line),
-  snippet       TEXT NOT NULL,                      -- anchored lines ±3 context lines, at creation
-  snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
   created_at    TEXT NOT NULL,
   edited_by     TEXT CHECK (edited_by IN ('human', 'reviewer', 'implementer')),  -- title/severity
   edited_at     TEXT,
@@ -286,6 +279,20 @@ CREATE TABLE issue (
   CHECK ((edited_by IS NULL) = (edited_at IS NULL))
 ) STRICT;
 CREATE INDEX issue_by_review ON issue(review_id, status);
+
+-- The line ranges an issue is about (§10): one or more, inserted with the issue.
+CREATE TABLE issue_span (
+  issue_id      INTEGER NOT NULL REFERENCES issue(id),
+  position      INTEGER NOT NULL CHECK (position BETWEEN 1 AND 20),  -- the author's order
+  anchor_commit TEXT NOT NULL,                      -- commit the line numbers refer to (§10)
+  path          TEXT NOT NULL,
+  side          TEXT NOT NULL CHECK (side IN ('head', 'base')),
+  start_line    INTEGER NOT NULL CHECK (start_line >= 1),
+  end_line      INTEGER NOT NULL CHECK (end_line >= start_line),
+  snippet       TEXT NOT NULL,                      -- the lines ±3 context lines, at creation
+  snippet_start INTEGER NOT NULL,                   -- line number of the snippet's first line
+  PRIMARY KEY (issue_id, position)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE comment (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,6 +337,8 @@ Notes:
 
 - **Timestamps** are RFC 3339 UTC strings with millisecond precision, e.g.
   `2026-10-07T14:02:11.482Z`. They sort correctly and are readable in the `sqlite3` CLI.
+- **Spans.** An issue and its spans are inserted in one transaction, and every issue has at least
+  one span; the service layer enforces both, because a CHECK cannot count rows in another table.
 - **Root comment.** An issue's root comment is the comment with the lowest `id` for that issue. An
   issue and its root comment are inserted in one transaction.
 - **Summary comments.** Comments with `issue_id IS NULL` belong to the review summary. The
@@ -519,14 +528,18 @@ source.
 
 ## 10. Anchors
 
-Every issue is anchored to an inclusive line range `start_line..=end_line` in one file, with a
-`side`:
+Every issue is anchored to 1 to 20 **spans**. A span is an inclusive line range
+`start_line..=end_line` in one file, with a `side`:
 
 - `head` is the file in the head commit. This is the normal case.
 - `base` is the merge-base version. It is used only for lines a diff review's branch deleted.
 
-Line numbers only mean something relative to specific file content. So `anchor_commit` is **the
-commit whose content the author actually read**:
+Most issues have one span. Several spans cover one problem in several places, such as the same bug
+in four templates, in one file or across files. The author lists the main place first; spans keep
+that order. They must not overlap one another on the same file and side.
+
+Line numbers only mean something relative to specific file content. So each span's
+`anchor_commit` is **the commit whose content the author actually read**:
 
 - For an MCP issue, it is the `commit` Claude passes to `create_issue`.
 - For a web UI issue, it is the commit the page was rendered at.
@@ -537,18 +550,24 @@ lines inside the diff.
 
 ### 10.1 Creating and validating (MCP)
 
-`create_issue` takes two parameters that say where Claude's view of the file came from:
+`create_issue` takes a list of `spans`, each with `path`, `side`, `start_line`, `end_line` and
+`start_line_text`, and two parameters that say where Claude's view of the files came from:
 
 - **`commit`**: the SHA of the commit whose files Claude read, as `git rev-parse HEAD` prints it
   in its worktree. It should equal the review head that `start_review` and `get_review` report.
   Only a full or abbreviated SHA (4–64 hex digits) is accepted. LANI resolves names in the common
   git dir, where `HEAD`, `@{-1}` and other per-worktree names mean the main worktree's; from a
   linked worktree they would name a commit Claude never read.
-- **`worktree_path`**: the worktree Claude read the file from. It is `null` if Claude read the file
-  from git with `git show <commit>:<path>`. It must be `null` for side `base`, whose content only
-  exists in git.
+- **`worktree_path`**: the worktree Claude read the files from. It is `null` if Claude read them
+  from git with `git show <commit>:<path>`. It must be `null` if any span is on side `base`, whose
+  content only exists in git.
 
-Validation runs in this order, and the first failure is reported:
+First, each span's path must be clean and its range must start at line 1 or later. Spans must not
+overlap on the same file and side, and there must be 1 to 20 of them. Then validation runs in
+this order, and the first failure is reported. Step 1 runs once; steps 2 to 4 run for each span in
+turn. When an issue has several spans, a span's error starts with its number and range, such as
+`span 2 ("src/a.rs":8-8): …`.
+
 
 1. **The commit is on the branch.** `commit` must be the review head or an ancestor of it. If not,
    Claude is reviewing the wrong branch, or the branch was rebased after Claude read the code. The
@@ -586,8 +605,8 @@ Validation runs in this order, and the first failure is reported:
 
 LANI never auto-corrects an anchor. Every rejection says how to retry with explicit values.
 
-The issue stores `anchor_commit` and a snippet: the anchored lines plus 3 context lines on each
-side, capped at 200 lines. The root comment's `head_sha` records the review head at filing time. If
+Each span stores its `anchor_commit` and a snippet: its lines plus 3 context lines on each side,
+capped at 200 lines. The root comment's `head_sha` records the review head at filing time. If
 that head is already newer than `commit`, because the implementer committed in the meantime, the
 issue is relocated straight away (§10.2). The response says where the issue now points, or that it
 is outdated.
@@ -600,8 +619,8 @@ The web UI reads files from git, so its new-issue form only needs steps 1 and 2.
 
 ### 10.2 Relocation and "outdated"
 
-Suppose an issue was anchored at commit A and is displayed against the current head commit H, or
-against the current merge-base for side `base`.
+Each span is relocated on its own. Suppose a span was anchored at commit A and is displayed
+against the current head commit H, or against the current merge-base for side `base`.
 
 1. If A = H, the anchor applies as-is.
 2. Otherwise, LANI runs `git diff -M -U0 A H` restricted to the anchored path, following renames
@@ -611,8 +630,9 @@ against the current merge-base for side `base`.
    - A hunk after `end_line` ends the walk.
 3. If the file was deleted, the issue is **outdated (file removed)**.
 
-A current issue is shown at its relocated position. An outdated issue is shown with its stored
-snippet and original line numbers, as GitHub shows outdated comments. "Outdated" is also a useful
+A current span is shown at its relocated position. An outdated span is shown with its stored
+snippet and original line numbers, as GitHub shows outdated comments. An issue whose spans are
+all outdated is *outdated*; one with only some outdated is *partly outdated*. "Outdated" is also a useful
 signal to the reviewer that the implementer touched those lines.
 
 Placement work is shared within one request, meaning one tool call or one page. There is one
@@ -717,7 +737,8 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
 - **The summary.** Read the review's summary first, and keep it accurate with
   `update_review_summary` without discarding what others wrote.
 - **Reviewer.** Call `start_review` (`base_mode: "auto"` unless the human names a base or asks for
-  a whole-tree review), then `create_issue` once per finding. Pass `commit` as the SHA that
+  a whole-tree review), then `create_issue` once per finding: one issue with several spans when
+  the same problem appears in more than one place, with a title and a severity. Pass `commit` as the SHA that
   `git rev-parse HEAD` prints, not `HEAD` itself (§10.1), and `worktree_path` as where the files
   were read. Then call `open_web_ui`. Report uncommitted changes to the human.
 - **Implementer.** Call `list_reviews`, then `list_issues` with `status: "open"`. Validate each
@@ -745,7 +766,7 @@ role (§11.3).
 | `update_review_summary` | `review_id`, `author`, `summary`, `expected_version` | Replace the summary. Rejected if it changed after `expected_version`. |
 | `list_issues`           | `review_id`, `status` (`open`\|`resolved`\|`all`), `detail` (`summary`\|`full`), `path?` | **R5.** `summary` gives one line per issue. `full` gives the anchor, current or original code, and the whole comment chain. `path` keeps the issues in that file: the file an issue was opened on, or the file its lines are in now after a rename. The header's "not shown" count of issues left out by `status` covers the same file, or the whole review without `path`. |
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
-| `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`, `commit`, `worktree_path` | §10.1. `title` is one line naming the problem, without the severity. `worktree_path` is a string or explicitly `null`. |
+| `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `spans` (1–20 of `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`), `commit`, `worktree_path` | §10.1. `title` is one line naming the problem, without the severity. List the main span first. `worktree_path` is a string or explicitly `null`. |
 | `add_comment`           | `author`, `body`, `issue_id?`, `review_id?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
@@ -862,6 +883,20 @@ Original code @ a1b2c3d:
 [c215 v1] implementer · 2026-10-07T14:31Z · at 3f9c2a1
 │ Fixed in 3f9c2a1: switched to `saturating_mul` and added `refill_after_long_idle` test.
 ````
+
+An issue with several spans lists them, and labels each span's code, `Span 2, Code @ 3f9c2a1:`:
+
+```
+Issue 63 · open · medium · review 3 · opened by reviewer
+Title: "Bucket capacity is read without the lock"
+Locations:
+  1. "src/limiter.rs":31 (head side) @ 3f9c2a1
+  2. "src/limiter.rs":72-73 (head side) @ 3f9c2a1
+  3. "src/admin.rs":18 (head side) @ 3f9c2a1
+```
+
+In summary lists, such an issue shows its first span and how many more it has:
+`"src/limiter.rs":31 + 2 more spans`.
 
 A rejected anchor (§10.1, step 3), returned with `isError: true`:
 
@@ -1039,9 +1074,20 @@ back to the page (303 See Other); M4 may add htmx fragments for live updates:
   send the view's address with each form, so a reply, edit or status change returns there. Only
   a local LANI path is accepted as that address; anything else is ignored.
 - **Edit conflicts.** As described in §11.4, nothing is silently lost.
-- **Issue placement.** In the file and diff views, a thread renders below its (relocated) end line.
-  Outdated issues, and diff-view issues on lines outside the hunks, are listed in a box at the top
-  of the file with their snippets.
+- **Issue placement.** In the file and diff views, a thread renders below the (relocated) end line
+  of a span. An issue appears only once per page, however many spans it has.
+  - **Files view:** the thread goes under the issue's first current span in the file, in line
+    order.
+  - **Changes view:** the thread goes under the first span on the page, in page order.
+  - **Markers:** each later span gets a small marker, `◆ #12`, at the right of its last line. It
+    links to the thread, and its tooltip gives the issue's number and title.
+  - **No placeable span:** an issue with no span on a shown line is listed in a box at the top of
+    its file (in the Changes view, its first file on the page), with every span's snippet. That
+    covers outdated issues and, in the diff view, spans outside the hunks.
+  - **Issue page:** lists every span with its location, its code, and links to both views.
+  - **Files tree:** counts an issue once for a file or directory, however many of its spans are
+    inside.
+  - **Creating:** a new issue from the web UI has one span, the selected range.
 
 ### 13.5 Live updates
 
@@ -1411,6 +1457,11 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Fuzzy file finder and code search.
 - A persistent `git cat-file --batch` process per repo, if subprocess cost shows up in benchmarks.
 - Caching rendered Markdown per (object, version), if rendering cost shows up in benchmarks.
+- Creating multi-span issues in the web UI, by selecting several ranges or adding a range to an
+  existing issue. Until then the web UI creates single-span issues, and Claude creates
+  multi-span ones.
+- A rich pop-over with the issue's text for span markers; they show the number and title as a
+  tooltip for now.
 - Caching issue placements across requests (§10.2), if placement cost shows up in benchmarks.
   Placement depends only on the anchor and the target commit, so a key of (issue, target commit)
   never goes stale.

@@ -22,7 +22,7 @@
 {% if !lines.is_empty() %}
 <table class="code-view" data-path="{{ path }}" data-commit="{{ head }}">
   {% for line in lines %}
-  <tr id="L{{ line.number }}" data-line="{{ line.number }}"><td class="ln"><a href="#L{{ line.number }}">{{ line.number }}</a></td><td class="src"><code>{{ line.html|safe }}</code></td></tr>
+  <tr id="L{{ line.number }}" data-line="{{ line.number }}"><td class="ln"><a href="#L{{ line.number }}">{{ line.number }}</a></td><td class="src">{% for marker in line.markers %}<a class="span-marker" href="{{ marker.url }}" title="{{ marker.tooltip }}">◆ #{{ marker.id }}</a>{% endfor %}<code>{{ line.html|safe }}</code></td></tr>
   {% for thread in line.threads %}
   <tr class="thread-row"><td colspan="2">{% include "thread.html" %}</td></tr>
   {% endfor %}

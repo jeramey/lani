@@ -11,12 +11,11 @@ use serde::Deserialize;
 
 use super::AppState;
 use super::views::{
-    self, AuthorView, CodeView, CommentView, EventView, FilterLink, IssueRow, Link, PageError,
-    ReviewHeader, SeverityOption, SeverityView, author, review_url,
+    self, AuthorView, CommentView, EventView, FilterLink, IssueRow, PageError, ReviewHeader,
+    SeverityOption, SeverityView, SpanView, author, review_url,
 };
 use crate::daemon::{self, Health};
 use crate::model::{IssueStatus, ReviewStatus, short_ref};
-use crate::service::Location;
 use crate::settings;
 use crate::time;
 
@@ -274,10 +273,7 @@ struct IssuePage {
     resolved: bool,
     opened_by: AuthorView,
     opened: String,
-    location: String,
-    outdated_reason: Option<String>,
-    code: Option<CodeView>,
-    links: Vec<Link>,
+    spans: Vec<SpanView>,
     comments: Vec<CommentView>,
     status_action: String,
     comment_action: String,
@@ -301,10 +297,6 @@ pub async fn issue(
         .await?;
     let issue = &view.issue;
     let (status_label, status_class) = views::issue_status(issue.status, issue.resolved_by);
-    let outdated_reason = match &view.location {
-        Location::Outdated { reason } => Some(reason.clone()),
-        Location::Current { .. } => None,
-    };
     let page = IssuePage {
         review: views::review_header(&detail.view),
         editable: detail.view.review.status == ReviewStatus::Open,
@@ -327,10 +319,7 @@ pub async fn issue(
         resolved: issue.status == IssueStatus::Resolved,
         opened_by: author(issue.author),
         opened: time::to_local(&issue.created_at),
-        location: views::location(&view),
-        outdated_reason,
-        code: views::code(&view),
-        links: views::code_links(&view, detail.view.review.base_ref.is_some()),
+        spans: views::span_views(&view, true, detail.view.review.base_ref.is_some()),
         comments: view.comments.iter().map(views::comment).collect(),
         status_action: format!("{}/status", views::issue_url(review_id, issue_id)),
         comment_action: format!("{}/comments", views::issue_url(review_id, issue_id)),

@@ -133,9 +133,11 @@ pub struct Review {
     pub summary_version: i64,
 }
 
+/// One span of an issue: a line range in one file, as its author read it (§10).
 #[derive(Clone, Debug)]
 pub struct Anchor {
-    /// The commit whose content the issue's author read; line numbers refer to it.
+    /// The commit the line numbers refer to: the commit the author read, or for side `base` its
+    /// merge-base with the review's base branch.
     pub commit: String,
     pub path: String,
     pub side: Side,
@@ -158,7 +160,8 @@ pub struct Issue {
     pub status: IssueStatus,
     pub resolved_by: Option<Actor>,
     pub resolved_at: Option<String>,
-    pub anchor: Anchor,
+    /// The issue's spans, never empty, in the order its author gave them.
+    pub anchors: Vec<Anchor>,
     pub created_at: String,
     /// Who last changed the title or severity, if anyone did after creation.
     pub edited_by: Option<Actor>,

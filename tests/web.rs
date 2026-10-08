@@ -10,7 +10,7 @@ use axum::http::{Request, StatusCode, header};
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
 use lani::model::{Actor, IssueStatus, Severity, Side};
-use lani::service::{CommentTarget, CreateIssue, Service, StartReview};
+use lani::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use lani::settings::IdleTimeout;
 use lani::web::{self, AppState, Instance, TimeoutSource};
 use tower::ServiceExt as _;
@@ -64,11 +64,13 @@ fn fixture() -> Fixture {
             title: "A problem",
             severity: Severity::Medium,
             body: "Use a digit.\n\n<script>alert('pwned')</script>",
-            path: "src/lib.rs",
-            side: Side::Head,
-            start_line: 5,
-            end_line: 5,
-            start_line_text: Some("line five"),
+            spans: vec![SpanRequest {
+                path: "src/lib.rs",
+                side: Side::Head,
+                start_line: 5,
+                end_line: 5,
+                start_line_text: Some("line five"),
+            }],
             commit: &head,
             worktree_path: Some(&repo.path),
             read_merge_base: None,
@@ -1114,11 +1116,13 @@ async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
                 title: "A problem",
                 severity: Severity::Medium,
                 body: "Another.",
-                path: "src/lib.rs",
-                side,
-                start_line: line,
-                end_line: line,
-                start_line_text: Some(text),
+                spans: vec![SpanRequest {
+                    path: "src/lib.rs",
+                    side,
+                    start_line: line,
+                    end_line: line,
+                    start_line_text: Some(text),
+                }],
                 commit: &head,
                 worktree_path: if side == Side::Head {
                     Some(&repo_path)
@@ -1223,11 +1227,14 @@ async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
     assert_eq!(view.issue.title, "Seven is odd");
     assert_eq!(view.issue.severity, Severity::Low);
     assert_eq!(
-        view.issue.anchor.commit, head,
+        view.issue.anchors[0].commit, head,
         "anchored to the rendered commit"
     );
     assert_eq!(
-        (view.issue.anchor.start_line, view.issue.anchor.end_line),
+        (
+            view.issue.anchors[0].start_line,
+            view.issue.anchors[0].end_line
+        ),
         (7, 8)
     );
 
@@ -1372,4 +1379,98 @@ async fn the_code_views_carry_the_script_and_the_forms_only_while_editable() {
         let (_, _, page) = send(&f.app, get(url)).await;
         assert!(!page.contains("new-issue-template"), "closed: {url}");
     }
+}
+
+#[tokio::test]
+async fn an_issue_with_several_spans_shows_one_thread_and_markers_elsewhere() {
+    let f = fixture();
+    f.repo.write("docs/notes.md", "# Notes\nfive\n");
+    let head = f.repo.commit_all("notes");
+    let (review_id, repo_path) = (f.review_id, f.repo.path.clone());
+    let issue_id = f
+        .state
+        .call(move |service| {
+            let span = |path, line, text| SpanRequest {
+                path,
+                side: Side::Head,
+                start_line: line,
+                end_line: line,
+                start_line_text: Some(text),
+            };
+            let view = service.create_issue(&CreateIssue {
+                review_id,
+                author: Actor::Reviewer,
+                title: "Spelled-out numbers",
+                severity: Severity::Low,
+                body: "Pick one style.",
+                spans: vec![
+                    span("src/lib.rs", 5, "line five"),
+                    span("src/lib.rs", 12, "line 12"),
+                    span("docs/notes.md", 2, "five"),
+                ],
+                commit: &head,
+                worktree_path: Some(&repo_path),
+                read_merge_base: None,
+            })?;
+            Ok(view.issue.id)
+        })
+        .await
+        .unwrap();
+    let thread = format!("id=\"issue-{issue_id}\"");
+    let marker = format!("class=\"span-marker\" href=\"#issue-{issue_id}\"");
+
+    // Files view: the thread under the first span in the file, a marker on the later one.
+    let file = format!("/reviews/{}/files/src/lib.rs", f.review_id);
+    let (_, _, page) = send(&f.app, get(&file)).await;
+    let at = |needle: &str| {
+        page.find(needle)
+            .unwrap_or_else(|| panic!("{needle}: {page}"))
+    };
+    assert!(
+        at("id=\"L5\"") < at(&thread) && at(&thread) < at("id=\"L6\""),
+        "{page}"
+    );
+    assert!(
+        at("id=\"L12\"") < at(&marker) && at(&marker) < at("id=\"L13\""),
+        "{page}"
+    );
+    assert_eq!(page.matches(&thread).count(), 1, "one thread per file");
+    assert!(
+        page.contains("title=\"Issue #"),
+        "the marker names the issue: {page}"
+    );
+
+    // Changes view: one thread on the page, at the first span in page order (docs/ sorts
+    // before src/), and markers on the spans in the other file.
+    let changes = format!("/reviews/{}/changes", f.review_id);
+    let (_, _, page) = send(&f.app, get(&changes)).await;
+    assert_eq!(page.matches(&thread).count(), 1, "one thread per page");
+    let docs = page.find("id=\"file-646f63732f6e6f7465732e6d64\"").unwrap();
+    let lib = page.find("id=\"file-7372632f6c69622e7273\"").unwrap();
+    let thread_at = page.find(&thread).unwrap();
+    assert!(docs < thread_at && thread_at < lib, "{page}");
+    assert!(
+        page[lib..].contains(&marker),
+        "a marker in src/lib.rs: {page}"
+    );
+
+    // The tree counts the issue once for docs/ and once for src/, and once per file.
+    let (_, _, page) = send(&f.app, get(&format!("/reviews/{}/files/", f.review_id))).await;
+    assert!(
+        page.contains("1 open</span>"),
+        "docs/ holds one open issue: {page}"
+    );
+    assert!(
+        page.contains("2 open</span>"),
+        "src/ holds two, not three: {page}"
+    );
+
+    // The issue page shows every span with its code.
+    let (_, _, page) = send(
+        &f.app,
+        get(&format!("/reviews/{}/issues/{issue_id}", f.review_id)),
+    )
+    .await;
+    assert_eq!(page.matches("class=\"span\"").count(), 3, "{page}");
+    assert!(page.contains("Span 3 · Code @ "), "{page}");
 }
