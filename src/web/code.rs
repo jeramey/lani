@@ -60,6 +60,8 @@ struct FilePage {
     lines: Vec<FileLine>,
     /// Issues that cannot be shown under a current line of this file.
     other_threads: Vec<ThreadView>,
+    /// Where the new-issue form posts.
+    create_action: String,
 }
 
 /// `GET /reviews/{id}/files`: the root directory lives at `/files/`.
@@ -255,6 +257,7 @@ fn file_page(
         notice,
         lines,
         other_threads,
+        create_action: format!("{}/issues", views::review_url(review_id)),
         review,
     }
     .render()?)
@@ -353,6 +356,8 @@ struct ChangesPage {
     merge_base_short: String,
     totals: String,
     files: Vec<FileSection>,
+    /// Where the new-issue form posts.
+    create_action: String,
 }
 
 /// `GET /reviews/{id}/changes`: the unified diff from the merge-base to the head (§13.3).
@@ -429,6 +434,7 @@ pub async fn changes(
         head: view.head,
         merge_base: view.merge_base,
         files,
+        create_action: format!("{}/issues", views::review_url(review_id)),
         review: header,
     };
     Ok(Html(page.render()?).into_response())

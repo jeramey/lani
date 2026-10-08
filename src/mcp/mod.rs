@@ -588,6 +588,7 @@ impl LaniServer {
                     start_line_text: Some(&p.start_line_text),
                     commit: &p.commit,
                     worktree_path: p.worktree_path.as_deref().map(Path::new),
+                    read_merge_base: None,
                 })
             }),
             hint,

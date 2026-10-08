@@ -49,6 +49,7 @@ fn issue_request<'a>(
         start_line_text: Some(start_text),
         commit,
         worktree_path: Some(&repo.path),
+        read_merge_base: None,
     }
 }
 
@@ -904,6 +905,7 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
             start_line_text: Some("}"),
             commit,
             worktree_path,
+            read_merge_base: None,
         })
     };
 

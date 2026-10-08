@@ -1,7 +1,8 @@
 //! The local web UI server (docs/design.md §13).
 //!
-//! M2 serves server-rendered pages and plain HTML forms: every action is a POST that redirects
-//! back to the page (or re-renders it with an error), so no JavaScript is needed yet.
+//! Pages are rendered on the server and every action is a plain form POST that redirects back
+//! (or re-renders with an error). One small script, `static/lani.js`, adds line selection and
+//! the new-issue form to the code views.
 
 mod actions;
 mod auth;
@@ -193,6 +194,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/static/lani.css", get(pages::stylesheet))
         .route("/static/highlight.css", get(pages::highlight_stylesheet))
+        .route("/static/lani.js", get(pages::script))
         .route("/login", get(auth::login))
         .route("/api/health", get(pages::health))
         .route("/api/shutdown", post(actions::shutdown))
@@ -214,6 +216,8 @@ pub fn router(state: AppState) -> Router {
             post(actions::set_issue_status),
         )
         .route("/comments/{comment_id}/edit", post(actions::edit_comment))
+        .route("/reviews/{review_id}/issues", post(actions::create_issue))
+        .route("/preview", post(actions::preview))
         .fallback(pages::not_found)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

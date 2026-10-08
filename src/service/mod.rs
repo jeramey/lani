@@ -65,6 +65,10 @@ pub struct CreateIssue<'a> {
     pub commit: &'a str,
     /// The worktree the author read the file from, or `None` if it was read from git.
     pub worktree_path: Option<&'a Path>,
+    /// For side `base` from the web UI: the merge-base the page showed. If the base has moved
+    /// since, the merge-base and its line numbers may differ, so the issue is rejected. `None`
+    /// skips the check.
+    pub read_merge_base: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1218,6 +1222,17 @@ fn validate_anchor(
 
     // Step 2: the path and range exist in the anchor commit.
     let anchor_commit = anchor_commit(git, review, request.side, &commit)?;
+    if let Some(read) = request.read_merge_base
+        && request.side == Side::Base
+        && read != anchor_commit
+    {
+        return Err(Error::Invalid(format!(
+            "the merge-base is now {}, not {} as when the lines were read: the base moved. \
+             Reload the changes and select the lines again.",
+            short_sha(&anchor_commit),
+            short_sha(read)
+        )));
+    }
     let content = git
         .read_file(&anchor_commit, request.path)?
         .ok_or_else(|| {

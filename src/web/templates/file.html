@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ path }} · {{ review.title }} · LANI{% endblock %}
+{% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
@@ -17,6 +18,7 @@
 </section>
 {% endif %}
 
+{% include "new_issue.html" %}
 {% if !lines.is_empty() %}
 <table class="code-view" data-path="{{ path }}" data-commit="{{ head }}">
   {% for line in lines %}

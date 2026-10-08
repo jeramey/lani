@@ -69,6 +69,7 @@ fn fixture() -> Fixture {
             start_line_text: Some("line five"),
             commit: &head,
             worktree_path: Some(&repo.path),
+            read_merge_base: None,
         })
         .unwrap();
     service
@@ -1120,6 +1121,7 @@ async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
                 } else {
                     None
                 },
+                read_merge_base: None,
             };
             service.create_issue(&issue(Side::Base, 5, "line 5"))?;
             service.create_issue(&issue(Side::Head, 15, "line 15"))?;
@@ -1187,4 +1189,106 @@ async fn a_whole_tree_review_has_no_changes_view() {
     assert!(page.contains("whole-tree review"), "{page}");
     let (_, _, page) = send(&f.app, get(&format!("/reviews/{review_id}"))).await;
     assert!(!page.contains(">Changes</a>"), "no Changes tab: {page}");
+}
+
+#[tokio::test]
+async fn issues_are_created_from_a_line_selection_at_the_rendered_commit() {
+    let f = fixture();
+    let head = f.repo.head();
+    let create = format!("/reviews/{}/issues", f.review_id);
+    let back = format!("/reviews/{}/files/src/lib.rs", f.review_id);
+    let form = |side: &str, line: u32, merge_base: &str, back: &str| {
+        format!(
+            "path=src%2Flib.rs&side={side}&start_line={line}&end_line={}&commit={head}\
+             &merge_base={merge_base}&body=Mine.&back={}",
+            line + 1,
+            back.replace('/', "%2F")
+        )
+    };
+
+    let (status, headers, _) = send(&f.app, post(&create, &form("head", 7, "", &back))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let new_id = f.issue_id + 1;
+    assert_eq!(location(&headers), format!("{back}#issue-{new_id}"));
+    let view = f
+        .state
+        .call(move |service| service.get_issue(new_id))
+        .await
+        .unwrap();
+    assert_eq!(view.issue.author, Actor::Human);
+    assert_eq!(
+        view.issue.anchor.commit, head,
+        "anchored to the rendered commit"
+    );
+    assert_eq!(
+        (view.issue.anchor.start_line, view.issue.anchor.end_line),
+        (7, 8)
+    );
+
+    // A base-side selection must come from the current merge-base.
+    let merge_base = f.repo.git(&["merge-base", "main", "feature"]);
+    let stale = "0".repeat(39) + "1";
+    let (status, _, page) = send(&f.app, post(&create, &form("base", 5, &stale, &back))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(page.contains("the base moved"), "{page}");
+    assert!(page.contains("Mine."), "the text is kept: {page}");
+    let (status, headers, _) =
+        send(&f.app, post(&create, &form("base", 5, &merge_base, &back))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{headers:?}");
+
+    let (status, _, _) = send(&f.app, post(&create, &form("left", 5, "", &back))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // A return address outside LANI is ignored.
+    let (_, headers, _) = send(
+        &f.app,
+        post(&create, &form("head", 9, "", "https://example.com/")),
+    )
+    .await;
+    assert!(
+        location(&headers).starts_with(&format!("/reviews/{}#issue-", f.review_id)),
+        "{headers:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_code_views_carry_the_script_and_the_forms_only_while_editable() {
+    let f = fixture();
+    let (status, headers, script) = send(&f.app, get("/static/lani.js")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("text/javascript")
+    );
+    assert!(script.contains("new-issue-template"));
+
+    let (status, _, html) = send(&f.app, post("/preview", "body=**hi**+%3Cb%3E")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("<strong>hi</strong>") && !html.contains("<b>"),
+        "{html}"
+    );
+
+    let file = format!("/reviews/{}/files/src/lib.rs", f.review_id);
+    let changes = format!("/reviews/{}/changes", f.review_id);
+    for url in [&file, &changes] {
+        let (_, _, page) = send(&f.app, get(url)).await;
+        assert!(
+            page.contains("<script src=\"/static/lani.js\" defer></script>"),
+            "{url}"
+        );
+        assert!(page.contains("id=\"new-issue-template\""), "{url}");
+        assert!(
+            page.contains(&format!("action=\"/reviews/{}/issues\"", f.review_id)),
+            "{url}"
+        );
+    }
+    send(&f.app, post(&format!("/reviews/{}/close", f.review_id), "")).await;
+    for url in [&file, &changes] {
+        let (_, _, page) = send(&f.app, get(url)).await;
+        assert!(!page.contains("new-issue-template"), "closed: {url}");
+    }
 }

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Changes · {{ review.title }} · LANI{% endblock %}
+{% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
@@ -21,6 +22,7 @@
   {% endif %}
 </section>
 
+{% include "new_issue.html" %}
 {% for file in files %}
 <section class="diff-file" id="{{ file.anchor }}">
   <header>

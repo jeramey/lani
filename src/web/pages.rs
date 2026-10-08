@@ -385,6 +385,14 @@ pub async fn stylesheet() -> impl IntoResponse {
     )
 }
 
+/// `GET /static/lani.js`: line selection and the new-issue form in the code views (§13.4).
+pub async fn script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("static/lani.js"),
+    )
+}
+
 /// `GET /static/highlight.css`: colours for highlighted code (§13.6).
 pub async fn highlight_stylesheet() -> impl IntoResponse {
     (

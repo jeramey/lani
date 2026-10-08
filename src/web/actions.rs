@@ -13,8 +13,8 @@ use super::{AppState, TimeoutSource};
 use crate::base::BaseMode;
 use crate::error::Error;
 use crate::markdown;
-use crate::model::{Actor, IssueStatus};
-use crate::service::CommentTarget;
+use crate::model::{Actor, IssueStatus, Side};
+use crate::service::{CommentTarget, CreateIssue};
 use crate::settings::IdleTimeout;
 
 #[derive(Deserialize)]
@@ -57,6 +57,28 @@ pub struct EditForm {
     version: i64,
     #[serde(default)]
     back: Option<String>,
+}
+
+/// A new issue from a code view's line selection (§13.4).
+#[derive(Deserialize)]
+pub struct NewIssueForm {
+    path: String,
+    side: String,
+    start_line: u32,
+    end_line: u32,
+    /// The head commit the page was rendered at, which the issue anchors to.
+    commit: String,
+    /// For side "base": the merge-base the page showed.
+    #[serde(default)]
+    merge_base: Option<String>,
+    body: String,
+    #[serde(default)]
+    back: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PreviewForm {
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -265,6 +287,59 @@ pub async fn comment_on_issue(
         Some(page) => format!("{page}#c{}", comment.id),
         None => comment_url(&comment),
     }))
+}
+
+/// `POST /reviews/{id}/issues`: open an issue on the lines selected in a code view. It anchors
+/// to the commit the page was rendered at, so the line numbers mean what the page showed.
+pub async fn create_issue(
+    State(state): State<AppState>,
+    Path(review_id): Path<i64>,
+    Form(form): Form<NewIssueForm>,
+) -> Result<Response, PageError> {
+    let back = back_page(form.back.as_deref()).unwrap_or_else(|| review_url(review_id));
+    let side = match form.side.as_str() {
+        "head" => Side::Head,
+        "base" => Side::Base,
+        other => {
+            return Err(PageError::new(
+                StatusCode::BAD_REQUEST,
+                "Unknown side",
+                &format!("{other:?} is not a side of the diff."),
+            )
+            .back(back, "Back")
+            .submitted(&form.body));
+        }
+    };
+    let (path, commit, body) = (form.path.clone(), form.commit.clone(), form.body.clone());
+    let merge_base = form.merge_base.clone().filter(|sha| !sha.is_empty());
+    let (start_line, end_line) = (form.start_line, form.end_line);
+    let created = state
+        .call(move |service| {
+            service.create_issue(&CreateIssue {
+                review_id,
+                author: Actor::Human,
+                body: &body,
+                path: &path,
+                side,
+                start_line,
+                end_line,
+                start_line_text: None,
+                commit: &commit,
+                worktree_path: None,
+                read_merge_base: merge_base.as_deref(),
+            })
+        })
+        .await
+        .map_err(|error| failed(error, back.clone(), "Back", &form.body))?;
+    Ok(redirect(&format!("{back}#issue-{}", created.issue.id)))
+}
+
+/// `POST /preview`: Markdown rendered as it will be shown, for the editors' Preview tab.
+pub async fn preview(Form(form): Form<PreviewForm>) -> Result<Html<String>, PageError> {
+    let html = tokio::task::spawn_blocking(move || markdown::render(&form.body))
+        .await
+        .map_err(|error| Error::Internal(format!("rendering the preview failed: {error}")))?;
+    Ok(Html(html))
 }
 
 pub async fn set_issue_status(

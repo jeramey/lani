@@ -389,3 +389,31 @@ figure.code td.src code { background: none; padding: 0; white-space: pre-wrap; o
 .code-view.diff tr.hunk td { background: var(--code-bg); color: var(--muted); padding: 2px 10px; }
 .code-view.diff tr.hunk code { background: none; }
 .code-view.diff td.ln { color: var(--muted); }
+
+/* Line selection and the new-issue form */
+.code-view tr.new-issue-bar td, .code-view tr.new-issue-row td { padding: 6px 10px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.code-view tr.new-issue-bar button { font-size: 13px; padding: 3px 10px; }
+.code-view td.ln a:hover { color: var(--link); text-decoration: none; }
+form.new-issue {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 15px;
+}
+.new-issue-title { margin: 0 0 6px; font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.editor-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.editor-tabs button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  font-weight: normal;
+  padding: 2px 10px;
+}
+.editor-tabs button.active { color: var(--text); border-color: var(--border); background: var(--bg); }
+form.new-issue .preview {
+  min-height: 6em;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}

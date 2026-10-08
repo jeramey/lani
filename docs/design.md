@@ -986,25 +986,36 @@ by port.
 | `/settings`                                 | Idle timeout (§13.1); server version, pid, port and uptime. |
 | `/login`, `/api/health`, `/api/shutdown`    | §13.1, §13.2. |
 
-The pages are backed by state-changing endpoints. In M2 they are plain HTML form posts that
-redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inline updates:
+The pages are backed by state-changing endpoints. They are plain HTML form posts that redirect
+back to the page (303 See Other); M4 may add htmx fragments for live updates:
 
-- Create an issue.
+- Create an issue (`POST /reviews/{id}/issues`, from a line selection in a code view).
 - Add a comment, on an issue or on the summary.
 - Edit a comment or the summary (with `version`).
 - Change the title or base.
 - Resolve or reopen an issue.
 - Close or reopen the review.
 - Update settings.
-- Render a Markdown preview.
+- Render a Markdown preview (`POST /preview`, which returns an HTML fragment for an editor's
+  *Preview* tab).
 
 ### 13.4 Interactions
 
-- **Selecting lines.** Click a line number to select it, and shift-click to extend the range. The
-  URL hash updates (`#L42-L48`). A "+" button opens the new-issue form under the range. This also
-  works on either side of the diff view; deleted lines anchor to side `base`.
+- **Selecting lines.** Click a line number to select it, and shift-click another on the same side
+  to extend the range. A button under the range opens the new-issue form.
+  - **Diff sides.** In the Changes view, removed lines select side `base` by their old numbers.
+    Context and added lines select side `head` by their new numbers.
+  - **Links.** The URL hash follows the selection: `#L42-L48` in the Files view, and
+    `#file-<path in hex>-H42-H48` (head side) or `-B…` (base side) in the Changes view. Opening
+    such a link restores the selection.
+  - **JavaScript.** Selection needs it; without it, line numbers are plain links to the line.
 - **New issue form.** A Markdown body with *Write/Preview* tabs and a *Create issue* button. The
-  form carries the commit the page was rendered at, which becomes the anchor commit (§10).
+  form carries the head commit the page was rendered at, which becomes the anchor commit (§10).
+  The server runs steps 1 and 2 of §10.1, since the lines come from git.
+  - **Base side.** A selection also carries the merge-base the page showed. If the base has moved
+    since, the merge-base and its line numbers may differ, so the issue is rejected and you
+    reload.
+  - **After creating.** The browser returns to the view, at the new thread.
 - **Authorship display.** Described in §11.1. Every issue, comment and the summary shows the
   author's badge, plus *edited by you* or *edited* markers.
 - **Threads.** Comments are linear, oldest first, with a comment box at the bottom. Any comment can
@@ -1082,15 +1093,17 @@ Comments and summaries are rendered with **comrak**:
 - **askama** renders the pages on the server. Its templates are compiled into the binary and
   type-checked, with HTML autoescaping on by default. `|safe` is used only for HTML produced by
   comrak or syntect.
-- **htmx 2** and its SSE extension handle partial updates. Both are vendored and pinned. htmx runs
-  under the CSP with `allowEval: false`, `allowScriptTags: false` and
-  `includeIndicatorStyles: false`.
-- One small vanilla JS file handles line selection, SSE-driven refresh and editor protection.
+- **htmx 2** and its SSE extension are planned for M4's partial updates. They would be vendored
+  and pinned, running under the CSP with `allowEval: false`, `allowScriptTags: false` and
+  `includeIndicatorStyles: false`. M3 needs no partial updates, so it does not ship htmx.
+- One small vanilla JS file, `static/lani.js`, handles line selection and the editor's
+  *Write/Preview* tabs (M3), and in M4 SSE-driven refresh and editor protection. It has no inline
+  code and sets no inline styles, so it runs under the CSP. The code views load it; other pages
+  don't need it.
 - One hand-written CSS file covers light and dark themes.
 - **No Node toolchain.** `cargo build` is the whole build.
-- **M2 ships no JavaScript.** Every action is a plain form post that redirects back, and inline
-  editors are `<details>` elements. htmx and the JS file arrive with M3 (line selection) and M4
-  (live updates).
+- **Forms work without JavaScript.** Every action is a plain form post that redirects back, and
+  inline editors are `<details>` elements. Only line selection needs `lani.js`.
 
 ---
 
@@ -1191,15 +1204,20 @@ src/
   git.rs             git subprocess wrapper; unified-diff, name-status and for-each-ref parsers
   base.rs            default-branch and parent-branch detection (§9)
   anchor.rs          anchor validation, snippet capture, relocation (§10)
-  service.rs         domain operations, permissions, role rules (§11), shared by MCP and web
+  service/           domain operations, permissions, role rules (§11), shared by MCP and web
+    mod.rs           reviews, issues, comments, anchors and placement
+    code.rs          what the code views show: directories, files and diffs at the head
   mcp/               rmcp tool router, server instructions, role lock, text rendering (§12.4)
   web/
     mod.rs           axum router, middleware (auth, Host, Origin, CSP, activity tracking)
+    auth.rs          token, cookie, Host and Origin checks; sign-in
     pages.rs         full-page handlers
-    fragments.rs     htmx fragment handlers
-    sse.rs           event polling and fan-out
+    code.rs          the Files and Changes views
+    actions.rs       form posts
+    views.rs         view models and the error page
+    sse.rs           event polling and fan-out (M4)
     templates/       askama templates (compiled in)
-    static/          htmx.min.js, htmx-ext-sse.js, lani.js, lani.css (embedded)
+    static/          lani.js, lani.css (embedded); htmx.min.js and htmx-ext-sse.js in M4
   highlight.rs       syntect + two-face, per-line output, LRU cache
   markdown.rs        comrak configuration
   daemon.rs          server.json, lock, detach/spawn, health check, browser launch, idle timer
