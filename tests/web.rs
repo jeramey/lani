@@ -1511,6 +1511,55 @@ async fn an_issue_with_several_spans_shows_one_thread_and_markers_elsewhere() {
 }
 
 #[tokio::test]
+async fn a_thread_goes_under_its_first_shown_span_even_in_a_later_file() {
+    let f = fixture();
+    f.repo.write("tests/lib.rs", "five\n");
+    let head = f.repo.commit_all("a test");
+    let (review_id, repo_path) = (f.review_id, f.repo.path.clone());
+    // src/lib.rs line 15 is outside the file's hunk; tests/lib.rs line 1 is an added line.
+    let issue_id = f
+        .state
+        .call(move |service| {
+            let span = |path, line, text| SpanRequest {
+                path,
+                side: Side::Head,
+                start_line: line,
+                end_line: line,
+                start_line_text: Some(text),
+            };
+            let view = service.create_issue(&CreateIssue {
+                review_id,
+                author: Actor::Reviewer,
+                title: "Spelled-out numbers",
+                severity: Severity::Low,
+                body: "Pick one style.",
+                spans: vec![
+                    span("src/lib.rs", 15, "line 15"),
+                    span("tests/lib.rs", 1, "five"),
+                ],
+                commit: &head,
+                worktree_path: Some(&repo_path),
+                read_merge_base: None,
+            })?;
+            Ok(view.issue.id)
+        })
+        .await
+        .unwrap();
+    let (_, _, page) = send(&f.app, get(&format!("/reviews/{review_id}/changes"))).await;
+    let thread = format!("id=\"issue-{issue_id}\"");
+    assert_eq!(page.matches(&thread).count(), 1, "one thread per page");
+    let tests = "file-74657374732f6c69622e7273"; // "tests/lib.rs" in hex
+    let at = |needle: &str| {
+        page.find(needle)
+            .unwrap_or_else(|| panic!("{needle}: {page}"))
+    };
+    assert!(
+        at(&format!("id=\"{tests}-H1\"")) < at(&thread),
+        "under its span in tests/lib.rs, not in the box of src/lib.rs: {page}"
+    );
+}
+
+#[tokio::test]
 async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     let f = fixture();
     let (review_id, issue_id) = (f.review_id, f.issue_id);
