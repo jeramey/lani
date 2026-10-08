@@ -1054,8 +1054,8 @@ warning suggesting `lani stop && lani open`. The MCP tool includes the same warn
 
 - **Default and values.** The server stops after **3 hours** without activity. The timeout can be a
   duration (`30m`, `3h`, `2d`; minimum 5 minutes) or `never`.
-- **What counts as activity.** Any authenticated HTTP request. An open live-update (SSE)
-  connection does *not* count, so a forgotten browser tab cannot keep the server alive forever.
+- **What counts as activity.** Any authenticated HTTP request except health checks and
+  live-update streams (§13.5), so a forgotten browser tab cannot keep the server alive forever.
 - **Setting it.** There are two places:
   - The **web UI** settings page (`/settings`) saves the value in the `setting` table. It applies
     to the running server immediately and to every future start.
