@@ -33,9 +33,9 @@ update_review_summary without discarding what others wrote.
 Reviewer: call start_review (base_mode \"auto\" unless the human names a base or asks for a whole-tree \
 review), then create_issue once per finding, anchored to the lines concerned. Pass commit = the SHA of the \
 commit whose files you read (what `git rev-parse HEAD` prints there, not `HEAD` itself; it should equal \
-the review head) and worktree_path = where you read them. Then call open_web_ui so the human can read and edit. Only committed code can \
-be reviewed: if start_review reports uncommitted changes, \
-tell the human. In a whole-tree review there is no diff; review the files the human asked about.
+the review head) and worktree_path = where you read them. Then call open_web_ui so the human can read \
+and edit. Only committed code can be reviewed: if start_review reports uncommitted changes, tell the \
+human. In a whole-tree review there is no diff; review the files the human asked about.
 
 Implementer: call list_reviews for this repo, then list_issues with status \"open\". Validate each issue, \
 fix the valid ones and commit, then reply with add_comment citing the commit, or explain why you \
