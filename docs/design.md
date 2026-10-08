@@ -756,9 +756,10 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   so waiting costs no tokens and the session stays responsive to you.
 - **The round limit.** A round is the reviewer handing the review to the implementer and the
   implementer handing it back; it ends with that hand-back. A hand-off from the implementer that
-  opens the loop, or that answers your hand-off, starts no round. When the rounds since you last handed the review on reach the limit (default 5, set on the
-  Settings page), that hand-off goes to you instead of the reviewer. The reply tells the session
-  why. This stops two sessions from ping-ponging indefinitely over a disagreement.
+  opens the loop, or that answers your hand-off, starts no round. When the rounds since you last
+  handed the review on reach the limit (default 5, set on the Settings page), that hand-off goes
+  to you instead of the reviewer. The reply tells the session why. This stops two sessions from
+  ping-ponging indefinitely over a disagreement.
 - **Bringing you in.** A session hands the review to you when every issue is resolved, or when it
   needs your decision. The tool's reply tells it to tell you at once: in its reply, with a push
   notification where available, and by opening the review in your browser. It then waits for you
