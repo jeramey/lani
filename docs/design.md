@@ -415,7 +415,7 @@ Commands used (all read-only):
 | Unified diff                | `git diff -M -U3 <merge-base> <head> -- <old path> <new path>`, one call per file |
 | Line relocation             | `git diff -M -U0 <anchor_commit> <head> -- <old path> <new path>` |
 | File on disk vs commit      | `git -C <worktree> diff-index -p -U0 <commit> -- <path>` |
-| Worktree state              | `git -C <worktree> status --porcelain=v2 -z --untracked-files=no` |
+| Worktree state              | `git -C <worktree> status --porcelain=v2 -z --branch --untracked-files=no` |
 | Directory listing           | `git ls-tree -z --long --full-tree <commit> -- <dir>/` |
 | One file or directory       | `git ls-tree -z --long --full-tree <commit> -- <path>` |
 | File content                | `git cat-file blob <blob-sha>` |
@@ -903,6 +903,9 @@ Only committed code is reviewed; issues cannot anchor to lines affected by uncom
 Review 3 "Add token-bucket rate limiter" · open · started by implementer · repo "app"
 head "feature/rate-limit" @ 3f9c2a1 · base "main" (auto-detected) · merge-base 9e8d7c6 · 4 commits
 issues: 3 open, 5 resolved
+Turn: reviewer (set by the implementer at 2026-10-07T14:02Z) · rounds without the human: 1
+Hand-off note:
+│ Fixed the overflow (issue 57) and replied on 58.
 
 ## Summary (v3 · last edited by human at 2026-10-07T13:40Z)
 │ Adds a token-bucket rate limiter in front of the public API so that one client cannot starve the
@@ -934,7 +937,7 @@ Issue 57 · open · high · review 3 · opened by reviewer
 Title: "Refill overflows u64 after a long idle period"
 Location: "src/limiter.rs":42-44 (head side) @ a1b2c3d — OUTDATED: the lines changed between a1b2c3d and 3f9c2a1
 Original code @ a1b2c3d:
-```rust
+```
   39 |     pub fn try_acquire(&mut self) -> bool {
   40 |         let now = Instant::now();
   41 |         let elapsed_ms = (now - self.last).as_millis() as u64;
@@ -1096,7 +1099,7 @@ by port.
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list with filters (open/resolved, author, file); close/reopen review; activity timeline. Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
+| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; activity timeline. Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
@@ -1261,8 +1264,8 @@ lani version
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line
   number, which opens selected; any other colon is part of the path.
 - There is no config file. The environment variables are `LANI_HOME`, `BROWSER`, and `LANI_LOG`
-  (a `tracing` filter for stderr logging, e.g. `debug`; default `warn`). The only persisted
-  setting is the idle timeout (§13.1).
+  (a `tracing` filter for stderr logging, e.g. `debug`; default `warn`). The persisted settings
+  are the idle timeout (§13.1) and the round limit (§11.5), both set on the Settings page.
 - An existing `$LANI_HOME` that other users can access is refused with a `chmod 700` hint rather
   than silently changed.
 
@@ -1385,11 +1388,13 @@ Linting and safety rules:
 
 - **Formatting and lints.** `cargo fmt`, plus `cargo clippy --all-targets -- -D warnings` with
   `clippy::pedantic` enabled in the `[lints]` table. Every `#[allow]` carries a justification.
-  Two exceptions so far:
+  Three exceptions so far:
   - `missing_errors_doc` is allowed crate-wide. Every fallible function returns the crate's single
     `Error` type, so per-function `# Errors` sections would add nothing.
   - `unused_async_trait_impl` is allowed on the `ServerHandler` impl, because rmcp's
     `#[tool_handler]` macro generates those functions.
+  - `unnecessary_wraps` is allowed on the MCP server's `reply`, which returns `Result` like the
+    tool functions it ends, so that every success path is written the same way.
 - **No unsafe code.** `unsafe_code = "forbid"` holds without exceptions:
   - Detaching uses `CommandExt::process_group(0)` and ignores SIGHUP.
   - Locking uses `std::fs::File::try_lock` (Rust ≥ 1.89).
