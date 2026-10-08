@@ -660,7 +660,7 @@ fn review_status(status: ReviewStatus) -> &'static str {
     status.as_str()
 }
 
-/// The first non-empty line of a body, shortened for one-line lists.
+/// A line range as "42-44", or "42" for one line.
 fn lines(start: u32, end: u32) -> String {
     if start == end {
         start.to_string()
