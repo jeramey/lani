@@ -1222,7 +1222,8 @@ src/
   highlight.rs       syntect + two-face, per-line output, LRU cache
   markdown.rs        comrak configuration
   daemon.rs          server.json, lock, detach/spawn, health check, browser launch, idle timer
-tests/               integration tests (temp git repos, MCP client, HTTP)
+tests/               integration tests (temp git repos, MCP client, HTTP); browser.rs is opt-in
+clippy.toml          words doc comments may use without backticks, such as WebDriver
 ```
 
 | Concern            | Crate(s) |
@@ -1322,6 +1323,19 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - 409 on edit conflicts.
   - The base picker.
   - Settings precedence (saved setting vs flag).
+- **Browser:** `tests/browser.rs` drives Safari through W3C WebDriver (`safaridriver`, which
+  ships with macOS) against the real `lani` binary.
+  - It covers selecting lines in the Files and Changes views, the new-issue form and its preview,
+    head- and base-side issues (checked in the database too), and replying and resolving in
+    place.
+  - It also records any Content-Security-Policy violation or script error after each page loads.
+    WebDriver cannot see console messages from loading itself.
+  - It needs a browser, so it is opt-in: `cargo test --test browser -- --ignored`. Enable Safari's
+    automation once: Settings → Advanced → "Show features for web developers", Develop → "Allow
+    Remote Automation", then `safaridriver --enable`.
+  - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
+    toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline
+    script injected); both breaks fail the test.
 - **Idle timer:** tested with an injected clock.
   - Requests reset it; SSE connections don't.
   - `never` disables it.

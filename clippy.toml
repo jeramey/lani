@@ -1,0 +1,3 @@
+# Words that doc comments may use without backticks. "WebDriver" is the name of the W3C browser
+# automation protocol (tests/browser.rs), not a code item. ".." keeps clippy's default list.
+doc-valid-idents = ["WebDriver", ".."]
