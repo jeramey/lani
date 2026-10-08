@@ -400,6 +400,36 @@ fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
     );
 }
 
+#[test]
+#[ignore = "needs Safari with remote automation enabled; run with --ignored"]
+fn the_changes_view_asks_for_a_reload_when_its_files_change() {
+    let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
+    let fixture = Fixture::new();
+    let browser = WebDriver::safari();
+    let review_id = fixture.review_id;
+    let changes = format!("/reviews/{review_id}/changes");
+    browser.sign_in(&fixture, &changes);
+    browser.watch_for_problems();
+
+    // A commit brings a new file into the diff; the next recorded change refreshes the page.
+    fixture.repo.write("src/new.rs", "fn new() {}\n");
+    fixture.repo.commit_all("a new file");
+    fixture
+        .service()
+        .add_comment(
+            Actor::Implementer,
+            CommentTarget::Summary(review_id),
+            "Added a file.",
+        )
+        .unwrap();
+    browser.wait_for(
+        "return [...document.querySelectorAll('.live-notice')]\
+           .some(notice => notice.textContent.includes('Reload to see them'));",
+        "the reload notice",
+    );
+    browser.assert_no_problems("the Changes view's refresh");
+}
+
 /// Reply to and resolve an issue from its inline thread; both return to the same view.
 fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str, issue_id: i64) {
     let thread = format!("#issue-{issue_id}");
@@ -448,7 +478,7 @@ fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str
 /// line 5 of `src/lib.rs` is rewritten and line 20 removed.
 struct Fixture {
     home: TestHome,
-    _repo: TestRepo,
+    repo: TestRepo,
     review_id: i64,
     /// `http://127.0.0.1:<port>`
     base: String,
@@ -498,7 +528,7 @@ impl Fixture {
             base: base.to_string(),
             token: token.to_string(),
             home,
-            _repo: repo,
+            repo,
             review_id,
             head,
             merge_base,

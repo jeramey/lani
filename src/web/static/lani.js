@@ -316,6 +316,18 @@
       served.set(part.id, replacement.outerHTML);
       part.replaceWith(document.adoptNode(replacement));
     }
+    // Parts are replaced, never added or removed: a file that a new commit brings into the
+    // Changes view, or takes out of it, would land in the wrong place. The page says so instead.
+    const ids = (page) => Array.from(page.querySelectorAll("[data-live][id]"), (part) => part.id);
+    if (ids(document).join("\n") === ids(fresh).join("\n")) {
+      clearNotice("reshaped");
+    } else {
+      showNotice(
+        "reshaped",
+        "Parts of this page, such as the changed files, were added or removed elsewhere. " +
+          "Reload to see them."
+      );
+    }
     // A replaced code table loses its selection; take it from the URL again.
     if (selection && !document.contains(selection.table)) {
       selectFromHash();
@@ -384,6 +396,8 @@
   // - "ended": the server stopped, or this page can no longer be updated. It stays.
   // - "unreachable": the stream cannot reach the server. Reconnecting removes it.
   // - "refresh": fetching the page failed. The next refresh that succeeds removes it.
+  // - "reshaped": parts were added to the page or removed from it. A refresh that finds the
+  //   same parts again removes it.
   function showNotice(kind, text) {
     let notice = document.getElementById("live-notice-" + kind);
     if (!notice) {

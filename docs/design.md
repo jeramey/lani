@@ -1224,6 +1224,9 @@ work on the review.
   shown, which the script and the reader change (a line selection, an opened thread). Parts that
   differ are replaced, and a code view's line selection is restored from the URL afterwards. If
   the fetch fails, a notice says so until a later refresh succeeds.
+- **Added and removed parts.** Parts are only replaced, never added or removed. If a refresh finds
+  that parts were added or removed (a commit changed which files the diff covers), the page asks
+  for a reload instead of placing them.
 - **Open editors.** A part is never replaced while someone may be writing in it: a field in it
   has focus or unsaved changes, or an inline editor (`<details class="inline-edit">`) or the
   new-issue form is open. It shows *"Updated elsewhere. Reload to see the changes; copy anything
