@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Reviews · LANI{% endblock %}
+{% block banner %}{% if outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1>Reviews</h1>

@@ -11,11 +11,12 @@ use serde::Deserialize;
 
 use super::AppState;
 use super::views::{
-    self, AuthorView, CommentView, EventView, FilterLink, IssueRow, PageError, ReviewHeader,
+    self, AuthorView, CommentView, EventView, FilterLink, IssueRow, Live, PageError, ReviewHeader,
     SeverityOption, SeverityView, SpanView, author, review_url,
 };
 use crate::daemon::{self, Health};
 use crate::model::{IssueStatus, ReviewStatus, short_ref};
+use crate::service::ReviewView;
 use crate::settings;
 use crate::time;
 
@@ -53,6 +54,8 @@ struct RepoGroup {
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexPage {
+    /// Whether to show the update banner (§13.5).
+    outdated: bool,
     filters: Vec<FilterLink>,
     groups: Vec<RepoGroup>,
     empty_message: &'static str,
@@ -122,6 +125,7 @@ pub async fn index(
         .collect();
     Ok(Html(
         IndexPage {
+            outdated: state.outdated(),
             filters,
             groups,
             empty_message,
@@ -171,8 +175,9 @@ pub async fn review(
         Some("all") => (None, "all", "No issues yet."),
         Some(other) => return Err(bad_filter(other)),
     };
-    let (detail, issues, events, candidates) = state
+    let (events_after, detail, issues, events, candidates) = state
         .call(move |service| {
+            let events_after = service.latest_event_id(review_id)?;
             let detail = service.get_review(review_id, None)?;
             let issues = service.list_issues(review_id, status, None, false)?;
             let events = service.list_events(review_id)?;
@@ -183,7 +188,7 @@ pub async fn review(
             } else {
                 Vec::new()
             };
-            Ok((detail, issues, events, candidates))
+            Ok((events_after, detail, issues, events, candidates))
         })
         .await?;
 
@@ -201,39 +206,7 @@ pub async fn review(
         active: value == active,
     })
     .collect();
-    let mut base_options: Vec<BaseOption> = candidates
-        .into_iter()
-        .map(|name| BaseOption {
-            label: short_ref(&name).to_string(),
-            selected: review.base_ref.as_deref() == Some(name.as_str()),
-            value: name,
-        })
-        .collect();
-    // A base that is not a branch candidate (a tag, or a branch that was deleted) still has to be
-    // shown as selected; otherwise the browser shows the first option, "None", and saving
-    // without looking would turn the review into a whole-tree review.
-    if let Some(base) = &review.base_ref
-        && !base_options.iter().any(|option| option.selected)
-    {
-        let missing = detail
-            .view
-            .git
-            .as_ref()
-            .is_some_and(|git| git.base_sha.is_none());
-        let note = if missing {
-            "current; ref no longer exists"
-        } else {
-            "current"
-        };
-        base_options.insert(
-            0,
-            BaseOption {
-                label: format!("{} ({note})", short_ref(base)),
-                value: base.clone(),
-                selected: true,
-            },
-        );
-    }
+    let base_options = base_options(&detail.view, candidates);
     let summary_edited = match (review.summary_updated_by, &review.summary_updated_at) {
         (Some(editor), Some(at)) => Some(format!(
             "Last edited by {} · {}",
@@ -242,8 +215,12 @@ pub async fn review(
         )),
         _ => None,
     };
+    let live = Live {
+        events_after,
+        outdated: state.outdated(),
+    };
     let page = ReviewPage {
-        review: views::review_header(&detail.view),
+        review: views::review_header(&detail.view, &live),
         editable: review.status == ReviewStatus::Open,
         summary_html: (!review.summary.trim().is_empty())
             .then(|| crate::markdown::render(&review.summary)),
@@ -292,13 +269,49 @@ struct IssuePage {
     comment_action: String,
 }
 
+/// The base picker's options: the branch candidates, with the review's base selected.
+fn base_options(view: &ReviewView, candidates: Vec<String>) -> Vec<BaseOption> {
+    let review = &view.review;
+    let mut base_options: Vec<BaseOption> = candidates
+        .into_iter()
+        .map(|name| BaseOption {
+            label: short_ref(&name).to_string(),
+            selected: review.base_ref.as_deref() == Some(name.as_str()),
+            value: name,
+        })
+        .collect();
+    // A base that is not a branch candidate (a tag, or a branch that was deleted) still has to be
+    // shown as selected; otherwise the browser shows the first option, "None", and saving
+    // without looking would turn the review into a whole-tree review.
+    if let Some(base) = &review.base_ref
+        && !base_options.iter().any(|option| option.selected)
+    {
+        let missing = view.git.as_ref().is_some_and(|git| git.base_sha.is_none());
+        let note = if missing {
+            "current; ref no longer exists"
+        } else {
+            "current"
+        };
+        base_options.insert(
+            0,
+            BaseOption {
+                label: format!("{} ({note})", short_ref(base)),
+                value: base.clone(),
+                selected: true,
+            },
+        );
+    }
+    base_options
+}
+
 /// `GET /reviews/{review_id}/issues/{issue_id}`: the issue's code and thread.
 pub async fn issue(
     State(state): State<AppState>,
     Path((review_id, issue_id)): Path<(i64, i64)>,
 ) -> Result<Html<String>, PageError> {
-    let (detail, view, changes) = state
+    let (events_after, detail, view, changes) = state
         .call(move |service| {
+            let events_after = service.latest_event_id(review_id)?;
             let view = service.get_issue(issue_id)?;
             if view.issue.review_id != review_id {
                 return Err(crate::error::Error::NotFound(format!(
@@ -307,13 +320,17 @@ pub async fn issue(
             }
             let detail = service.get_review(review_id, None)?;
             let changes = crate::service::review_changes(&detail.view)?;
-            Ok((detail, view, changes))
+            Ok((events_after, detail, view, changes))
         })
         .await?;
     let issue = &view.issue;
     let (status_label, status_class) = views::issue_status(issue.status, issue.resolved_by);
+    let live = Live {
+        events_after,
+        outdated: state.outdated(),
+    };
     let page = IssuePage {
-        review: views::review_header(&detail.view),
+        review: views::review_header(&detail.view, &live),
         editable: detail.view.review.status == ReviewStatus::Open,
         id: issue.id,
         title: issue.title.clone(),
@@ -359,6 +376,8 @@ pub async fn issue_redirect(
 #[derive(Template)]
 #[template(path = "settings.html")]
 struct SettingsPage {
+    /// Whether to show the update banner (§13.5).
+    outdated: bool,
     saved: String,
     effective: String,
     source: &'static str,
@@ -378,6 +397,7 @@ pub async fn settings(State(state): State<AppState>) -> Result<Html<String>, Pag
     let idle = state.idle();
     let instance = state.instance();
     let page = SettingsPage {
+        outdated: state.outdated(),
         saved: saved.to_string(),
         effective: idle.timeout.to_string(),
         source: idle.source.label(),

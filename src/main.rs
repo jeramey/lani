@@ -207,7 +207,7 @@ fn home() -> anyhow::Result<PathBuf> {
 fn run_mcp() -> anyhow::Result<()> {
     init_logging();
     // Taken first, so that any reinstall after this process started is noticed (§12.5).
-    let executable = lani::mcp::Executable::current()
+    let executable = lani::executable::Executable::current()
         .inspect_err(|error| {
             tracing::warn!(
                 "cannot find this lani executable, so a reinstall goes unnoticed: {error}"

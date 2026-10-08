@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} · Issue #{{ id }} · LANI{% endblock %}
+{% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
+{% block banner %}{% if review.outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
-<section class="panel issue">
+<section class="panel issue" id="issue-details" data-live>
   <div class="section-head">
     <h2 class="issue-heading">{{ title }} <span class="muted">#{{ id }}</span></h2>
     <span class="badges"><span class="badge {{ severity.class }}">{{ severity.label }}</span> <span class="badge {{ status_class }}">{{ status_label }}</span></span>
@@ -28,7 +30,7 @@
   {% for span in spans %}{% include "span.html" %}{% endfor %}
 </section>
 
-<section class="panel thread">
+<section class="panel thread" id="discussion" data-live>
   <h2>Discussion</h2>
   {% for comment in comments %}{% include "comment.html" %}{% endfor %}
   {% if editable %}

@@ -9,7 +9,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use super::views::{PageError, author, comment_url, issue_url, review_url};
-use super::{AppState, TimeoutSource};
+use super::{AppState, Stop, TimeoutSource};
 use crate::base::BaseMode;
 use crate::error::Error;
 use crate::markdown;
@@ -547,6 +547,6 @@ pub async fn save_round_limit(
 
 /// `POST /api/shutdown`: used by `lani stop`.
 pub async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
-    state.request_shutdown();
+    state.request_shutdown(Stop::Requested);
     (StatusCode::OK, "stopping\n")
 }

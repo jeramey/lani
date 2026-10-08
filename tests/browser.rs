@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
 use lani::model::{Actor, IssueStatus, Severity, Side};
-use lani::service::{Service, StartReview};
+use lani::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use serde_json::{Value, json};
 
 /// Safari runs one automation session at a time, so the tests take turns.
@@ -214,6 +214,121 @@ fn removed_lines_in_the_changes_view_open_base_side_issues_and_threads_return_th
         false
     );
     browser.assert_no_problems("the Changes view");
+}
+
+#[test]
+#[ignore = "needs Safari with remote automation enabled; run with --ignored"]
+fn live_updates_refresh_the_page_but_never_an_open_editor() {
+    let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
+    let fixture = Fixture::new();
+    let browser = WebDriver::safari();
+    let review_id = fixture.review_id;
+    let overview = format!("/reviews/{review_id}");
+    browser.sign_in(&fixture, &overview);
+    browser.watch_for_problems();
+    // Gone if the page reloads: updates must arrive in place.
+    browser.run("window.laniSamePage = true; return true;");
+    let in_place = "window.laniSamePage === true";
+
+    // Another session comments and hands the review on.
+    let mut service = fixture.service();
+    service
+        .add_comment(
+            Actor::Reviewer,
+            CommentTarget::Summary(review_id),
+            "From another session.",
+        )
+        .unwrap();
+    service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    browser.wait_for(
+        &format!(
+            "return {in_place} \
+             && document.querySelector('#conversation').textContent.includes('From another session.') \
+             && document.querySelector('#review-head .turn').textContent.includes('Claude · implementer');"
+        ),
+        "the comment and the turn, in place",
+    );
+
+    // A draft in progress is never replaced; its part says it is out of date instead.
+    browser.type_text("#new-summary-comment", "My draft");
+    service
+        .add_comment(
+            Actor::Implementer,
+            CommentTarget::Summary(review_id),
+            "A second comment.",
+        )
+        .unwrap();
+    browser.wait_for(
+        &format!("return {in_place} && !!document.querySelector('#conversation > .stale-notice');"),
+        "the out-of-date notice",
+    );
+    assert_eq!(
+        browser.run(
+            "return [document.querySelector('#new-summary-comment').value, \
+             document.querySelector('#conversation').textContent.includes('A second comment.')];"
+        ),
+        json!(["My draft", false]),
+        "the draft is kept, and the part is not replaced"
+    );
+
+    // In a code view, a selection survives its table being replaced.
+    let file = format!("/reviews/{review_id}/files/src/lib.rs");
+    browser.navigate(&format!("{}{file}", fixture.base));
+    browser.wait_for(
+        &format!(
+            "return location.pathname === {} && document.readyState === 'complete';",
+            json!(file)
+        ),
+        "the file view",
+    );
+    browser.watch_for_problems();
+    browser.click("tr[data-line=\"10\"] td.ln a");
+    browser.shift_click("tr[data-line=\"12\"] td.ln a");
+    let issue = service
+        .create_issue(&CreateIssue {
+            review_id,
+            author: Actor::Reviewer,
+            title: "Line 30",
+            severity: Severity::Low,
+            body: "Filed by another session.",
+            spans: vec![SpanRequest {
+                path: "src/lib.rs",
+                side: Side::Head,
+                start_line: 30,
+                end_line: 30,
+                // The branch removed line 20.
+                start_line_text: Some("line 31"),
+            }],
+            commit: &fixture.head,
+            worktree_path: None,
+            read_merge_base: None,
+        })
+        .unwrap();
+    browser.wait_for(
+        &format!(
+            "return !!document.querySelector('#issue-{}');",
+            issue.issue.id
+        ),
+        "the new thread",
+    );
+    assert_eq!(browser.selected_lines(), "10,11,12");
+    assert_eq!(
+        browser.run("return !!document.querySelector('tr.new-issue-bar');"),
+        true,
+        "the selection's bar is back"
+    );
+    browser.assert_no_problems("live updates");
+
+    // When the server stops, the page says so.
+    let stopped = lani(&fixture.home.path, &["stop"]);
+    assert!(stopped.status.success());
+    browser.wait_for(
+        "const notice = document.querySelector('#live-notice'); \
+         return !!notice && notice.textContent.startsWith('LANI was stopped.');",
+        "the stop notice",
+    );
 }
 
 /// Reply to and resolve an issue from its inline thread; both return to the same view.

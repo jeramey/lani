@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Changes · {{ review.title }} · LANI{% endblock %}
 {% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
+{% block banner %}{% if review.outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
-<section class="panel changes-summary">
+<section class="panel changes-summary" id="changes-summary" data-live>
   <p class="meta">{{ totals }} · from the merge-base <code>{{ merge_base_short }}</code> to the head <code>{{ head_short }}</code></p>
   {% if files.is_empty() %}
   <p class="empty">The head has no changes since the merge-base.</p>
@@ -24,7 +25,7 @@
 
 {% include "new_issue.html" %}
 {% for file in files %}
-<section class="diff-file" id="{{ file.anchor }}">
+<section class="diff-file" id="{{ file.anchor }}" data-live>
   <header>
     <span class="status {{ file.status_class }}">{{ file.status_label }}</span>
     <strong class="path">{{ file.title }}</strong>

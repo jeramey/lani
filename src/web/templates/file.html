@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ path }} · {{ review.title }} · LANI{% endblock %}
 {% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
+{% block banner %}{% if review.outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
@@ -10,6 +11,8 @@
   {% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
 </section>
 
+{% include "new_issue.html" %}
+<div id="code" data-live>
 {% if !other_threads.is_empty() %}
 <section class="panel other-issues">
   <h2>Other issues in this file</h2>
@@ -18,7 +21,6 @@
 </section>
 {% endif %}
 
-{% include "new_issue.html" %}
 {% if !lines.is_empty() %}
 <table class="code-view" data-path="{{ path }}" data-commit="{{ head }}">
   {% for line in lines %}
@@ -29,4 +31,5 @@
   {% endfor %}
 </table>
 {% endif %}
+</div>
 {% endblock %}

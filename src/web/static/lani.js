@@ -1,12 +1,26 @@
-// LANI: line selection and the new-issue form in the code views (docs/design.md §13.4).
+// LANI: live updates on review pages (docs/design.md §13.5), and line selection with the
+// new-issue form in the code views (§13.4).
 //
-// Click a line number to select the line; shift-click another on the same side to select the
-// range. The URL hash follows the selection (#L42-L48 in a file, #<file>-H42-H48 or -B… in the
-// changes), so a selection can be linked to. The page's <template> elements hold the forms; this
-// script only fills them in. It adds no inline code or styles, so it runs under the CSP.
+// Live updates: a review page listens to the review's event stream. When the review changes,
+// the page fetches itself again and replaces each part marked data-live whose HTML the server
+// changed, unless someone is editing in that part; then it shows a notice there instead.
+//
+// Line selection: click a line number to select the line; shift-click another on the same side
+// to select the range. The URL hash follows the selection (#L42-L48 in a file, #<file>-H42-H48
+// or -B… in the changes), so a selection can be linked to. The page's <template> elements hold
+// the forms; this script only fills them in.
+//
+// The script adds no inline code or styles, so it runs under the CSP.
 "use strict";
 
 (function () {
+  // Each live part's HTML as the server last sent it, by id. Taken before this script changes
+  // anything on the page (a selection adds classes), so that only the server's changes count.
+  const served = new Map();
+  for (const part of document.querySelectorAll("[data-live][id]")) {
+    served.set(part.id, part.outerHTML);
+  }
+
   // The current selection: the table, the side ("head" or "base"), the line first clicked, and
   // the selected range.
   let selection = null;
@@ -186,4 +200,153 @@
   // Following a link to another selection on the same page changes only the hash. Our own
   // history.replaceState calls do not fire this event.
   window.addEventListener("hashchange", selectFromHashAndScroll);
+
+  // ── Live updates ──────────────────────────────────────────────────────────────────────────
+
+  const source = document.getElementById("live-source");
+  // The latest change this page reflects: the event it was rendered with, then the last one the
+  // stream announced.
+  let lastEvent = source ? source.dataset.after : "";
+  let stream = null;
+  // Set once the server has said it stopped, or that this page can no longer be updated.
+  let ended = false;
+
+  // Only a visible page keeps a stream open: browsers allow a handful of connections per host,
+  // and every open stream holds one. A page shown again catches up through `after`.
+  function connect() {
+    if (!source || stream || ended || document.hidden) {
+      return;
+    }
+    stream = new EventSource(source.dataset.events + "?after=" + encodeURIComponent(lastEvent));
+    stream.addEventListener("changed", (event) => {
+      if (event.lastEventId) {
+        lastEvent = event.lastEventId;
+      }
+      refresh();
+    });
+    for (const name of ["stopping", "failed"]) {
+      stream.addEventListener(name, (event) => {
+        ended = true;
+        disconnect();
+        showNotice(event.data);
+      });
+    }
+  }
+
+  function disconnect() {
+    if (stream) {
+      stream.close();
+      stream = null;
+    }
+  }
+
+  // Refreshes run one at a time; a change announced during one starts another after it.
+  let refreshing = false;
+  let refreshAgain = false;
+
+  async function refresh() {
+    if (refreshing) {
+      refreshAgain = true;
+      return;
+    }
+    refreshing = true;
+    try {
+      do {
+        refreshAgain = false;
+        const response = await fetch(location.pathname + location.search, {
+          credentials: "same-origin",
+        });
+        if (!response.ok) {
+          showNotice(
+            "This page could not be updated (HTTP " + response.status + "). Reload it to see why."
+          );
+          return;
+        }
+        update(new DOMParser().parseFromString(await response.text(), "text/html"));
+      } while (refreshAgain);
+    } catch (error) {
+      showNotice("This page could not be updated: " + error.message + ". Reload it to try again.");
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  // Replace the live parts the server changed, except those someone is editing in.
+  function update(fresh) {
+    for (const part of document.querySelectorAll("[data-live][id]")) {
+      const replacement = fresh.getElementById(part.id);
+      if (!replacement || replacement.outerHTML === served.get(part.id)) {
+        continue;
+      }
+      if (beingEdited(part)) {
+        markStale(part);
+        continue;
+      }
+      served.set(part.id, replacement.outerHTML);
+      part.replaceWith(document.adoptNode(replacement));
+    }
+    // A replaced code table loses its selection; take it from the URL again.
+    if (selection && !document.contains(selection.table)) {
+      selectFromHash();
+    }
+  }
+
+  // Whether replacing `part` could lose someone's work: a field in it has focus or unsaved
+  // changes, or it has an open editor or new-issue form.
+  function beingEdited(part) {
+    const active = document.activeElement;
+    if (active && part.contains(active) && active.matches("input, textarea, select")) {
+      return true;
+    }
+    if (part.querySelector("details.inline-edit[open], tr.new-issue-row")) {
+      return true;
+    }
+    for (const field of part.querySelectorAll("textarea, input[type=text]")) {
+      if (field.value !== field.defaultValue) {
+        return true;
+      }
+    }
+    for (const option of part.querySelectorAll("option")) {
+      if (option.selected !== option.defaultSelected) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function markStale(part) {
+    if (part.querySelector(":scope > .stale-notice")) {
+      return;
+    }
+    const notice = document.createElement("p");
+    notice.className = "notice stale-notice";
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "link";
+    reload.textContent = "Reload";
+    reload.addEventListener("click", () => location.reload());
+    notice.append("Updated elsewhere. ", reload, " to see the changes; copy anything you are writing first.");
+    part.prepend(notice);
+  }
+
+  // A notice above the page, for the server stopping or the page failing to update.
+  function showNotice(text) {
+    let notice = document.getElementById("live-notice");
+    if (!notice) {
+      notice = document.createElement("p");
+      notice.id = "live-notice";
+      notice.className = "notice live-notice";
+      document.querySelector("main").prepend(notice);
+    }
+    notice.textContent = text;
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      disconnect();
+    } else {
+      connect();
+    }
+  });
+  connect();
 })();

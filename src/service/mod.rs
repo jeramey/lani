@@ -1128,6 +1128,13 @@ impl Service {
         store::list_events(&self.conn, review_id, TIMELINE_EVENTS)
     }
 
+    /// The id of the review's latest event. Every change to a review records an event, so the
+    /// web UI's live updates watch this number (§13.5).
+    pub fn latest_event_id(&self, review_id: i64) -> Result<i64> {
+        store::latest_event_id(&self.conn, review_id)?
+            .ok_or_else(|| Error::NotFound(format!("review {review_id} does not exist")))
+    }
+
     /// The saved idle timeout for the web server.
     pub fn idle_timeout(&self) -> Result<IdleTimeout> {
         let value =

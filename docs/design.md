@@ -1062,8 +1062,10 @@ warning suggesting `lani stop && lani open`. The MCP tool includes the same warn
   - **`lani serve --idle-timeout <value>`** overrides the saved value for that server run only.
   - For the running server, the most recent change wins. The settings page shows the effective
     value and where it came from (saved setting or command-line flag).
-- **Before stopping.** The server sends a final `stopping` message on open SSE connections. Pages
-  then show: *"LANI stopped after 3 h idle. Run `lani open`, or ask Claude to open it again."*
+- **Before stopping.** Whatever stops it, the server sends a final `stopping` message on open
+  live-update streams (§13.5). Pages then show *"LANI stopped after 3h idle. Run lani open, or
+  ask Claude to open it again."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
+  it.
 - **Status.** `lani status` shows the effective timeout and the time remaining.
 
 ### 13.2 Authentication and browser security (R10)
@@ -1143,7 +1145,7 @@ by port.
 | `/login`, `/api/health`, `/api/shutdown`    | §13.1, §13.2. |
 
 The pages are backed by state-changing endpoints. They are plain HTML form posts that redirect
-back to the page (303 See Other); M4 may add htmx fragments for live updates:
+back to the page (303 See Other); live updates then refresh other open pages (§13.5):
 
 - Create an issue (`POST /reviews/{id}/issues`, from a line selection in a code view).
 - Add a comment, on an issue or on the summary.
@@ -1199,14 +1201,41 @@ back to the page (303 See Other); M4 may add htmx fragments for live updates:
 
 ### 13.5 Live updates
 
-- **Polling.** The web server polls `SELECT max(id) FROM event` every 500 ms, but only while at
-  least one SSE client is connected.
-- **Push.** When the value grows, the server reads the new events and pushes a `changed` message,
-  listing issue IDs and whether the summary changed, to the affected reviews' streams.
-- **Refresh.** The page refreshes those parts.
-- **Open editors.** A thread or summary with an open editor is never replaced. It shows an
-  *"updated elsewhere — reload"* notice instead.
-- **Idle timer.** SSE connections do not count as activity (§13.1).
+Review pages (the overview, issue pages and both code views) stay current while Claude sessions
+work on the review.
+
+- **The stream.** Each review page opens `GET /reviews/{id}/events`, a Server-Sent Events stream.
+  While it is open, the server reads the review's latest event id every 500 ms, so it polls only
+  while a page is watching, and only that review. Every change to a review records an event, so
+  the id grows with every change.
+- **Messages.**
+  - `changed` when the id has grown; its SSE id is the new latest event. It is also sent once,
+    with data `update`, when a newer lani is installed over the server's executable.
+  - `stopping` as the server stops (§13.1), and `failed` when the review can no longer be
+    watched, for example after a newer lani upgraded the database (§7.4). Both carry the notice
+    the page shows, and end the stream.
+- **No missed changes.** A page reads the review's latest event id before anything else it
+  shows, and connects with `?after=<id>`. The first poll is immediate, so a change made between
+  rendering and connecting is announced at once. EventSource's own reconnects send
+  `Last-Event-ID`, which takes precedence.
+- **Refresh.** On `changed`, `lani.js` fetches the page again and compares each part marked
+  `data-live` with the HTML the server last sent for it. It does not compare with the page as
+  shown, which the script and the reader change (a line selection, an opened thread). Parts that
+  differ are replaced, and a code view's line selection is restored from the URL afterwards.
+- **Open editors.** A part is never replaced while someone may be writing in it: a field in it
+  has focus or unsaved changes, or an inline editor (`<details class="inline-edit">`) or the
+  new-issue form is open. It shows *"Updated elsewhere. Reload to see the changes; copy anything
+  you are writing first."* instead. Posting the form reloads the page anyway, and conflicting
+  edits are caught by version checks (§11.4).
+- **Hidden pages.** Browsers allow about six HTTP/1.1 connections per host, and every open stream
+  holds one. A page therefore closes its stream while it is hidden, and reconnects with `?after`
+  when it is shown again, so many open LANI tabs cannot starve each other.
+- **Idle timer.** Streams do not count as activity (§13.1). The page fetches that follow a change
+  do, since something did change.
+- **Update banner.** The server records the executable it started from (§12.5). Once a newer lani
+  replaces it, every page shows a banner asking you to run `lani stop`, then `lani open`. Open
+  review pages get the banner through `changed`; the review list and the settings page show it
+  when loaded.
 
 ### 13.6 Syntax highlighting and diffs (R8)
 
@@ -1262,17 +1291,17 @@ Comments and summaries are rendered with **comrak**:
 - **askama** renders the pages on the server. Its templates are compiled into the binary and
   type-checked, with HTML autoescaping on by default. `|safe` is used only for HTML produced by
   comrak or syntect.
-- **htmx 2** and its SSE extension are planned for M4's partial updates. They would be vendored
-  and pinned, running under the CSP with `allowEval: false`, `allowScriptTags: false` and
-  `includeIndicatorStyles: false`. M3 needs no partial updates, so it does not ship htmx.
-- One small vanilla JS file, `static/lani.js`, handles line selection and the editor's
-  *Write/Preview* tabs (M3), and in M4 SSE-driven refresh and editor protection. It has no inline
-  code and sets no inline styles, so it runs under the CSP. The code views load it; other pages
-  don't need it.
+- One small vanilla JS file, `static/lani.js`, handles live updates and editor protection
+  (§13.5), line selection, and the new-issue editor's *Write/Preview* tabs. It has no inline code
+  and sets no inline styles, so it runs under the CSP. Review pages load it; the review list and
+  the settings page don't need it.
+  - htmx 2 with its SSE extension was planned for the partial updates. Swapping server-rendered
+    parts by id needs only a few dozen lines, and editor protection is a check before each swap,
+    so the dependency, and the CSP settings it needs, would not pay for themselves.
 - One hand-written CSS file covers light and dark themes.
 - **No Node toolchain.** `cargo build` is the whole build.
 - **Forms work without JavaScript.** Every action is a plain form post that redirects back, and
-  inline editors are `<details>` elements. Only line selection needs `lani.js`.
+  inline editors are `<details>` elements. Only line selection and live updates need `lani.js`.
 
 ---
 
@@ -1390,12 +1419,13 @@ src/
     code.rs          the Files and Changes views
     actions.rs       form posts
     views.rs         view models and the error page
-    sse.rs           event polling and fan-out (M4)
+    live.rs          live-update streams (§13.5)
     templates/       askama templates (compiled in)
-    static/          lani.js, lani.css (embedded); htmx.min.js and htmx-ext-sse.js in M4
+    static/          lani.js, lani.css (embedded)
   highlight.rs       syntect + two-face, per-line output, LRU cache
   markdown.rs        comrak configuration
   daemon.rs          server.json, lock, detach/spawn, health check, browser launch, idle timer
+  executable.rs      noticing a reinstall over the running binary (§12.5, §13.5)
 tests/               integration tests (temp git repos, MCP client, HTTP); browser.rs is opt-in
 clippy.toml          words doc comments may use without backticks, such as WebDriver
 ```
@@ -1516,9 +1546,17 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   cleared by the human's reply or status change, the migration from version 2 keeping data and
   event ids, two MCP sessions taking turns, and `lani wait`'s three exits in a real process.
 - **Idle timer:** tested with an injected clock.
-  - Requests reset it; SSE connections don't.
+  - Requests reset it; health checks and live-update streams don't.
   - `never` disables it.
-  - The `stopping` message is sent.
+- **Live updates (§13.5):**
+  - Over the router: review pages carry their stream. A change is announced, including one made
+    between rendering and connecting, and `Last-Event-ID` takes precedence over `after`. Stopping
+    sends `stopping` and ends the stream, and a database a newer lani upgraded sends `failed`.
+    Replacing the executable announces `update`, and every page then shows the banner.
+  - In Safari (opt-in, like the other browser tests): changes appear in place without a reload.
+    A part with a draft is not replaced and shows the out-of-date notice, the draft intact. A line
+    selection survives its table being replaced, and the page shows the stop notice. Turning off
+    editor protection, or the selection restore, fails the test.
 - **Process:** the built binary.
   - `open --no-browser --print-url` starts a server, and a second call reuses it.
   - `stop` shuts it down.
@@ -1553,7 +1591,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
      opens a new issue.
    - Exit criteria: you can file your own issues from the file and diff views.
 4. **M4 — Live updates and polish.**
-   - Scope: SSE, editor protection, benchmarks against §16, README.
+   - Scope: SSE, editor protection, the web server's update banner, benchmarks against §16,
+     README.
 
 ---
 

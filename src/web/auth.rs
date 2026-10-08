@@ -69,10 +69,21 @@ async fn check(state: &AppState, request: Request, next: Next) -> Response {
         )
         .into_response();
     }
-    if request.uri().path() != "/api/health" {
+    if counts_as_activity(request.uri().path()) {
         state.record_activity();
     }
     next.run(request).await
+}
+
+/// Whether a request to `path` keeps the server from stopping when idle (§13.1). Health checks
+/// don't, and neither do live-update streams, so a forgotten browser tab cannot keep the server
+/// running forever.
+fn counts_as_activity(path: &str) -> bool {
+    let live_updates = path
+        .strip_prefix("/reviews/")
+        .and_then(|rest| rest.strip_suffix("/events"))
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()));
+    path != "/api/health" && !live_updates
 }
 
 /// Whether the `Host` header names this server on the loopback interface.
@@ -234,6 +245,18 @@ struct SignInPage<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_checks_and_live_updates_are_not_activity() {
+        assert!(!counts_as_activity("/api/health"));
+        assert!(!counts_as_activity("/reviews/12/events"));
+        assert!(counts_as_activity("/reviews/12"));
+        assert!(
+            counts_as_activity("/reviews/12/files/events"),
+            "a file named events"
+        );
+        assert!(counts_as_activity("/reviews//events"));
+    }
 
     #[test]
     fn hosts() {

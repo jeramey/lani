@@ -7,7 +7,6 @@
 pub mod render;
 
 use std::fmt::Write as _;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -26,6 +25,7 @@ use serde::Deserialize;
 use crate::base::BaseMode;
 use crate::daemon;
 use crate::error::Error;
+use crate::executable::Executable;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use crate::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use crate::text;
@@ -457,49 +457,6 @@ const UPDATE_NOTICE: &str = "Note: lani has been reinstalled since this session'
 started, so this session is still running the older LANI. Tell the human, and ask them to \
 reconnect LANI in Claude Code (run /mcp, select lani, choose Reconnect); that starts the installed \
 version without restarting the session.";
-
-/// The `lani` executable a process started from, to notice when it is replaced on disk, as
-/// `cargo install` does (§12.5).
-#[derive(Clone, Debug)]
-pub struct Executable {
-    path: PathBuf,
-    identity: FileIdentity,
-}
-
-/// What changes when a file is replaced or rewritten.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct FileIdentity {
-    device: u64,
-    inode: u64,
-    size: u64,
-    modified: (i64, i64),
-}
-
-impl FileIdentity {
-    fn of(path: &Path) -> std::io::Result<Self> {
-        let metadata = std::fs::metadata(path)?;
-        Ok(Self {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            size: metadata.size(),
-            modified: (metadata.mtime(), metadata.mtime_nsec()),
-        })
-    }
-}
-
-impl Executable {
-    /// This process's executable, as it is on disk now. Call it at startup.
-    pub fn current() -> std::io::Result<Self> {
-        let path = std::env::current_exe()?;
-        let identity = FileIdentity::of(&path)?;
-        Ok(Self { path, identity })
-    }
-
-    /// Whether the file this process started from has been replaced, rewritten or removed.
-    fn replaced(&self) -> bool {
-        FileIdentity::of(&self.path).ok().as_ref() != Some(&self.identity)
-    }
-}
 
 #[derive(Clone)]
 pub struct LaniServer {

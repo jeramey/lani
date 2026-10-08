@@ -469,3 +469,23 @@ form.new-issue .preview {
 .questions ul { margin: 0; padding: 0; list-style: none; }
 .questions li { padding: 3px 0; }
 .needs-you-notice .badge { margin-right: 4px; }
+
+/* Live updates (§13.5) */
+#update-banner .banner {
+  max-width: 1000px;
+  margin: 12px auto 0;
+  padding: 8px 12px;
+  background: var(--notice-bg);
+  border: 1px solid var(--notice-border);
+  border-radius: var(--radius);
+}
+.live-notice { margin: 0 0 16px; font-weight: 600; }
+.stale-notice { margin: 8px 0; font-size: 14px; }
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link);
+  font-weight: inherit;
+  text-decoration: underline;
+}

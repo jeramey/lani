@@ -652,6 +652,16 @@ pub fn insert_event(conn: &Connection, event: &NewEvent<'_>) -> Result<()> {
 }
 
 /// A review's most recent events, newest first.
+/// The id of the review's latest event; `None` if the review does not exist, since creating a
+/// review records its first event.
+pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>> {
+    Ok(conn.query_row(
+        "SELECT max(id) FROM event WHERE review_id = ?1",
+        [review_id],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<Event>> {
     let mut statement = conn.prepare(
         "SELECT id, review_id, issue_id, comment_id, kind, actor, turn_to, created_at FROM event

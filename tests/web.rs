@@ -5,14 +5,16 @@ mod common;
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, BodyDataStream};
 use axum::http::{Request, StatusCode, header};
 use common::{TestHome, TestRepo, numbered};
+use futures_util::StreamExt as _;
 use lani::base::BaseMode;
+use lani::executable::Executable;
 use lani::model::{Actor, IssueStatus, Severity, Side};
 use lani::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
 use lani::settings::IdleTimeout;
-use lani::web::{self, AppState, Instance, TimeoutSource};
+use lani::web::{self, AppState, Instance, Stop, TimeoutSource};
 use tower::ServiceExt as _;
 
 const PORT: u16 = 4242;
@@ -33,6 +35,11 @@ struct Fixture {
 
 /// A review of `feature` with one issue and one summary comment, served by a router.
 fn fixture() -> Fixture {
+    fixture_with(None)
+}
+
+/// Like [`fixture`], for a server started from `executable`.
+fn fixture_with(executable: Option<Executable>) -> Fixture {
     let home = TestHome::new();
     let repo = TestRepo::new(&[("src/lib.rs", &numbered(20))]);
     repo.switch_new("feature");
@@ -94,8 +101,11 @@ fn fixture() -> Fixture {
             started_at: "2026-10-07T12:00:00.000Z".to_string(),
             home: home.path.clone(),
         },
-        IdleTimeout::After(Duration::from_secs(3 * 3600)),
-        TimeoutSource::Saved,
+        executable,
+        (
+            IdleTimeout::After(Duration::from_secs(3 * 3600)),
+            TimeoutSource::Saved,
+        ),
     );
     Fixture {
         app: web::router(state.clone()),
@@ -1144,7 +1154,9 @@ async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
     assert!(page.contains("aria-current=\"page\">Changes</a>"));
     assert!(page.contains("1 file · +1 −1"), "{page}");
     let anchor = "file-7372632f6c69622e7273"; // "src/lib.rs" in hex
-    assert!(page.contains(&format!("<section class=\"diff-file\" id=\"{anchor}\">")));
+    assert!(page.contains(&format!(
+        "<section class=\"diff-file\" id=\"{anchor}\" data-live>"
+    )));
     let row = |id: &str| page.find(&format!("id=\"{anchor}-{id}\"")).unwrap();
     let thread = |id: i64| page.find(&format!("id=\"issue-{id}\"")).unwrap();
     // The head-side issue follows the added line, the base-side issue the removed line.
@@ -1756,4 +1768,195 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     assert!(settings.contains("value=\"3\""), "{settings}");
     let (status, _, _) = send(&f.app, post("/settings/round-limit", "round_limit=0")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ── live updates (M4) ────────────────────────────────────────────────────────────────────────
+
+/// A live-update stream, read one event at a time.
+struct EventStream(BodyDataStream);
+
+impl EventStream {
+    async fn open(app: &Router, request: Request<Body>) -> Self {
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+        Self(response.into_body().into_data_stream())
+    }
+
+    /// The next event, or `None` once the stream has ended; `Err` if none arrives `within`.
+    async fn next_within(
+        &mut self,
+        within: Duration,
+    ) -> Result<Option<String>, tokio::time::error::Elapsed> {
+        tokio::time::timeout(within, async {
+            loop {
+                let chunk = self.0.next().await?.unwrap();
+                let text = String::from_utf8(chunk.to_vec()).unwrap();
+                // Keep-alive comments start with a colon.
+                if !text.starts_with(':') {
+                    return Some(text);
+                }
+            }
+        })
+        .await
+    }
+
+    async fn next(&mut self) -> Option<String> {
+        self.next_within(Duration::from_secs(5))
+            .await
+            .expect("an event within 5 s")
+    }
+}
+
+/// The latest event a review page was rendered with.
+fn events_after(page: &str) -> i64 {
+    let start = page.find("data-after=\"").unwrap() + "data-after=\"".len();
+    page[start..].split('"').next().unwrap().parse().unwrap()
+}
+
+/// An event's `id:` field.
+fn event_id(event: &str) -> i64 {
+    event
+        .lines()
+        .find_map(|line| line.strip_prefix("id: "))
+        .unwrap_or_else(|| panic!("no id: {event}"))
+        .parse()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
+    let f = fixture();
+    let review_id = f.review_id;
+    let review = format!("/reviews/{review_id}");
+    for path in [
+        review.clone(),
+        format!("{review}/issues/{}", f.issue_id),
+        format!("{review}/files/"),
+        format!("{review}/files/src/lib.rs"),
+        format!("{review}/changes"),
+    ] {
+        let (status, _, page) = send(&f.app, get(&path)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(
+            page.contains(&format!("data-events=\"{review}/events\""))
+                && page.contains("<script src=\"/static/lani.js\" defer></script>")
+                && page.contains("id=\"review-head\" data-live"),
+            "{path}: {page}"
+        );
+    }
+    let (status, _, _) = send(&f.app, get("/reviews/999/events")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    let after = events_after(&page);
+    // A reconnecting browser's Last-Event-ID wins over the `after` the page was rendered with;
+    // nothing has changed since either.
+    let mut request = get(&format!("{review}/events?after=0"));
+    request
+        .headers_mut()
+        .insert("last-event-id", after.to_string().parse().unwrap());
+    let mut stream = EventStream::open(&f.app, request).await;
+    assert!(
+        stream
+            .next_within(Duration::from_millis(1200))
+            .await
+            .is_err(),
+        "no change, no event"
+    );
+
+    f.state
+        .call(move |service| {
+            service.add_comment(
+                Actor::Reviewer,
+                CommentTarget::Summary(review_id),
+                "Another pass.",
+            )
+        })
+        .await
+        .unwrap();
+    let event = stream.next().await.unwrap();
+    assert!(
+        event.starts_with("event: changed\n") && event.contains("data: events\n"),
+        "{event}"
+    );
+    let changed = event_id(&event);
+    assert!(changed > after, "{event}");
+    // A page rendered before that change hears about it as soon as it connects.
+    let mut late = EventStream::open(&f.app, get(&format!("{review}/events?after={after}"))).await;
+    let event = late.next().await.unwrap();
+    assert_eq!(event_id(&event), changed, "{event}");
+
+    f.state.request_shutdown(Stop::Requested);
+    for stream in [&mut stream, &mut late] {
+        let event = stream.next().await.unwrap();
+        assert!(
+            event.starts_with("event: stopping\n")
+                && event.contains(
+                    "data: LANI was stopped. Run lani open, or ask Claude to open it again."
+                ),
+            "{event}"
+        );
+        assert_eq!(stream.next().await, None, "the stream ends");
+    }
+}
+
+#[tokio::test]
+async fn a_server_older_than_the_installed_lani_says_so() {
+    let bin = tempfile::tempdir().unwrap();
+    let installed = bin.path().join("lani");
+    std::fs::write(&installed, "old").unwrap();
+    let f = fixture_with(Some(Executable::at(&installed).unwrap()));
+    let banner = "A newer lani has been installed since this web server started";
+    let review = format!("/reviews/{}", f.review_id);
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert!(!page.contains(banner), "{page}");
+    let mut stream = EventStream::open(
+        &f.app,
+        get(&format!("{review}/events?after={}", events_after(&page))),
+    )
+    .await;
+
+    // Replaced the way `cargo install` replaces the installed binary.
+    std::fs::write(bin.path().join("lani.new"), "new").unwrap();
+    std::fs::rename(bin.path().join("lani.new"), &installed).unwrap();
+    let event = stream.next().await.unwrap();
+    assert!(
+        event.starts_with("event: changed\n") && event.contains("data: update\n"),
+        "{event}"
+    );
+    for path in [
+        "/".to_string(),
+        "/settings".to_string(),
+        review.clone(),
+        format!("{review}/issues/{}", f.issue_id),
+        format!("{review}/files/"),
+        format!("{review}/files/src/lib.rs"),
+        format!("{review}/changes"),
+    ] {
+        let (_, _, page) = send(&f.app, get(&path)).await;
+        assert!(
+            page.contains(banner) && page.contains("run <code>lani stop</code>"),
+            "{path}: {page}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_live_update_stream_ends_once_a_newer_lani_upgrades_the_database() {
+    let f = fixture();
+    let mut stream =
+        EventStream::open(&f.app, get(&format!("/reviews/{}/events", f.review_id))).await;
+    let conn = rusqlite::Connection::open(f.home.db_path()).unwrap();
+    conn.pragma_update(None, "user_version", 99).unwrap();
+    let event = stream.next().await.unwrap();
+    assert!(
+        event.starts_with("event: failed\n")
+            && event.contains("data: This web server is out of date: a newer lani"),
+        "{event}"
+    );
+    assert_eq!(stream.next().await, None, "the stream ends");
 }

@@ -261,6 +261,20 @@ pub struct ReviewHeader {
     pub turn: Option<TurnView>,
     /// Issues with a question for you, as links.
     pub questions: Vec<QuestionLink>,
+    /// The review's live-update stream, and the latest event the page reflects (§13.5).
+    pub events_url: String,
+    pub events_after: i64,
+    /// Whether a newer lani has been installed over this server's executable.
+    pub outdated: bool,
+}
+
+/// What a review page needs for live updates (§13.5).
+pub struct Live {
+    /// The review's latest event, read before anything else on the page, so that a change the
+    /// page might have missed always has a later id.
+    pub events_after: i64,
+    /// Whether to show the update banner.
+    pub outdated: bool,
 }
 
 /// Whose turn a review is, as review pages show it.
@@ -347,7 +361,7 @@ pub fn question_notice(issue: &crate::model::Issue) -> Option<String> {
 }
 
 #[must_use]
-pub fn review_header(view: &ReviewView) -> ReviewHeader {
+pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
     let review = &view.review;
     let git = view.git.as_ref();
     let head = match git.map(|git| git.head_sha.as_deref()) {
@@ -403,6 +417,9 @@ pub fn review_header(view: &ReviewView) -> ReviewHeader {
         } else {
             Vec::new()
         },
+        events_url: format!("{}/events", review_url(review.id)),
+        events_after: live.events_after,
+        outdated: live.outdated,
     }
 }
 
@@ -948,14 +965,17 @@ impl From<Error> for PageError {
             }
         };
         let message = match &error {
-            Error::Outdated(message) => format!(
-                "This web server is out of date: {message}. Restart it: run lani stop, then lani \
-                 open."
-            ),
+            Error::Outdated(message) => outdated_server_message(message),
             _ => error.to_string(),
         };
         Self::new(status, title, &message)
     }
+}
+
+/// What the web UI shows once a newer lani has upgraded the database (§7.4).
+#[must_use]
+pub fn outdated_server_message(message: &str) -> String {
+    format!("This web server is out of date: {message}. Restart it: run lani stop, then lani open.")
 }
 
 impl From<askama::Error> for PageError {

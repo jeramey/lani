@@ -2,11 +2,12 @@
 //!
 //! Pages are rendered on the server and every action is a plain form POST that redirects back
 //! (or re-renders with an error). One small script, `static/lani.js`, adds line selection and
-//! the new-issue form to the code views.
+//! the new-issue form to the code views, and keeps review pages up to date (§13.5).
 
 mod actions;
 mod auth;
 mod code;
+mod live;
 mod pages;
 mod views;
 
@@ -20,6 +21,7 @@ use tokio::sync::watch;
 
 use crate::daemon::{self, ServerFile};
 use crate::error::{Error, Result};
+use crate::executable::Executable;
 use crate::service::Service;
 use crate::settings::IdleTimeout;
 
@@ -72,6 +74,26 @@ impl IdleState {
     }
 }
 
+/// Why the server is stopping, for the notice open pages show (§13.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// The idle timeout passed.
+    Idle(IdleTimeout),
+    /// `lani stop`, or a signal.
+    Requested,
+}
+
+impl Stop {
+    #[must_use]
+    pub fn message(self) -> String {
+        let reopen = "Run lani open, or ask Claude to open it again.";
+        match self {
+            Self::Idle(timeout) => format!("LANI stopped after {timeout} idle. {reopen}"),
+            Self::Requested => format!("LANI was stopped. {reopen}"),
+        }
+    }
+}
+
 /// Fixed facts about this server instance.
 #[derive(Clone, Debug)]
 pub struct Instance {
@@ -92,8 +114,11 @@ pub struct AppState {
 struct Inner {
     service: Mutex<Service>,
     instance: Instance,
+    /// The executable this server started from; `None` if it could not be found, in which case
+    /// pages never show the update banner (§13.5).
+    executable: Option<Executable>,
     idle: Mutex<IdleState>,
-    shutdown: watch::Sender<bool>,
+    shutdown: watch::Sender<Option<Stop>>,
 }
 
 impl AppState {
@@ -101,14 +126,15 @@ impl AppState {
     pub fn new(
         service: Service,
         instance: Instance,
-        timeout: IdleTimeout,
-        source: TimeoutSource,
+        executable: Option<Executable>,
+        (timeout, source): (IdleTimeout, TimeoutSource),
     ) -> Self {
-        let (shutdown, _) = watch::channel(false);
+        let (shutdown, _) = watch::channel(None);
         Self {
             inner: Arc::new(Inner {
                 service: Mutex::new(service),
                 instance,
+                executable,
                 idle: Mutex::new(IdleState {
                     timeout,
                     source,
@@ -117,6 +143,16 @@ impl AppState {
                 shutdown,
             }),
         }
+    }
+
+    /// Whether a newer lani has been installed over the executable this server started from, so
+    /// pages show the update banner (§13.5).
+    #[must_use]
+    pub fn outdated(&self) -> bool {
+        self.inner
+            .executable
+            .as_ref()
+            .is_some_and(Executable::replaced)
     }
 
     #[must_use]
@@ -167,14 +203,25 @@ impl AppState {
         idle.source = source;
     }
 
-    pub fn request_shutdown(&self) {
-        self.inner.shutdown.send_replace(true);
+    /// Stop the server; the first reason given is the one open pages are told.
+    pub fn request_shutdown(&self, stop: Stop) {
+        self.inner.shutdown.send_if_modified(|current| {
+            let first = current.is_none();
+            if first {
+                *current = Some(stop);
+            }
+            first
+        });
     }
 
-    /// Resolves once a shutdown has been requested.
-    pub async fn shutdown_requested(&self) {
+    /// Resolves with the reason once a shutdown has been requested.
+    pub async fn shutdown_requested(&self) -> Stop {
         let mut receiver = self.inner.shutdown.subscribe();
-        let _ = receiver.wait_for(|requested| *requested).await;
+        let Ok(stop) = receiver.wait_for(Option::is_some).await else {
+            // The sender lives as long as this state, so it cannot have been dropped.
+            return Stop::Requested;
+        };
+        stop.unwrap_or(Stop::Requested)
     }
 }
 
@@ -186,6 +233,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reviews/{review_id}/issues/{issue_id}", get(pages::issue))
         .route("/issues/{issue_id}", get(pages::issue_redirect))
         .route("/reviews/{review_id}/changes", get(code::changes))
+        .route("/reviews/{review_id}/events", get(live::events))
         .route("/reviews/{review_id}/files", get(code::files_bare))
         .route("/reviews/{review_id}/files/", get(code::files_root))
         .route("/reviews/{review_id}/files/{*path}", get(code::files))
@@ -243,6 +291,12 @@ pub struct ServeOptions {
 
 /// Run the web server until it is stopped. Exits quietly if another server is already running.
 pub fn serve(options: &ServeOptions) -> Result<()> {
+    // Taken first, so that any reinstall after this server started is noticed (§13.5).
+    let executable = Executable::current()
+        .inspect_err(|error| {
+            eprintln!("cannot find this lani executable, so a reinstall goes unnoticed: {error}");
+        })
+        .ok();
     daemon::ensure_dirs(&options.home)?;
     let Some(_lock) = daemon::ServerLock::try_acquire(&options.home)? else {
         eprintln!("A LANI server is already running; use `lani open` to reach it.");
@@ -257,14 +311,14 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    runtime.block_on(run(options, service, timeout, source))
+    runtime.block_on(run(options, service, executable, (timeout, source)))
 }
 
 async fn run(
     options: &ServeOptions,
     service: Service,
-    timeout: IdleTimeout,
-    source: TimeoutSource,
+    executable: Option<Executable>,
+    (timeout, source): (IdleTimeout, TimeoutSource),
 ) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port.unwrap_or(0))).await?;
     let port = listener.local_addr()?.port();
@@ -284,7 +338,7 @@ async fn run(
         version: daemon::VERSION.to_string(),
         started_at: instance.started_at.clone(),
     };
-    let state = AppState::new(service, instance, timeout, source);
+    let state = AppState::new(service, instance, executable, (timeout, source));
     server_file.write(&options.home)?;
     eprintln!(
         "LANI server listening on 127.0.0.1:{port} (pid {})",
@@ -297,7 +351,9 @@ async fn run(
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown({
             let state = state.clone();
-            async move { state.shutdown_requested().await }
+            async move {
+                state.shutdown_requested().await;
+            }
         })
         .await;
     ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
@@ -315,7 +371,7 @@ async fn housekeeping(state: AppState) {
         let idle = state.idle();
         if idle.expired(Instant::now()) {
             eprintln!("LANI server idle for {}; stopping", idle.timeout);
-            state.request_shutdown();
+            state.request_shutdown(Stop::Idle(idle.timeout));
             return;
         }
     }
@@ -340,7 +396,7 @@ async fn handle_signals(state: AppState) {
             _ = hangup.recv() => {}
         }
     }
-    state.request_shutdown();
+    state.request_shutdown(Stop::Requested);
 }
 
 #[cfg(test)]

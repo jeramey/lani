@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings · LANI{% endblock %}
+{% block banner %}{% if outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 <div class="page-head"><h1>Settings</h1></div>
 

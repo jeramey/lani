@@ -7,6 +7,7 @@ pub mod anchor;
 pub mod base;
 pub mod daemon;
 pub mod error;
+pub mod executable;
 pub mod git;
 pub mod highlight;
 pub mod markdown;

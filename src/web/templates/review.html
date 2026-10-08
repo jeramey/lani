@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ review.title }} · LANI{% endblock %}
+{% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
+{% block banner %}{% if review.outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 
-<div class="toolbar">
+<div class="toolbar" id="toolbar" data-live>
   {% if editable %}
   <details class="inline-edit">
     <summary>Rename</summary>
@@ -52,7 +54,7 @@
   {% endif %}
 </div>
 
-<section id="summary" class="panel">
+<section id="summary" class="panel" data-live>
   <h2>Summary</h2>
   {% if let Some(html) = summary_html %}
   <div class="markdown">{{ html|safe }}</div>
@@ -74,7 +76,7 @@
   {% endif %}
 </section>
 
-<section id="issues" class="panel">
+<section id="issues" class="panel" data-live>
   <div class="section-head">
     <h2>Issues</h2>
     <nav class="filters" aria-label="Filter issues">
@@ -102,7 +104,7 @@
   {% endif %}
 </section>
 
-<section id="conversation" class="panel">
+<section id="conversation" class="panel" data-live>
   <h2>Conversation</h2>
   {% if summary_comments.is_empty() %}<p class="empty">No comments on the summary yet.</p>{% endif %}
   {% for comment in summary_comments %}{% include "comment.html" %}{% endfor %}
@@ -115,7 +117,7 @@
   {% endif %}
 </section>
 
-<section id="activity" class="panel">
+<section id="activity" class="panel" data-live>
   <h2>Activity</h2>
   <ol class="timeline">
     {% for event in events %}
