@@ -1096,3 +1096,95 @@ async fn file_paths_are_encoded_in_links_and_decoded_in_requests() {
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Markdown"), "{page}");
 }
+
+#[tokio::test]
+async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
+    let f = fixture();
+    let head = f.repo.head();
+    let (review_id, repo_path) = (f.review_id, f.repo.path.clone());
+    // A base-side issue on the removed line, and a head-side issue outside the hunk.
+    f.state
+        .call(move |service| {
+            let issue = |side, line, text| CreateIssue {
+                review_id,
+                author: Actor::Reviewer,
+                body: "Another.",
+                path: "src/lib.rs",
+                side,
+                start_line: line,
+                end_line: line,
+                start_line_text: Some(text),
+                commit: &head,
+                worktree_path: if side == Side::Head {
+                    Some(&repo_path)
+                } else {
+                    None
+                },
+            };
+            service.create_issue(&issue(Side::Base, 5, "line 5"))?;
+            service.create_issue(&issue(Side::Head, 15, "line 15"))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let url = format!("/reviews/{}/changes", f.review_id);
+    let (status, _, page) = send(&f.app, get(&url)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("aria-current=\"page\">Changes</a>"));
+    assert!(page.contains("1 file · +1 −1"), "{page}");
+    let anchor = "file-7372632f6c69622e7273"; // "src/lib.rs" in hex
+    assert!(page.contains(&format!("<section class=\"diff-file\" id=\"{anchor}\">")));
+    let row = |id: &str| page.find(&format!("id=\"{anchor}-{id}\"")).unwrap();
+    let thread = |id: i64| page.find(&format!("id=\"issue-{id}\"")).unwrap();
+    // The head-side issue follows the added line, the base-side issue the removed line.
+    assert!(
+        row("H5") < thread(f.issue_id) && thread(f.issue_id) < row("H6"),
+        "{page}"
+    );
+    let base_issue = f.issue_id + 1;
+    assert!(
+        row("B5") < thread(base_issue) && thread(base_issue) < row("H5"),
+        "{page}"
+    );
+    // Line 15 is outside the hunk, so its issue is listed above the diff.
+    let outside = thread(f.issue_id + 2);
+    assert!(page.find("not on the lines below").unwrap() < outside && outside < row("H2"));
+    assert!(page.contains("data-merge-base=\""), "{page}");
+}
+
+#[tokio::test]
+async fn large_binary_and_renamed_files_are_described_and_large_diffs_load_on_request() {
+    let f = fixture();
+    f.repo.write("big.txt", &numbered(1_600));
+    f.repo.write("blob.bin", "a\0b\n");
+    f.repo.git(&["mv", "src/lib.rs", "src/core.rs"]);
+    f.repo.commit_all("big, binary and renamed");
+    let url = format!("/reviews/{}/changes", f.review_id);
+    let (_, _, page) = send(&f.app, get(&url)).await;
+    assert!(page.contains("This diff changes 1600 lines"), "{page}");
+    let expand = format!("{url}?expand=big.txt#file-");
+    assert!(page.contains(&expand), "{page}");
+    assert!(page.contains("Binary file, not shown."), "{page}");
+    assert!(page.contains("src/lib.rs → src/core.rs"), "{page}");
+
+    let (status, _, page) = send(&f.app, get(&format!("{url}?expand=big.txt"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!page.contains("This diff changes 1600 lines"), "now loaded");
+    assert!(page.contains("-H1600\""), "every added line is shown");
+}
+
+#[tokio::test]
+async fn a_whole_tree_review_has_no_changes_view() {
+    let f = fixture();
+    let review_id = f.review_id;
+    f.state
+        .call(move |service| service.change_base(Actor::Human, review_id, &BaseMode::None))
+        .await
+        .unwrap();
+    let (status, _, page) = send(&f.app, get(&format!("/reviews/{review_id}/changes"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(page.contains("whole-tree review"), "{page}");
+    let (_, _, page) = send(&f.app, get(&format!("/reviews/{review_id}"))).await;
+    assert!(!page.contains(">Changes</a>"), "no Changes tab: {page}");
+}

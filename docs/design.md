@@ -373,6 +373,7 @@ Commands used (all read-only):
 | Directory listing           | `git ls-tree -z --long --full-tree <commit> -- <dir>/` |
 | One file or directory       | `git ls-tree -z --long --full-tree <commit> -- <path>` |
 | File content                | `git cat-file blob <blob-sha>` |
+| Blobs of a page's diffs     | `git cat-file --batch-check`, then `--batch`, one call each per page |
 
 Rules for every invocation:
 
@@ -1054,9 +1055,12 @@ redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inli
   - Files with a NUL byte in the first 8 KiB are shown as "binary file".
   - Highlighted HTML is large, about 0.8 KB per line, because each line re-opens its full scope
     stack. The M4 benchmarks decide whether that needs trimming.
-  - Diffs of files with more than 1,500 changed lines are collapsed behind a "Load diff" button.
+  - Diffs of files with more than 1,500 changed lines are collapsed behind a "Load diff" link,
+    which reloads the Changes view with `?expand=<path>`.
 - **Diffs.** `git diff` output (§8) is parsed into files → hunks → rows. Each row's HTML comes from
-  the highlighted old or new blob, by line number. Diffs are unified only in v1.
+  the highlighted old or new blob, by line number. Diffs are unified only in v1. A page runs one
+  `git diff` per changed file, plus one `cat-file --batch-check` for every blob's size and one
+  `cat-file --batch` for the blobs it shows, rather than several processes per file.
 
 ### 13.7 Markdown
 

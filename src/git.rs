@@ -373,6 +373,40 @@ impl Git {
         parse_tree_entries(&stdout_text(&run(command, &[0])?)?)
     }
 
+    /// The sizes of objects in bytes, without reading them, in one `cat-file --batch-check`.
+    pub fn object_sizes(&self, objects: &[&str]) -> Result<HashMap<String, u64>> {
+        if objects.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut command = self.command();
+        command.args(["cat-file", "--batch-check"]);
+        let output = run_with_input(command, batch_input(objects), &[0])?;
+        stdout_text(&output)?
+            .lines()
+            .map(|line| {
+                let invalid = || Error::Git(format!("unexpected cat-file output {line:?}"));
+                match line.split(' ').collect::<Vec<_>>()[..] {
+                    [object, _kind, size] => {
+                        Ok((object.to_string(), size.parse().map_err(|_| invalid())?))
+                    }
+                    [object, "missing"] => Err(Error::Git(format!("object {object} is missing"))),
+                    _ => Err(invalid()),
+                }
+            })
+            .collect()
+    }
+
+    /// The contents of blobs, in one `cat-file --batch`.
+    pub fn read_blobs(&self, objects: &[&str]) -> Result<HashMap<String, Vec<u8>>> {
+        if objects.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut command = self.command();
+        command.args(["cat-file", "--batch"]);
+        let output = run_with_input(command, batch_input(objects), &[0])?;
+        parse_batch(&output.stdout)
+    }
+
     /// The content of a blob.
     pub fn read_blob(&self, object: &str) -> Result<Vec<u8>> {
         let mut command = self.command();
@@ -594,11 +628,42 @@ fn git_command() -> Command {
 }
 
 /// Run `command`, accepting only the listed exit codes.
-fn run(mut command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
+fn run(command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
+    run_with_input(command, Vec::new(), accepted_exit_codes)
+}
+
+/// Run `command` with `input` on its stdin (nothing when empty), accepting only the listed exit
+/// codes.
+fn run_with_input(
+    mut command: Command,
+    input: Vec<u8>,
+    accepted_exit_codes: &[i32],
+) -> Result<Output> {
     require_supported_git()?;
-    let output = command
-        .output()
-        .map_err(|error| Error::Git(format!("could not run git: {error}")))?;
+    let could_not_run = |error: std::io::Error| Error::Git(format!("could not run git: {error}"));
+    let output = if input.is_empty() {
+        command.output().map_err(could_not_run)?
+    } else {
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(could_not_run)?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Git("git's stdin was not captured".to_string()))?;
+        // Write from another thread: git answers before it has read all of its input, and once
+        // its output pipe is full it waits for us to read, so writing everything first could
+        // block both processes. A write error means git exited early; its status says why.
+        let writer = std::thread::spawn(move || {
+            use std::io::Write as _;
+            let _ = stdin.write_all(&input);
+        });
+        let output = child.wait_with_output().map_err(could_not_run)?;
+        let _ = writer.join();
+        output
+    };
     match output.status.code() {
         Some(code) if accepted_exit_codes.contains(&code) => Ok(output),
         _ => {
@@ -799,6 +864,43 @@ fn parse_path_changes(text: &str) -> Result<HashMap<String, PathChange>> {
         changes.insert(source.to_string(), change);
     }
     Ok(changes)
+}
+
+/// One object name per line, for `cat-file --batch` and `--batch-check`.
+fn batch_input(objects: &[&str]) -> Vec<u8> {
+    let mut input = objects.join("\n").into_bytes();
+    input.push(b'\n');
+    input
+}
+
+/// Parse `git cat-file --batch` output: for each object a `<sha> <type> <size>` line, then
+/// exactly `size` bytes of content and a newline.
+fn parse_batch(mut output: &[u8]) -> Result<HashMap<String, Vec<u8>>> {
+    let truncated = || Error::Git("cat-file output ended early".to_string());
+    let mut blobs = HashMap::new();
+    while !output.is_empty() {
+        let end = output
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .ok_or_else(truncated)?;
+        let header = String::from_utf8_lossy(&output[..end]).into_owned();
+        output = &output[end + 1..];
+        let invalid = || Error::Git(format!("unexpected cat-file output {header:?}"));
+        let (object, size) = match header.split(' ').collect::<Vec<_>>()[..] {
+            [object, _kind, size] => (
+                object.to_string(),
+                size.parse::<usize>().map_err(|_| invalid())?,
+            ),
+            [object, "missing"] => {
+                return Err(Error::Git(format!("object {object} is missing")));
+            }
+            _ => return Err(invalid()),
+        };
+        let content = output.get(..size).ok_or_else(truncated)?;
+        blobs.insert(object, content.to_vec());
+        output = output.get(size + 1..).ok_or_else(truncated)?;
+    }
+    Ok(blobs)
 }
 
 /// Parse `git ls-tree -z --long` output: `<mode> SP <type> SP <object> SP+ <size> TAB <path>`.
@@ -1031,6 +1133,17 @@ mod tests {
         check_until_passed(&passed, passing).unwrap();
         check_until_passed(&passed, failing).unwrap();
         assert_eq!(checks.get(), 3, "a passed check does not run again");
+    }
+
+    #[test]
+    fn batch_output_is_split_by_sizes_not_lines() {
+        let output = b"aaa blob 6\nline\n\n\nbbb blob 0\n\nccc blob 3\nx\0y\n";
+        let blobs = parse_batch(output).unwrap();
+        assert_eq!(blobs["aaa"], b"line\n\n");
+        assert_eq!(blobs["bbb"], b"");
+        assert_eq!(blobs["ccc"], b"x\0y");
+        assert!(parse_batch(b"aaa blob 10\nshort\n").is_err());
+        assert!(parse_batch(b"aaa missing\n").is_err());
     }
 
     #[test]

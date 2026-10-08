@@ -6,7 +6,10 @@
 
 mod code;
 
-pub use code::{DirectoryEntry, FileContent, MAX_DISPLAY_BYTES, PathContent, PathView};
+pub use code::{
+    ChangedFile, ChangesView, DirectoryEntry, FileContent, FileDiff, FileText, MAX_DISPLAY_BYTES,
+    MAX_EXPANDED_CHANGES, PathContent, PathView,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

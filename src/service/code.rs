@@ -1,12 +1,12 @@
 //! What the web UI's code views show (docs/design.md §13.3): a directory or a file at the review's
 //! head, each with the review's issues placed in the current code.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{Placer, ReviewView, Service, is_in_file, repo_missing};
 use crate::anchor;
 use crate::error::{Error, Result};
-use crate::git::{EntryKind, Git, TreeEntry};
+use crate::git::{DiffHunk, EntryKind, FileChange, FileVersion, Git, RowKind, TreeEntry};
 use crate::model::{Issue, IssueStatus, short_ref, short_sha};
 use crate::service::{IssueView, Location};
 use crate::store;
@@ -215,4 +215,266 @@ fn read_content(git: &Git, entry: &TreeEntry) -> Result<FileContent> {
             }
         }
     })
+}
+
+/// Diffs with more changed lines than this are collapsed until asked for.
+pub const MAX_EXPANDED_CHANGES: u32 = 1_500;
+
+/// The review's changes, from the merge-base to the head, as the Changes view shows them.
+#[derive(Debug)]
+pub struct ChangesView {
+    pub view: ReviewView,
+    pub head: String,
+    pub merge_base: String,
+    pub files: Vec<ChangedFile>,
+}
+
+#[derive(Debug)]
+pub struct ChangedFile {
+    pub change: FileChange,
+    pub added: u32,
+    pub removed: u32,
+    pub diff: FileDiff,
+    /// Every issue on either path of this file, open or resolved, placed in the current code.
+    pub issues: Vec<IssueView>,
+}
+
+#[derive(Debug)]
+pub enum FileDiff {
+    Text {
+        hunks: Vec<DiffHunk>,
+        /// The lines before and after the change, for the sides that exist.
+        old: Option<FileText>,
+        new: Option<FileText>,
+    },
+    /// More than [`MAX_EXPANDED_CHANGES`] changed lines, not loaded unless asked for.
+    Collapsed,
+    Binary,
+    TooLarge,
+    Submodule {
+        old: Option<String>,
+        new: Option<String>,
+    },
+    /// A rename or mode change that leaves the content as it was.
+    Unchanged,
+}
+
+/// A text file's content at one commit.
+#[derive(Debug)]
+pub struct FileText {
+    pub blob: String,
+    pub lines: Vec<String>,
+}
+
+impl Service {
+    /// The review's changes from the merge-base to the head. Collapsed diffs are loaded only for
+    /// the file named by `expand`.
+    pub fn changes(&self, review_id: i64, expand: Option<&str>) -> Result<ChangesView> {
+        let view = self.review_view(store::get_review(&self.conn, review_id)?, true)?;
+        let head = code_head(&view)?;
+        if view.review.base_ref.is_none() {
+            return Err(Error::NotFound(format!(
+                "review {review_id} is a whole-tree review, so it has no diff; see its files instead"
+            )));
+        }
+        let merge_base = view
+            .git
+            .as_ref()
+            .and_then(|git| git.merge_base.clone())
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "review {review_id}'s base cannot be resolved, so there is no diff to show"
+                ))
+            })?;
+        let git = Git::new(&view.repo.git_dir);
+        let mut placer = Placer::new(&view);
+        // Each issue is shown with the first file it belongs to; `None` once it is.
+        let mut unclaimed: Vec<Option<(Issue, Location)>> =
+            store::list_issues(&self.conn, review_id)?
+                .into_iter()
+                .map(|issue| {
+                    let location = placer.place(&issue.anchor);
+                    Some((issue, location))
+                })
+                .collect();
+        let mut files = Vec::new();
+        for (change, added, removed, diff) in load_diffs(&git, &merge_base, &head, expand)? {
+            let paths: Vec<&str> = [&change.old, &change.new]
+                .into_iter()
+                .flatten()
+                .map(|version| version.path.as_str())
+                .collect();
+            let mut issues = Vec::new();
+            for slot in &mut unclaimed {
+                let belongs = slot.as_ref().is_some_and(|(issue, location)| {
+                    paths
+                        .iter()
+                        .any(|path| is_in_file(&issue.anchor, location, path))
+                });
+                if belongs && let Some((issue, location)) = slot.take() {
+                    issues.push(self.placed_issue_view(&mut placer, issue, location, true)?);
+                }
+            }
+            files.push(ChangedFile {
+                change,
+                added,
+                removed,
+                diff,
+                issues,
+            });
+        }
+        Ok(ChangesView {
+            view,
+            head,
+            merge_base,
+            files,
+        })
+    }
+}
+
+/// Every changed file between `merge_base` and `head` with its added and removed line counts and
+/// its diff. This runs one diff per file; then all blob sizes, and all blobs to show, are read
+/// in one git call each.
+fn load_diffs(
+    git: &Git,
+    merge_base: &str,
+    head: &str,
+    expand: Option<&str>,
+) -> Result<Vec<(FileChange, u32, u32, FileDiff)>> {
+    let mut diffs = Vec::new();
+    for change in git.file_changes(merge_base, head)? {
+        let hunks = git.diff_file(
+            merge_base,
+            head,
+            change.old.as_ref().map(|version| version.path.as_str()),
+            change.new.as_ref().map(|version| version.path.as_str()),
+        )?;
+        let (added, removed) = count_changes(&hunks);
+        diffs.push((change, hunks, added, removed));
+    }
+    let text_objects: Vec<&str> = diffs
+        .iter()
+        .filter(|(change, hunks, ..)| !hunks.is_empty() && !is_submodule(change))
+        .flat_map(|(change, ..)| [&change.old, &change.new])
+        .flatten()
+        .map(|version| version.object.as_str())
+        .collect();
+    let sizes = git.object_sizes(&text_objects)?;
+    let plans: Vec<Plan> = diffs
+        .iter()
+        .map(|(change, hunks, added, removed)| {
+            let expanded = expand.is_some_and(|path| {
+                [&change.old, &change.new]
+                    .into_iter()
+                    .flatten()
+                    .any(|version| version.path == path)
+            });
+            plan(change, hunks, added + removed, expanded, &sizes)
+        })
+        .collect();
+    let to_read: Vec<&str> = diffs
+        .iter()
+        .zip(&plans)
+        .filter(|(_, plan)| matches!(plan, Plan::Read))
+        .flat_map(|((change, ..), _)| [&change.old, &change.new])
+        .flatten()
+        .map(|version| version.object.as_str())
+        .collect();
+    let blobs = git.read_blobs(&to_read)?;
+    diffs
+        .into_iter()
+        .zip(plans)
+        .map(|((change, hunks, added, removed), plan)| {
+            let diff = match plan {
+                Plan::Done(diff) => diff,
+                Plan::Read => text_diff(&change, hunks, &blobs)?,
+            };
+            Ok((change, added, removed, diff))
+        })
+        .collect()
+}
+
+fn count_changes(hunks: &[DiffHunk]) -> (u32, u32) {
+    let rows = hunks.iter().flat_map(|hunk| &hunk.rows);
+    let count = |kind| u32::try_from(rows.clone().filter(|row| row.kind == kind).count());
+    (
+        count(RowKind::Added).unwrap_or(u32::MAX),
+        count(RowKind::Removed).unwrap_or(u32::MAX),
+    )
+}
+
+/// What to do with a changed file once its diff and blob sizes are known.
+enum Plan {
+    Done(FileDiff),
+    /// Read both blobs and show the diff.
+    Read,
+}
+
+fn is_submodule(change: &FileChange) -> bool {
+    [&change.old, &change.new]
+        .into_iter()
+        .flatten()
+        .any(|version| version.mode == "160000")
+}
+
+fn plan(
+    change: &FileChange,
+    hunks: &[DiffHunk],
+    changed_lines: u32,
+    expanded: bool,
+    sizes: &HashMap<String, u64>,
+) -> Plan {
+    if is_submodule(change) {
+        let commit = |version: &Option<FileVersion>| {
+            version
+                .as_ref()
+                .filter(|version| version.mode == "160000")
+                .map(|version| version.object.clone())
+        };
+        return Plan::Done(FileDiff::Submodule {
+            old: commit(&change.old),
+            new: commit(&change.new),
+        });
+    }
+    if hunks.is_empty() {
+        return Plan::Done(FileDiff::Unchanged);
+    }
+    let too_large = [&change.old, &change.new]
+        .into_iter()
+        .flatten()
+        .any(|version| sizes.get(&version.object).copied().unwrap_or(0) > MAX_DISPLAY_BYTES);
+    if too_large {
+        return Plan::Done(FileDiff::TooLarge);
+    }
+    if changed_lines > MAX_EXPANDED_CHANGES && !expanded {
+        return Plan::Done(FileDiff::Collapsed);
+    }
+    Plan::Read
+}
+
+fn text_diff(
+    change: &FileChange,
+    hunks: Vec<DiffHunk>,
+    blobs: &HashMap<String, Vec<u8>>,
+) -> Result<FileDiff> {
+    let text = |version: &Option<FileVersion>| -> Result<Option<Option<FileText>>> {
+        let Some(version) = version else {
+            return Ok(Some(None));
+        };
+        // Blobs are looked up, not taken: one blob can appear in several files.
+        let bytes = blobs.get(&version.object).ok_or_else(|| {
+            Error::Git(format!("blob {} was not read", short_sha(&version.object)))
+        })?;
+        if anchor::is_binary(bytes) {
+            return Ok(None);
+        }
+        Ok(Some(Some(FileText {
+            blob: version.object.clone(),
+            lines: anchor::split_lines(bytes),
+        })))
+    };
+    let (Some(old), Some(new)) = (text(&change.old)?, text(&change.new)?) else {
+        return Ok(FileDiff::Binary);
+    };
+    Ok(FileDiff::Text { hunks, old, new })
 }

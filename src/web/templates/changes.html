@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Changes · {{ review.title }} · LANI{% endblock %}
+{% block content %}
+{% include "review_header.html" %}
+
+<section class="panel changes-summary">
+  <p class="meta">{{ totals }} · from the merge-base <code>{{ merge_base_short }}</code> to the head <code>{{ head_short }}</code></p>
+  {% if files.is_empty() %}
+  <p class="empty">The head has no changes since the merge-base.</p>
+  {% else %}
+  <ul class="changed-files">
+    {% for file in files %}
+    <li>
+      <span class="status {{ file.status_class }}">{{ file.status_label }}</span>
+      <a href="#{{ file.anchor }}">{{ file.title }}</a>
+      <span class="stats"><span class="plus">+{{ file.added }}</span> <span class="minus">−{{ file.removed }}</span></span>
+      {% if file.open_issues > 0 %}<span class="badge open">{{ file.open_issues }} open</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% for file in files %}
+<section class="diff-file" id="{{ file.anchor }}">
+  <header>
+    <span class="status {{ file.status_class }}">{{ file.status_label }}</span>
+    <strong class="path">{{ file.title }}</strong>
+    <span class="stats"><span class="plus">+{{ file.added }}</span> <span class="minus">−{{ file.removed }}</span></span>
+    {% if let Some(url) = file.file_url %}<a class="view-file" href="{{ url }}">View file</a>{% endif %}
+  </header>
+  {% if let Some(notice) = file.notice %}<p class="notice">{{ notice }}{% if let Some(url) = file.expand_url %} <a href="{{ url }}">Load diff</a>{% endif %}</p>{% endif %}
+  {% if !file.other_threads.is_empty() %}
+  <div class="other-issues">
+    <p class="hint">Issues in this file that are not on the lines below: outdated, or outside the changed hunks.</p>
+    {% for thread in file.other_threads %}{% include "thread.html" %}{% endfor %}
+  </div>
+  {% endif %}
+  {% if !file.hunks.is_empty() %}
+  <table class="code-view diff" data-commit="{{ head }}" data-merge-base="{{ merge_base }}" data-head-path="{{ file.head_path }}" data-base-path="{{ file.base_path }}">
+    {% for hunk in file.hunks %}
+    <tr class="hunk"><td class="ln"></td><td class="ln"></td><td colspan="2"><code>{{ hunk.header }}</code></td></tr>
+    {% for row in hunk.rows %}
+    <tr class="{{ row.class }}" id="{{ row.id }}" data-side="{{ row.side }}" data-line="{{ row.line }}">
+      <td class="ln">{% if let Some(old) = row.old %}{% if row.side == "base" %}<a href="#{{ row.id }}">{{ old }}</a>{% else %}{{ old }}{% endif %}{% endif %}</td>
+      <td class="ln">{% if let Some(new) = row.new %}<a href="#{{ row.id }}">{{ new }}</a>{% endif %}</td>
+      <td class="mark">{{ row.mark }}</td>
+      <td class="src"><code>{{ row.html|safe }}</code></td>
+    </tr>
+    {% for thread in row.threads %}
+    <tr class="thread-row"><td colspan="4">{% include "thread.html" %}</td></tr>
+    {% endfor %}
+    {% endfor %}
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

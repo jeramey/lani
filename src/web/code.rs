@@ -1,16 +1,20 @@
 //! The code views (docs/design.md §13.3): the Files view of a directory or file at the review's
-//! head, with issue threads shown under their lines.
+//! head, and the Changes view of the review's diff, with issue threads shown under their lines.
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use super::AppState;
 use super::views::{self, Crumb, PageError, ReviewHeader, ThreadView};
-use crate::git::EntryKind;
+use serde::Deserialize;
+
+use crate::git::{DiffHunk, EntryKind, RowKind};
 use crate::highlight::{self, HighlightedLines};
-use crate::model::{ReviewStatus, Side, short_sha};
-use crate::service::{FileContent, IssueView, Location, PathContent, PathView};
+use crate::model::{IssueStatus, ReviewStatus, Side, short_sha};
+use crate::service::{
+    ChangedFile, FileContent, FileDiff, FileText, IssueView, Location, PathContent, PathView,
+};
 
 struct EntryRow {
     name: String,
@@ -286,4 +290,362 @@ fn plural(count: usize, noun: &str) -> String {
 
 fn plural_bytes(size: u64) -> String {
     plural(usize::try_from(size).unwrap_or(usize::MAX), "byte")
+}
+
+// ── changes ──────────────────────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ChangesQuery {
+    /// A file whose collapsed diff should be loaded.
+    expand: Option<String>,
+}
+
+/// One row of a file's diff.
+struct DiffRowView {
+    /// "context", "added" or "removed", for styling.
+    class: &'static str,
+    mark: &'static str,
+    old: Option<u32>,
+    new: Option<u32>,
+    /// The side a selection of this row anchors to, and its line number there: "base" for
+    /// removed lines, "head" otherwise (§13.4).
+    side: &'static str,
+    line: u32,
+    /// The row's element id, e.g. "file-…-H42".
+    id: String,
+    html: String,
+    threads: Vec<ThreadView>,
+}
+
+struct HunkView {
+    header: String,
+    rows: Vec<DiffRowView>,
+}
+
+struct FileSection {
+    anchor: String,
+    status_label: &'static str,
+    status_class: &'static str,
+    /// The path, or "old → new" for a rename.
+    title: String,
+    /// The path issues on each side anchor to.
+    head_path: String,
+    base_path: String,
+    added: u32,
+    removed: u32,
+    open_issues: usize,
+    /// The file in the Files view, when it exists at the head.
+    file_url: Option<String>,
+    notice: Option<String>,
+    expand_url: Option<String>,
+    hunks: Vec<HunkView>,
+    other_threads: Vec<ThreadView>,
+}
+
+#[derive(Template)]
+#[template(path = "changes.html")]
+struct ChangesPage {
+    review: ReviewHeader,
+    editable: bool,
+    head: String,
+    merge_base: String,
+    head_short: String,
+    merge_base_short: String,
+    totals: String,
+    files: Vec<FileSection>,
+}
+
+/// `GET /reviews/{id}/changes`: the unified diff from the merge-base to the head (§13.3).
+pub async fn changes(
+    State(state): State<AppState>,
+    Path(review_id): Path<i64>,
+    Query(query): Query<ChangesQuery>,
+) -> Result<Response, PageError> {
+    let expand = query.expand.clone();
+    let (view, highlighted) = state
+        .call(move |service| {
+            let view = service.changes(review_id, expand.as_deref())?;
+            let highlighted: Vec<_> = view
+                .files
+                .iter()
+                .map(|file| match &file.diff {
+                    FileDiff::Text { old, new, .. } => {
+                        let highlight = |text: &Option<FileText>, path: Option<&str>| {
+                            text.as_ref().map(|text| {
+                                highlight::highlight_file(
+                                    &text.blob,
+                                    file_name(path.unwrap_or("")),
+                                    &text.lines,
+                                )
+                            })
+                        };
+                        (
+                            highlight(old, file.change.old.as_ref().map(|v| v.path.as_str())),
+                            highlight(new, file.change.new.as_ref().map(|v| v.path.as_str())),
+                        )
+                    }
+                    _ => (None, None),
+                })
+                .collect();
+            Ok((view, highlighted))
+        })
+        .await
+        .map_err(|error| {
+            PageError::from(error).back(views::review_url(review_id), "Back to the review")
+        })?;
+    let back = match &query.expand {
+        Some(path) => format!(
+            "{}?expand={}",
+            views::changes_url(review_id),
+            views::encode_path(path).replace('/', "%2F")
+        ),
+        None => views::changes_url(review_id),
+    };
+    let (mut total_added, mut total_removed) = (0_u64, 0_u64);
+    let mut files = Vec::new();
+    for (file, (old, new)) in view.files.iter().zip(&highlighted) {
+        total_added += u64::from(file.added);
+        total_removed += u64::from(file.removed);
+        files.push(file_section(
+            review_id,
+            &view.head,
+            &view.merge_base,
+            file,
+            old.as_deref(),
+            new.as_deref(),
+            &back,
+        ));
+    }
+    let mut header = views::review_header(&view.view);
+    header.tab = "changes";
+    let page = ChangesPage {
+        editable: view.view.review.status == ReviewStatus::Open,
+        head_short: short_sha(&view.head).to_string(),
+        merge_base_short: short_sha(&view.merge_base).to_string(),
+        totals: format!(
+            "{} · +{total_added} −{total_removed}",
+            plural(files.len(), "file")
+        ),
+        head: view.head,
+        merge_base: view.merge_base,
+        files,
+        review: header,
+    };
+    Ok(Html(page.render()?).into_response())
+}
+
+fn file_section(
+    review_id: i64,
+    head: &str,
+    merge_base: &str,
+    file: &ChangedFile,
+    old: Option<&HighlightedLines>,
+    new: Option<&HighlightedLines>,
+    back: &str,
+) -> FileSection {
+    let change = &file.change;
+    let old_path = change.old.as_ref().map(|version| version.path.as_str());
+    let new_path = change.new.as_ref().map(|version| version.path.as_str());
+    let path = change.path();
+    let anchor = views::file_anchor(path);
+    let (status_label, status_class) = match change.status {
+        'A' => ("Added", "added"),
+        'D' => ("Deleted", "deleted"),
+        'R' => ("Renamed", "renamed"),
+        'T' => ("Type changed", "modified"),
+        _ => ("Modified", "modified"),
+    };
+    let title = match (old_path, new_path) {
+        (Some(old), Some(new)) if old != new => format!("{old} → {new}"),
+        _ => path.to_string(),
+    };
+    let mut hunks: Vec<HunkView> = match &file.diff {
+        FileDiff::Text { hunks, .. } => hunks
+            .iter()
+            .map(|hunk| hunk_view(hunk, &anchor, old, new))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let (notice, expand_url) = diff_notice(review_id, file, &anchor);
+    let other_threads = place_threads(
+        file,
+        &mut hunks,
+        (head, new_path),
+        (merge_base, old_path),
+        back,
+    );
+    FileSection {
+        status_label,
+        status_class,
+        title,
+        head_path: new_path.unwrap_or("").to_string(),
+        base_path: old_path.unwrap_or("").to_string(),
+        added: file.added,
+        removed: file.removed,
+        open_issues: file
+            .issues
+            .iter()
+            .filter(|issue| issue.issue.status == IssueStatus::Open)
+            .count(),
+        file_url: new_path.map(|path| views::files_url(review_id, path, false)),
+        notice,
+        expand_url,
+        hunks,
+        other_threads,
+        anchor,
+    }
+}
+
+/// Why a file's diff is not shown, and for a collapsed diff the link that loads it.
+fn diff_notice(
+    review_id: i64,
+    file: &ChangedFile,
+    anchor: &str,
+) -> (Option<String>, Option<String>) {
+    let notice = match &file.diff {
+        FileDiff::Text { .. } => return (None, None),
+        FileDiff::Collapsed => {
+            let notice = format!(
+                "This diff changes {} lines, more than {} are shown at once.",
+                file.added + file.removed,
+                crate::service::MAX_EXPANDED_CHANGES
+            );
+            let expand_url = format!(
+                "{}?expand={}#{anchor}",
+                views::changes_url(review_id),
+                views::encode_path(file.change.path()).replace('/', "%2F")
+            );
+            return (Some(notice), Some(expand_url));
+        }
+        FileDiff::Binary => "Binary file, not shown.".to_string(),
+        FileDiff::TooLarge => format!(
+            "This file is larger than {} MiB, so its diff is not shown.",
+            crate::service::MAX_DISPLAY_BYTES >> 20
+        ),
+        FileDiff::Submodule { old, new } => {
+            let commit = |sha: &Option<String>| {
+                sha.as_deref()
+                    .map_or("none".to_string(), |sha| short_sha(sha).to_string())
+            };
+            format!("Submodule changed from {} to {}.", commit(old), commit(new))
+        }
+        FileDiff::Unchanged => match file.change.status {
+            'R' => "Renamed without changes to its content.",
+            'A' => "Empty file added.",
+            'D' => "Empty file deleted.",
+            _ => "Only the file mode changed.",
+        }
+        .to_string(),
+    };
+    (Some(notice), None)
+}
+
+/// Put each issue's thread under the diff row its lines end on, on the side it is anchored to.
+/// Returns the threads that are not on any row: outdated, or outside the hunks.
+fn place_threads(
+    file: &ChangedFile,
+    hunks: &mut [HunkView],
+    (head, new_path): (&str, Option<&str>),
+    (merge_base, old_path): (&str, Option<&str>),
+    back: &str,
+) -> Vec<ThreadView> {
+    let mut other_threads = Vec::new();
+    for issue in &file.issues {
+        let target = match (&issue.location, issue.issue.anchor.side) {
+            (
+                Location::Current {
+                    commit,
+                    path: current,
+                    end_line,
+                    ..
+                },
+                Side::Head,
+            ) if commit == head && Some(current.as_str()) == new_path => {
+                Some((Side::Head, *end_line))
+            }
+            (
+                Location::Current {
+                    commit,
+                    path: current,
+                    end_line,
+                    ..
+                },
+                Side::Base,
+            ) if commit == merge_base && Some(current.as_str()) == old_path => {
+                Some((Side::Base, *end_line))
+            }
+            _ => None,
+        };
+        let row = target.and_then(|(side, line)| {
+            hunks
+                .iter_mut()
+                .flat_map(|hunk| &mut hunk.rows)
+                .find(|row| match side {
+                    Side::Head => row.new == Some(line),
+                    Side::Base => row.old == Some(line),
+                })
+        });
+        match row {
+            Some(row) => row.threads.push(views::thread(issue, back, false)),
+            None => other_threads.push(views::thread(issue, back, true)),
+        }
+    }
+    other_threads
+}
+
+fn hunk_view(
+    hunk: &DiffHunk,
+    anchor: &str,
+    old: Option<&HighlightedLines>,
+    new: Option<&HighlightedLines>,
+) -> HunkView {
+    let line_html = |lines: Option<&HighlightedLines>, number: Option<u32>| {
+        number
+            .and_then(|number| {
+                lines?
+                    .lines
+                    .get(usize::try_from(number).ok()?.checked_sub(1)?)
+            })
+            .cloned()
+            .unwrap_or_default()
+    };
+    let header = &hunk.header;
+    HunkView {
+        header: format!(
+            "@@ -{},{} +{},{} @@",
+            header.old_start, header.old_count, header.new_start, header.new_count
+        ),
+        rows: hunk
+            .rows
+            .iter()
+            .map(|row| {
+                let (class, mark, side, line, html) = match row.kind {
+                    RowKind::Removed => {
+                        let line = row.old_line.unwrap_or(0);
+                        ("removed", "-", "base", line, line_html(old, row.old_line))
+                    }
+                    RowKind::Added => {
+                        let line = row.new_line.unwrap_or(0);
+                        ("added", "+", "head", line, line_html(new, row.new_line))
+                    }
+                    RowKind::Context => {
+                        let line = row.new_line.unwrap_or(0);
+                        ("context", " ", "head", line, line_html(new, row.new_line))
+                    }
+                };
+                let side_letter = if side == "base" { 'B' } else { 'H' };
+                DiffRowView {
+                    class,
+                    mark,
+                    old: row.old_line,
+                    new: row.new_line,
+                    side,
+                    line,
+                    id: format!("{anchor}-{side_letter}{line}"),
+                    html,
+                    threads: Vec::new(),
+                }
+            })
+            .collect(),
+    }
 }
