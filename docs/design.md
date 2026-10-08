@@ -364,12 +364,14 @@ Commands used (all read-only):
 | Branch list (base picker)   | `git for-each-ref --format='%(refname)' refs/heads/ refs/remotes/` |
 | Merge base                  | `git merge-base <base> <head>` |
 | Commit is on the branch     | `git merge-base --is-ancestor <commit> <head>` |
-| Changed files               | `git diff --name-status -z -M <merge-base> <head>` |
-| Unified diff                | `git diff -M -U3 <merge-base> <head> -- <paths…>` |
+| Renames for relocation      | `git diff --name-status -z -M <anchor_commit> <head>` |
+| Changed files (code views)  | `git diff --raw -z -M --no-abbrev <merge-base> <head>` |
+| Unified diff                | `git diff -M -U3 <merge-base> <head> -- <old path> <new path>`, one call per file |
 | Line relocation             | `git diff -M -U0 <anchor_commit> <head> -- <old path> <new path>` |
 | File on disk vs commit      | `git -C <worktree> diff-index -p -U0 <commit> -- <path>` |
 | Worktree state              | `git -C <worktree> status --porcelain=v2 -z --untracked-files=no` |
-| Directory listing           | `git ls-tree -z <commit>:<dir>` |
+| Directory listing           | `git ls-tree -z --long --full-tree <commit> -- <dir>/` |
+| One file or directory       | `git ls-tree -z --long --full-tree <commit> -- <path>` |
 | File content                | `git cat-file blob <blob-sha>` |
 
 Rules for every invocation:
@@ -387,9 +389,11 @@ Rules for every invocation:
 - **No redirection.** Environment variables that would point git at another repository or index
   (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and similar) are removed from every invocation.
 - **Stable output.** These overrides make output independent of user config: `-c
-  core.quotePath=false`, `--no-color --no-ext-diff --no-textconv`, and `LC_ALL=C`. LANI reads
-  only `@@` hunk headers from unified diffs, never their file headers, and takes paths from
-  `-z` name-status output.
+  core.quotePath=false`, `--no-color --no-ext-diff --no-textconv`, and `LC_ALL=C`. From unified
+  diffs LANI reads only `@@` hunk headers and the first character of each hunk line, never file
+  headers. Paths come from `-z` name-status or raw output, and line text from the blobs. That is
+  why the diff view runs one `git diff` per file: splitting a multi-file diff would mean matching
+  its file headers to paths, and a type change shows up as two sections.
 - **Exact hunks.** Every diff whose hunks LANI parses also passes `--text`, so files git treats
   as binary (`-diff` in `.gitattributes`, or a NUL byte near the start) still produce hunks
   instead of none, which would read as "unchanged". It also passes `--inter-hunk-context=0`, so

@@ -120,6 +120,91 @@ pub struct BranchDistance {
     pub behind: u64,
 }
 
+/// What a tree entry is, from its git mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    /// A regular file, executable or not.
+    File,
+    Symlink,
+    Directory,
+    /// A submodule: a commit of another repository.
+    Submodule,
+}
+
+/// One entry of a tree, as `git ls-tree --long` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeEntry {
+    /// The full path from the repository root.
+    pub path: String,
+    pub kind: EntryKind,
+    /// The blob, tree or commit SHA.
+    pub object: String,
+    /// The blob's size in bytes; `None` for directories and submodules.
+    pub size: Option<u64>,
+}
+
+impl TreeEntry {
+    /// The last component of the path.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+}
+
+/// One side of a changed file in a diff between two commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileVersion {
+    pub path: String,
+    /// The blob SHA (or commit SHA for a submodule).
+    pub object: String,
+    pub mode: String,
+}
+
+/// A file that differs between two commits, as `git diff --raw` reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileChange {
+    /// git's status letter: `A`dded, `D`eleted, `M`odified, `R`enamed or `T`ype changed.
+    pub status: char,
+    /// The file before the change; `None` when it was added.
+    pub old: Option<FileVersion>,
+    /// The file after the change; `None` when it was deleted.
+    pub new: Option<FileVersion>,
+}
+
+impl FileChange {
+    /// The path after the change, or before it for a deleted file.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        self.new
+            .as_ref()
+            .or(self.old.as_ref())
+            .map_or("", |version| version.path.as_str())
+    }
+}
+
+/// How one row of a unified diff relates the two versions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Context,
+    Removed,
+    Added,
+}
+
+/// One row of a unified diff: a line number on each side it exists on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiffRow {
+    pub kind: RowKind,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+}
+
+/// A hunk of a unified diff with its rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffHunk {
+    pub header: Hunk,
+    pub rows: Vec<DiffRow>,
+}
+
 /// A repository, addressed by its common git dir.
 #[derive(Clone, Debug)]
 pub struct Git {
@@ -251,29 +336,86 @@ impl Git {
     /// The content of `path` at `commit`, or `None` if no such path exists there.
     /// Fails if the path names something other than a regular file (a directory or submodule).
     pub fn read_file(&self, commit: &str, path: &str) -> Result<Option<Vec<u8>>> {
-        let mut command = self.command();
-        command.args(["ls-tree", "-z", "--full-tree", commit, "--", path]);
-        let listing = stdout_text(&run(command, &[0])?)?;
-        let Some(entry) = listing.split('\0').find(|entry| !entry.is_empty()) else {
+        let Some(entry) = self.tree_entry(commit, path)? else {
             return Ok(None);
         };
-        // Format: "<mode> SP <type> SP <object> TAB <path>"
-        let (meta, _) = entry
-            .split_once('\t')
-            .ok_or_else(|| Error::Git(format!("unexpected ls-tree output {entry:?}")))?;
-        let fields: Vec<&str> = meta.split(' ').collect();
-        let [_mode, kind, object] = fields[..] else {
-            return Err(Error::Git(format!("unexpected ls-tree output {entry:?}")));
-        };
-        if kind != "blob" {
+        if entry.kind != EntryKind::File {
             return Err(Error::Invalid(format!(
-                "{} is not a file at commit {commit} (it is a {kind})",
-                quoted(path)
+                "{} is not a file at commit {commit} (it is a {})",
+                quoted(path),
+                match entry.kind {
+                    EntryKind::Directory => "directory",
+                    EntryKind::Symlink => "symbolic link",
+                    EntryKind::Submodule => "submodule",
+                    EntryKind::File => "file",
+                }
             )));
         }
+        self.read_blob(&entry.object).map(Some)
+    }
+
+    /// The entry at `path` in `commit`, or `None` if nothing is there. `path` may name a file or
+    /// a directory.
+    pub fn tree_entry(&self, commit: &str, path: &str) -> Result<Option<TreeEntry>> {
+        let mut command = self.command();
+        command.args(["ls-tree", "-z", "--long", "--full-tree", commit, "--", path]);
+        let entries = parse_tree_entries(&stdout_text(&run(command, &[0])?)?)?;
+        Ok(entries.into_iter().find(|entry| entry.path == path))
+    }
+
+    /// The entries of directory `dir` in `commit` (`""` for the root), in git's order.
+    pub fn list_directory(&self, commit: &str, dir: &str) -> Result<Vec<TreeEntry>> {
+        let mut command = self.command();
+        command.args(["ls-tree", "-z", "--long", "--full-tree", commit]);
+        if !dir.is_empty() {
+            command.arg("--").arg(format!("{dir}/"));
+        }
+        parse_tree_entries(&stdout_text(&run(command, &[0])?)?)
+    }
+
+    /// The content of a blob.
+    pub fn read_blob(&self, object: &str) -> Result<Vec<u8>> {
         let mut command = self.command();
         command.args(["cat-file", "blob", object]);
-        Ok(Some(run(command, &[0])?.stdout))
+        Ok(run(command, &[0])?.stdout)
+    }
+
+    /// Every file that differs between two commits, following renames, in git's order.
+    pub fn file_changes(&self, from: &str, to: &str) -> Result<Vec<FileChange>> {
+        let mut command = self.command();
+        command.args([
+            "diff",
+            "--raw",
+            "-z",
+            "-M",
+            "--no-abbrev",
+            "--no-ext-diff",
+            from,
+            to,
+        ]);
+        parse_raw_changes(&stdout_text(&run(command, &[0])?)?)
+    }
+
+    /// The unified diff, with 3 lines of context, of one file between two commits. Pass the
+    /// paths the file has at `from` and `to`; either is `None` when the file does not exist
+    /// there.
+    pub fn diff_file(
+        &self,
+        from: &str,
+        to: &str,
+        old_path: Option<&str>,
+        new_path: Option<&str>,
+    ) -> Result<Vec<DiffHunk>> {
+        let mut command = self.command();
+        command.args(["diff", "-U3", "-M"]);
+        command.args(EXACT_HUNKS);
+        command.args([from, to, "--"]);
+        command.args(old_path);
+        if new_path != old_path {
+            command.args(new_path);
+        }
+        let output = run(command, &[0])?;
+        parse_diff(&String::from_utf8_lossy(&output.stdout))
     }
 
     /// What happened to every changed path between two commits, following renames, keyed by
@@ -659,6 +801,144 @@ fn parse_path_changes(text: &str) -> Result<HashMap<String, PathChange>> {
     Ok(changes)
 }
 
+/// Parse `git ls-tree -z --long` output: `<mode> SP <type> SP <object> SP+ <size> TAB <path>`.
+fn parse_tree_entries(text: &str) -> Result<Vec<TreeEntry>> {
+    text.split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let invalid = || Error::Git(format!("unexpected ls-tree output {entry:?}"));
+            let (meta, path) = entry.split_once('\t').ok_or_else(invalid)?;
+            let fields: Vec<&str> = meta.split_whitespace().collect();
+            let [mode, _kind, object, size] = fields[..] else {
+                return Err(invalid());
+            };
+            let kind = match mode {
+                "040000" => EntryKind::Directory,
+                "120000" => EntryKind::Symlink,
+                "160000" => EntryKind::Submodule,
+                _ => EntryKind::File,
+            };
+            Ok(TreeEntry {
+                path: path.to_string(),
+                kind,
+                object: object.to_string(),
+                size: size.parse().ok(),
+            })
+        })
+        .collect()
+}
+
+/// Parse `git diff --raw -z --no-abbrev` output. Each record is
+/// `:<old mode> <new mode> <old sha> <new sha> <status>\0<path>\0`, with a second path for
+/// renames and copies. An all-zero SHA marks a side that does not exist.
+fn parse_raw_changes(text: &str) -> Result<Vec<FileChange>> {
+    let mut changes = Vec::new();
+    let mut fields = text.split('\0').filter(|field| !field.is_empty());
+    while let Some(meta) = fields.next() {
+        let invalid = || Error::Git(format!("unexpected raw diff output near {meta:?}"));
+        let parts: Vec<&str> = meta
+            .strip_prefix(':')
+            .ok_or_else(invalid)?
+            .split(' ')
+            .collect();
+        let [old_mode, new_mode, old_object, new_object, status] = parts[..] else {
+            return Err(invalid());
+        };
+        let letter = status.chars().next().ok_or_else(invalid)?;
+        let source = fields.next().ok_or_else(invalid)?;
+        let destination = if matches!(letter, 'R' | 'C') {
+            fields.next().ok_or_else(invalid)?
+        } else {
+            source
+        };
+        let version = |path: &str, object: &str, mode: &str| {
+            (!object.bytes().all(|byte| byte == b'0')).then(|| FileVersion {
+                path: path.to_string(),
+                object: object.to_string(),
+                mode: mode.to_string(),
+            })
+        };
+        changes.push(FileChange {
+            status: letter,
+            old: version(source, old_object, old_mode),
+            new: version(destination, new_object, new_mode),
+        });
+    }
+    Ok(changes)
+}
+
+/// Parse unified diff output into hunks with their rows. Only `@@` headers and the first
+/// character of each hunk line are read; the text of lines comes from the blobs.
+pub fn parse_diff(diff: &str) -> Result<Vec<DiffHunk>> {
+    if diff.lines().any(|line| line.starts_with("Binary files ")) {
+        return Err(Error::Git(
+            "git reported a binary diff instead of lines".to_string(),
+        ));
+    }
+    let mut hunks: Vec<DiffHunk> = Vec::new();
+    // Lines still expected in the current hunk on each side; file headers between hunks (as in
+    // a type change, which git shows as a deletion and an addition) are skipped.
+    let (mut old_left, mut new_left) = (0_u32, 0_u32);
+    let (mut old_line, mut new_line) = (0_u32, 0_u32);
+    for line in diff.lines() {
+        if line.starts_with("@@ ") {
+            let header = parse_hunk_header(line)?;
+            (old_left, new_left) = (header.old_count, header.new_count);
+            (old_line, new_line) = (header.old_start, header.new_start);
+            hunks.push(DiffHunk {
+                header,
+                rows: Vec::new(),
+            });
+            continue;
+        }
+        if old_left == 0 && new_left == 0 {
+            continue;
+        }
+        let Some(hunk) = hunks.last_mut() else {
+            continue;
+        };
+        let row = match line.as_bytes().first() {
+            Some(b' ') if old_left > 0 && new_left > 0 => {
+                (old_left, new_left) = (old_left - 1, new_left - 1);
+                (old_line, new_line) = (old_line + 1, new_line + 1);
+                DiffRow {
+                    kind: RowKind::Context,
+                    old_line: Some(old_line - 1),
+                    new_line: Some(new_line - 1),
+                }
+            }
+            Some(b'-') if old_left > 0 => {
+                old_left -= 1;
+                old_line += 1;
+                DiffRow {
+                    kind: RowKind::Removed,
+                    old_line: Some(old_line - 1),
+                    new_line: None,
+                }
+            }
+            Some(b'+') if new_left > 0 => {
+                new_left -= 1;
+                new_line += 1;
+                DiffRow {
+                    kind: RowKind::Added,
+                    old_line: None,
+                    new_line: Some(new_line - 1),
+                }
+            }
+            // "\ No newline at end of file"
+            Some(b'\\') => continue,
+            _ => {
+                return Err(Error::Git(format!(
+                    "unexpected line in a diff hunk: {:?}",
+                    line.chars().take(80).collect::<String>()
+                )));
+            }
+        };
+        hunk.rows.push(row);
+    }
+    Ok(hunks)
+}
+
 /// Parse `git status --porcelain=v2 -z --branch` output.
 fn parse_status(text: &str) -> Result<WorktreeState> {
     let mut state = WorktreeState {
@@ -751,6 +1031,98 @@ mod tests {
         check_until_passed(&passed, passing).unwrap();
         check_until_passed(&passed, failing).unwrap();
         assert_eq!(checks.get(), 3, "a passed check does not run again");
+    }
+
+    #[test]
+    fn tree_entries_with_kinds_and_sizes() {
+        let listing = "100644 blob aaa     1234\tsrc/main.rs\0\
+                       100755 blob bbb       10\trun me.sh\0\
+                       120000 blob ccc        7\tlink\0\
+                       040000 tree ddd        -\tsrc\0\
+                       160000 commit eee       -\tvendor/lib\0";
+        let entries = parse_tree_entries(listing).unwrap();
+        let kinds: Vec<_> = entries.iter().map(|entry| entry.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                EntryKind::File,
+                EntryKind::File,
+                EntryKind::Symlink,
+                EntryKind::Directory,
+                EntryKind::Submodule
+            ]
+        );
+        assert_eq!(entries[0].size, Some(1234));
+        assert_eq!(entries[1].path, "run me.sh");
+        assert_eq!(entries[3].size, None);
+        assert_eq!(entries[4].name(), "lib");
+        assert!(parse_tree_entries("garbage\0").is_err());
+    }
+
+    #[test]
+    fn raw_changes_with_renames_additions_and_deletions() {
+        let zero = "0".repeat(40);
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        let raw = format!(
+            ":100644 100644 {a} {b} M\0src/lib.rs\0\
+             :000000 100644 {zero} {b} A\0new file.txt\0\
+             :100644 000000 {a} {zero} D\0gone.rs\0\
+             :100644 100644 {a} {b} R087\0old/name.rs\0new/name.rs\0"
+        );
+        let changes = parse_raw_changes(&raw).unwrap();
+        assert_eq!(changes.len(), 4);
+        assert_eq!(changes[0].status, 'M');
+        assert_eq!(changes[0].old.as_ref().unwrap().object, a);
+        assert_eq!(changes[1].old, None);
+        assert_eq!(changes[1].path(), "new file.txt");
+        assert_eq!(changes[2].new, None);
+        assert_eq!(changes[2].path(), "gone.rs");
+        assert_eq!(changes[3].status, 'R');
+        assert_eq!(changes[3].old.as_ref().unwrap().path, "old/name.rs");
+        assert_eq!(changes[3].path(), "new/name.rs");
+    }
+
+    #[test]
+    fn diff_rows_follow_both_sides() {
+        let diff = "diff --git a/f b/f\n--- a/f\n+++ b/f\n\
+                    @@ -1,4 +1,4 @@ fn x\n a\n-b\n+B\n+B2\n c\n-d\n\
+                    @@ -10 +10,0 @@\n-z\n\\ No newline at end of file\n";
+        let hunks = parse_diff(diff).unwrap();
+        assert_eq!(hunks.len(), 2);
+        let rows: Vec<_> = hunks[0]
+            .rows
+            .iter()
+            .map(|row| (row.kind, row.old_line, row.new_line))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (RowKind::Context, Some(1), Some(1)),
+                (RowKind::Removed, Some(2), None),
+                (RowKind::Added, None, Some(2)),
+                (RowKind::Added, None, Some(3)),
+                (RowKind::Context, Some(3), Some(4)),
+                (RowKind::Removed, Some(4), None),
+            ]
+        );
+        assert_eq!(hunks[1].rows.len(), 1);
+        assert_eq!(hunks[1].rows[0].old_line, Some(10));
+    }
+
+    #[test]
+    fn diff_rows_skip_file_headers_between_sections() {
+        // A type change: git shows a deletion and an addition of the same path.
+        let diff = "diff --git a/x b/x\ndeleted file mode 100644\n--- a/x\n+++ /dev/null\n\
+                    @@ -1 +0,0 @@\n-old\n\
+                    diff --git a/x b/x\nnew file mode 120000\n--- /dev/null\n+++ b/x\n\
+                    @@ -0,0 +1 @@\n+target\n";
+        let hunks = parse_diff(diff).unwrap();
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].rows[0].kind, RowKind::Removed);
+        assert_eq!(hunks[1].rows[0].kind, RowKind::Added);
+        assert_eq!(hunks[1].rows[0].new_line, Some(1));
+        assert!(parse_diff("Binary files a/x and b/x differ\n").is_err());
+        assert!(parse_diff("@@ -1 +1 @@\n?what\n").is_err());
     }
 
     #[test]
