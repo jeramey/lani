@@ -222,10 +222,10 @@ pub fn issue_list(list: &IssueList, status_label: &str, full: bool, path: Option
         "showing {} {status_label}{in_path}",
         list.issues.len()
     ));
-    let counts = view.counts;
+    let not_shown = list.not_shown;
     match status_label {
-        "open" => position.push(format!("not shown: {} resolved", counts.resolved)),
-        "resolved" => position.push(format!("not shown: {} open", counts.open)),
+        "open" => position.push(format!("not shown: {} resolved", not_shown.resolved)),
+        "resolved" => position.push(format!("not shown: {} open", not_shown.open)),
         _ => {}
     }
     let _ = writeln!(out, "{}", position.join(" · "));

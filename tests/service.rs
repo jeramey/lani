@@ -756,6 +756,53 @@ fn list_issues_filters_by_status_and_path() {
 }
 
 #[test]
+fn the_path_filter_follows_renames_and_counts_only_that_file() {
+    let (_home, repo, mut service, resolved_in_lib) = repo_with_issue(3, 3);
+    let review_id = service.get_issue(resolved_in_lib).unwrap().issue.review_id;
+    let head = repo.head();
+    let open_in_lib = service
+        .create_issue(&issue_request(review_id, &repo, &head, 5, 5, "line 5"))
+        .unwrap()
+        .issue
+        .id;
+    let mut request = issue_request(review_id, &repo, &head, 1, 1, "readme");
+    request.path = "README.md";
+    let resolved_in_readme = service.create_issue(&request).unwrap().issue.id;
+    for issue_id in [resolved_in_lib, resolved_in_readme] {
+        service
+            .set_issue_status(Actor::Reviewer, issue_id, IssueStatus::Resolved, None)
+            .unwrap();
+    }
+    repo.git(&["mv", "src/lib.rs", "src/core.rs"]);
+    repo.commit_all("rename");
+
+    let ids = |list: &lani::service::IssueList| {
+        list.issues.iter().map(|i| i.issue.id).collect::<Vec<_>>()
+    };
+    // The file's current name and the name the issues were opened on both find them.
+    for path in ["src/core.rs", "src/lib.rs"] {
+        let open = service
+            .list_issues(review_id, Some(IssueStatus::Open), Some(path), false)
+            .unwrap();
+        assert_eq!(ids(&open), vec![open_in_lib], "{path}");
+        assert_eq!(open.not_shown.resolved, 1, "only {path}'s resolved issue");
+        let resolved = service
+            .list_issues(review_id, Some(IssueStatus::Resolved), Some(path), false)
+            .unwrap();
+        assert_eq!(ids(&resolved), vec![resolved_in_lib], "{path}");
+        assert_eq!(resolved.not_shown.open, 1, "{path}");
+    }
+    let everywhere = service
+        .list_issues(review_id, Some(IssueStatus::Open), None, false)
+        .unwrap();
+    assert_eq!(ids(&everywhere), vec![open_in_lib]);
+    assert_eq!(everywhere.not_shown.resolved, 2);
+    let all = service.list_issues(review_id, None, None, false).unwrap();
+    assert_eq!(all.issues.len(), 3);
+    assert_eq!((all.not_shown.open, all.not_shown.resolved), (0, 0));
+}
+
+#[test]
 fn list_reviews_filters_by_repo_and_marks_the_checked_out_branch() {
     let home = TestHome::new();
     let repo = feature_repo();

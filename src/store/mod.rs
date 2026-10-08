@@ -362,18 +362,11 @@ pub fn get_issue(conn: &Connection, id: i64) -> Result<Issue> {
 }
 
 /// List a review's issues by issue number, oldest first. `None` filters mean "all".
-pub fn list_issues(
-    conn: &Connection,
-    review_id: i64,
-    status: Option<IssueStatus>,
-    path: Option<&str>,
-) -> Result<Vec<Issue>> {
+pub fn list_issues(conn: &Connection, review_id: i64) -> Result<Vec<Issue>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT {ISSUE_COLUMNS} FROM issue
-         WHERE review_id = ?1 AND (?2 IS NULL OR status = ?2) AND (?3 IS NULL OR path = ?3)
-         ORDER BY id"
+        "SELECT {ISSUE_COLUMNS} FROM issue WHERE review_id = ?1 ORDER BY id"
     ))?;
-    let rows = statement.query_map(params![review_id, status, path], issue_from_row)?;
+    let rows = statement.query_map([review_id], issue_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 

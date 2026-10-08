@@ -187,7 +187,8 @@ pub struct ListIssuesParams {
     pub status: IssueStatusFilter,
     /// "summary": one line per issue. "full": location, code and every comment.
     pub detail: Detail,
-    /// Only issues in this file (path relative to the repository root). Pass the plain value,
+    /// Only issues in this file (path relative to the repository root): the file an issue was
+    /// opened on, or the file its lines are in now if it was renamed. Pass the plain value,
     /// without the quotes that tool output shows around it.
     #[serde(default)]
     pub path: Option<String>,

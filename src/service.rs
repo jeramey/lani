@@ -173,6 +173,9 @@ pub struct IssueView {
 pub struct IssueList {
     pub view: ReviewView,
     pub issues: Vec<IssueView>,
+    /// Issues left out by the status filter: in the filtered file when a path was given,
+    /// otherwise in the whole review.
+    pub not_shown: IssueCounts,
 }
 
 // ── operations ───────────────────────────────────────────────────────────────────────────────
@@ -397,13 +400,37 @@ impl Service {
         with_code: bool,
     ) -> Result<IssueList> {
         let view = self.review_view(store::get_review(&self.conn, review_id)?, true)?;
-        let issues = store::list_issues(&self.conn, review_id, status, path)?;
         let mut placer = Placer::new(&view);
-        let issues = issues
-            .into_iter()
-            .map(|issue| self.issue_view(&mut placer, issue, with_code))
-            .collect::<Result<_>>()?;
-        Ok(IssueList { view, issues })
+        let mut issues = Vec::new();
+        let mut not_shown = IssueCounts::default();
+        for issue in store::list_issues(&self.conn, review_id)? {
+            let location = match path {
+                // Placing an issue finds the file its lines are in now, which may have been
+                // renamed since it was opened; the filter matches either name.
+                Some(path) => {
+                    let location = placer.place(&issue.anchor);
+                    if !is_in_file(&issue.anchor, &location, path) {
+                        continue;
+                    }
+                    Some(location)
+                }
+                None => None,
+            };
+            if status.is_some_and(|wanted| issue.status != wanted) {
+                match issue.status {
+                    IssueStatus::Open => not_shown.open += 1,
+                    IssueStatus::Resolved => not_shown.resolved += 1,
+                }
+                continue;
+            }
+            let location = location.unwrap_or_else(|| placer.place(&issue.anchor));
+            issues.push(self.placed_issue_view(&mut placer, issue, location, with_code)?);
+        }
+        Ok(IssueList {
+            view,
+            issues,
+            not_shown,
+        })
     }
 
     /// One comment as stored.
@@ -874,8 +901,19 @@ impl Service {
         issue: Issue,
         with_code: bool,
     ) -> Result<IssueView> {
-        let comments = store::issue_comments(&self.conn, issue.id)?;
         let location = placer.place(&issue.anchor);
+        self.placed_issue_view(placer, issue, location, with_code)
+    }
+
+    /// An issue's view given where `placer` placed it.
+    fn placed_issue_view(
+        &self,
+        placer: &mut Placer<'_>,
+        issue: Issue,
+        location: Location,
+        with_code: bool,
+    ) -> Result<IssueView> {
+        let comments = store::issue_comments(&self.conn, issue.id)?;
         let code = if with_code {
             Some(placer.excerpt(&issue.anchor, &location))
         } else {
@@ -1090,6 +1128,13 @@ fn worktree_report(worktree: &Worktree, review_head: Option<&str>) -> Result<Wor
         branch: state.branch,
         modified: state.modified,
     })
+}
+
+/// Whether an issue is in file `path`: the file it was opened on, or the file its lines are in
+/// now after a rename.
+fn is_in_file(anchor: &Anchor, location: &Location, path: &str) -> bool {
+    anchor.path == path
+        || matches!(location, Location::Current { path: current, .. } if current == path)
 }
 
 /// Find the worktree containing `path` and require it to belong to `repo`.
