@@ -1181,12 +1181,12 @@ and M3.
 | MCP tool call with anchor validation           | < 50 ms p95  | 2–4 git subprocesses at est. 3–10 ms each. |
 | `start_review` with parent detection           | < 100 ms     | One `for-each-ref` call computes the distance to every local branch. |
 | `lani open` with a server already running      | < 100 ms     | Health check, redirect file, and spawning the opener. |
-| First render of a 2,000-line file              | < 250 ms     | est.; dominated by syntect, then cached. |
-| Cached page render                             | < 30 ms      | |
+| First render of a 2,000-line file              | < 250 ms     | Measured in M3: 47 ms in a release build, including loading the syntax set; dominated by syntect, then cached. |
+| Cached page render                             | < 30 ms      | Measured in M3: 13 ms for that file (a 1.6 MB page). |
 | RSS: `lani mcp`                                | < 15 MB      | |
-| RSS: `lani serve`                              | < 100 MB     | Includes the 32 MiB highlight cache cap and the syntax set. |
+| RSS: `lani serve`                              | < 100 MB     | Includes the 32 MiB highlight cache cap and the syntax set. Measured in M3: 17 MB after rendering that file. |
 | Idle CPU                                       | ~0           | MCP blocks on stdin. The server polls only while SSE clients are connected, and exits after the idle timeout. |
-| Release binary size                            | < 25 MB      | est. 10–20 MB with LTO and strip; the syntax set is the largest part. |
+| Release binary size                            | < 25 MB      | Measured in M3: 9.2 MB with LTO and strip (6.9 MB before the syntax set). |
 
 ---
 
