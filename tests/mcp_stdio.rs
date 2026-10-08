@@ -27,9 +27,16 @@ impl McpClient {
     }
 
     fn start_with_env(home: &Path, env: &[(&str, &str)]) -> Self {
+        Self::start_in(home, &std::env::current_dir().expect("test cwd"), env)
+    }
+
+    /// Start `lani mcp` with `cwd` as its working directory, as Claude Code starts it in the
+    /// session's directory.
+    fn start_in(home: &Path, cwd: &Path, env: &[(&str, &str)]) -> Self {
         let mut child = common::spawn(
             Command::new(env!("CARGO_BIN_EXE_lani"))
                 .arg("mcp")
+                .current_dir(cwd)
                 .env("LANI_HOME", home)
                 .envs(env.iter().copied())
                 .stdin(Stdio::piped())
@@ -693,4 +700,34 @@ fn values_copied_with_display_formatting_get_a_note() {
         error.contains("Note: base_ref is wrapped in double quotes."),
         "{error}"
     );
+}
+
+#[test]
+fn a_deleted_working_directory_does_not_break_git_calls() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    // Claude Code starts `lani mcp` in the session's directory, which may be removed while the
+    // session continues (a temporary worktree, say).
+    let session_dir = tempfile::tempdir().unwrap();
+    let cwd = std::fs::canonicalize(session_dir.path())
+        .unwrap()
+        .join("session");
+    std::fs::create_dir(&cwd).unwrap();
+    let mut client = McpClient::start_in(&home.path, &cwd, &[]);
+    client.ok(
+        "start_review",
+        json!({"repo_path": repo.path.to_str().unwrap(), "title": "t", "author": "reviewer",
+               "base_mode": "auto"}),
+    );
+    std::fs::remove_dir(&cwd).unwrap();
+    let review = client.ok("get_review", json!({"review_id": 1}));
+    assert!(
+        review.contains("merge-base"),
+        "git state is still read: {review}"
+    );
+    let issues = client.ok(
+        "list_issues",
+        json!({"review_id": 1, "status": "all", "detail": "full"}),
+    );
+    assert!(issues.contains("showing 0 all"), "{issues}");
 }

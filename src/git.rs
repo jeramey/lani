@@ -390,6 +390,11 @@ pub fn diff_commit_to_disk(toplevel: &Path, commit: &str, path: &str) -> Result<
 fn git_command() -> Command {
     let mut command = Command::new("git");
     command
+        // Run in `/`, never in this process's working directory: commands with `--git-dir` treat
+        // the working directory as the work tree, so they fail outright once it is deleted (the
+        // directory of the Claude session that started LANI often is) and would read its
+        // `.gitattributes`. `-C` paths are absolute, so they are unaffected.
+        .current_dir("/")
         .args(["--no-optional-locks", "-c", "core.quotePath=false"])
         .env("LC_ALL", "C")
         .env("GIT_LITERAL_PATHSPECS", "1")
@@ -437,6 +442,7 @@ fn check_git_version() -> std::result::Result<(), String> {
     let (min_major, min_minor) = MIN_GIT_VERSION;
     let output = Command::new("git")
         .arg("version")
+        .current_dir("/")
         .stdin(Stdio::null())
         .output()
         .map_err(|error| {

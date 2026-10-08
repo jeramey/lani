@@ -235,6 +235,9 @@ pub fn start_detached(
     }
     command
         .env("LANI_HOME", home)
+        // Like any daemon, don't pin the starting session's directory, which may be a temporary
+        // worktree that is deleted while the server keeps running.
+        .current_dir("/")
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
@@ -336,6 +339,7 @@ pub fn open_in_browser(home: &Path, server: &ServerFile, next: &str) -> Result<(
         });
     let mut child = Command::new(&opener)
         .arg(&path)
+        .current_dir("/")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

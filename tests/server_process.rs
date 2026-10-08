@@ -224,3 +224,60 @@ fn the_server_ignores_sighup_and_stops_cleanly_on_sigterm() {
         "No LANI server is running."
     );
 }
+
+#[test]
+fn the_server_does_not_depend_on_the_directory_it_was_started_from() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let repo = common::TestRepo::new(&[("a.txt", "a\n")]);
+    let mut service = lani::service::Service::open(&home.db_path()).unwrap();
+    service
+        .start_review(&lani::service::StartReview {
+            repo_path: &repo.path,
+            title: "t",
+            author: lani::model::Actor::Reviewer,
+            base_mode: lani::base::BaseMode::None,
+            summary: None,
+            head_ref: None,
+        })
+        .unwrap();
+    drop(service);
+
+    // Start the server from a directory that is then deleted, as when the Claude session that
+    // started it ends and its temporary worktree is removed.
+    let session_dir = tempfile::tempdir().unwrap();
+    let cwd = std::fs::canonicalize(session_dir.path())
+        .unwrap()
+        .join("session");
+    std::fs::create_dir(&cwd).unwrap();
+    let opened = common::output(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .args(["open", "--no-browser", "--print-url"])
+            .current_dir(&cwd)
+            .env("LANI_HOME", &home.path),
+    );
+    let port = port_of(&stdout(&opened));
+    std::fs::remove_dir(&cwd).unwrap();
+
+    let token = serde_json::from_str::<serde_json::Value>(
+        &std::fs::read_to_string(home.path.join("run/server.json")).unwrap(),
+    )
+    .unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "GET /reviews/1 HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\n\
+         Connection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "{}",
+        &response[..response.len().min(600)]
+    );
+}
