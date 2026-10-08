@@ -1207,8 +1207,12 @@ work on the review.
 
 - **The stream.** Each review page opens `GET /reviews/{id}/events`, a Server-Sent Events stream.
   While it is open, the server reads the review's latest event id every 500 ms, so it polls only
-  while a page is watching, and only that review. Every change to a review records an event, so
-  the id grows with every change.
+  while a page is watching, and only that review. Every change LANI stores records an event, so
+  the id grows with each of them.
+- **Repository changes.** A new commit on the head or the base, or a deleted branch, changes what
+  pages show (the head, the diff, which issues are outdated) without recording an event. Open
+  pages show it at the next recorded change, usually the reply that follows a commit, or on
+  reload. Watching the refs themselves is deferred (§21).
 - **Messages.**
   - `changed` when the id has grown; its SSE id is the new latest event. It is also sent once,
     with data `update`, when a newer lani is installed over the server's executable.
@@ -1644,6 +1648,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     should work in every browser, because a hostile page cannot request a path it does not know.
     The cost is a secret segment in every LANI URL.
 - Relocating a repo (re-pointing `git_dir` after the repo moves on disk).
+- Live updates for repository changes (§13.5): the stream could also compare the head and base
+  SHAs every few seconds. That is a git call per open stream per interval, so the §16 benchmarks
+  should decide it.
 - Keeping reviewed commits reachable through `refs/lani/*`. This writes to the repo, so it would
   need an explicit opt-in.
 - A Claude Code plugin with slash commands (`/lani-review`, `/lani-fix`).
