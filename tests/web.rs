@@ -1220,6 +1220,78 @@ async fn the_changes_view_does_not_depend_on_the_users_git_config() {
 }
 
 #[tokio::test]
+async fn span_links_lead_to_the_section_of_the_change_that_shows_them() {
+    let f = fixture();
+    let repo = TestRepo::new(&[("README.md", "Read me.\n"), ("src/lib.rs", &numbered(20))]);
+    repo.switch_new("feature");
+    repo.git(&["mv", "src/lib.rs", "src/core.rs"]);
+    repo.write(
+        "src/core.rs",
+        &numbered(20).replace("line 5\n", "line five\n"),
+    );
+    let head = repo.commit_all("rename and spell out five");
+    let repo_path = repo.path.clone();
+    let (review_id, renamed, unchanged) = f
+        .state
+        .call(move |service| {
+            let review_id = service
+                .start_review(&StartReview {
+                    repo_path: &repo_path,
+                    title: "Rename",
+                    author: Actor::Reviewer,
+                    base_mode: BaseMode::Auto,
+                    summary: None,
+                    head_ref: None,
+                })?
+                .view
+                .review
+                .id;
+            let issue = |path, side, text| CreateIssue {
+                review_id,
+                author: Actor::Reviewer,
+                title: "A problem",
+                severity: Severity::Low,
+                body: "Look.",
+                spans: vec![SpanRequest {
+                    path,
+                    side,
+                    start_line: 1,
+                    end_line: 1,
+                    start_line_text: Some(text),
+                }],
+                commit: &head,
+                worktree_path: if side == Side::Head {
+                    Some(&repo_path)
+                } else {
+                    None
+                },
+                read_merge_base: None,
+            };
+            // The removed side of the renamed file is at its old path.
+            let renamed = service.create_issue(&issue("src/lib.rs", Side::Base, "line 1"))?;
+            let unchanged = service.create_issue(&issue("README.md", Side::Head, "Read me."))?;
+            Ok((review_id, renamed.issue.id, unchanged.issue.id))
+        })
+        .await
+        .unwrap();
+    let issue_page = |issue_id: i64| format!("/reviews/{review_id}/issues/{issue_id}");
+
+    let (status, _, page) = send(&f.app, get(&issue_page(renamed))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let section = "file-7372632f636f72652e7273"; // "src/core.rs" in hex
+    assert!(
+        page.contains(&format!("href=\"/reviews/{review_id}/changes#{section}\"")),
+        "the link leads to the renamed file's section: {page}"
+    );
+    let (_, _, page) = send(&f.app, get(&issue_page(unchanged))).await;
+    assert!(page.contains(">View in file</a>"), "{page}");
+    assert!(
+        !page.contains("View in changes"),
+        "the review does not change README.md: {page}"
+    );
+}
+
+#[tokio::test]
 async fn a_whole_tree_review_has_no_changes_view() {
     let f = fixture();
     let review_id = f.review_id;

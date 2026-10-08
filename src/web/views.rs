@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use crate::error::Error;
+use crate::git::FileChange;
 use crate::model::{
     Actor, Anchor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Severity,
     Side, short_ref, short_sha,
@@ -566,9 +567,10 @@ pub struct SpanView {
 }
 
 /// The spans of an issue. `with_code` adds each span's code (the view must have been loaded with
-/// code); `has_diff` adds links to the Changes view.
+/// code); `changes`, the review's file changes, gives the spans they show links to the Changes
+/// view.
 #[must_use]
-pub fn span_views(view: &IssueView, with_code: bool, has_diff: bool) -> Vec<SpanView> {
+pub fn span_views(view: &IssueView, with_code: bool, changes: &[FileChange]) -> Vec<SpanView> {
     let codes = view.code.as_deref().unwrap_or_default();
     let numbered = view.locations.len() > 1;
     (1..)
@@ -583,7 +585,7 @@ pub fn span_views(view: &IssueView, with_code: bool, has_diff: bool) -> Vec<Span
                 .get(number - 1)
                 .filter(|_| with_code)
                 .map(|excerpt| span_code(anchor, location, excerpt, numbered.then_some(number))),
-            links: span_links(view.issue.review_id, anchor, location, has_diff),
+            links: span_links(view.issue.review_id, anchor, location, changes),
         })
         .collect()
 }
@@ -656,9 +658,9 @@ pub struct ThreadView {
 }
 
 /// An issue's thread for a code view at `back`. `with_code` adds each span's code, for threads
-/// that are not shown under their own lines.
+/// that are not shown under their own lines; `changes` is as for [`span_views`].
 #[must_use]
-pub fn thread(view: &IssueView, back: &str, with_code: bool, has_diff: bool) -> ThreadView {
+pub fn thread(view: &IssueView, back: &str, with_code: bool, changes: &[FileChange]) -> ThreadView {
     let issue = &view.issue;
     let (status_label, status_class) = issue_status(issue.status, issue.resolved_by);
     let url = issue_url(issue.review_id, issue.id);
@@ -672,7 +674,7 @@ pub fn thread(view: &IssueView, back: &str, with_code: bool, has_diff: bool) -> 
         resolved: issue.status == IssueStatus::Resolved,
         opened_by: author(issue.author),
         question: question_notice(issue),
-        spans: span_views(view, with_code, has_diff),
+        spans: span_views(view, with_code, changes),
         comments: view
             .comments
             .iter()
@@ -815,8 +817,13 @@ pub struct Link {
 }
 
 /// Links from a span to its lines in the code views: the Files view for side `head`, and the
-/// Changes view when the review has a diff.
-fn span_links(review_id: i64, anchor: &Anchor, location: &Location, has_diff: bool) -> Vec<Link> {
+/// section of the Changes view that shows the span's file, if one of `changes` does.
+fn span_links(
+    review_id: i64,
+    anchor: &Anchor,
+    location: &Location,
+    changes: &[FileChange],
+) -> Vec<Link> {
     let Location::Current {
         path,
         start_line,
@@ -836,10 +843,21 @@ fn span_links(review_id: i64, anchor: &Anchor, location: &Location, has_diff: bo
             ),
         });
     }
-    if has_diff {
+    // The change with the span's path on the span's side. Its section is named by its new
+    // path, so a base-side span in a renamed file links to the new path's section.
+    let change = changes.iter().find(|change| {
+        let version = match anchor.side {
+            Side::Head => &change.new,
+            Side::Base => &change.old,
+        };
+        version
+            .as_ref()
+            .is_some_and(|version| version.path == *path)
+    });
+    if let Some(change) = change {
         links.push(Link {
             label: "View in changes".to_string(),
-            url: format!("{}#{}", changes_url(review_id), file_anchor(path)),
+            url: format!("{}#{}", changes_url(review_id), file_anchor(change.path())),
         });
     }
     links

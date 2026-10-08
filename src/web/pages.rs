@@ -297,7 +297,7 @@ pub async fn issue(
     State(state): State<AppState>,
     Path((review_id, issue_id)): Path<(i64, i64)>,
 ) -> Result<Html<String>, PageError> {
-    let (detail, view) = state
+    let (detail, view, changes) = state
         .call(move |service| {
             let view = service.get_issue(issue_id)?;
             if view.issue.review_id != review_id {
@@ -305,7 +305,9 @@ pub async fn issue(
                     "issue {issue_id} is not part of review {review_id}"
                 )));
             }
-            Ok((service.get_review(review_id, None)?, view))
+            let detail = service.get_review(review_id, None)?;
+            let changes = crate::service::review_changes(&detail.view)?;
+            Ok((detail, view, changes))
         })
         .await?;
     let issue = &view.issue;
@@ -333,7 +335,7 @@ pub async fn issue(
         opened_by: author(issue.author),
         opened: time::to_local(&issue.created_at),
         question: views::question_notice(issue),
-        spans: views::span_views(&view, true, detail.view.review.base_ref.is_some()),
+        spans: views::span_views(&view, true, &changes),
         comments: view.comments.iter().map(views::comment).collect(),
         status_action: format!("{}/status", views::issue_url(review_id, issue_id)),
         comment_action: format!("{}/comments", views::issue_url(review_id, issue_id)),

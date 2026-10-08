@@ -8,7 +8,7 @@ mod code;
 
 pub use code::{
     ChangedFile, ChangesView, DirectoryEntry, FileContent, FileDiff, FileText, MAX_DISPLAY_BYTES,
-    MAX_EXPANDED_CHANGES, PathContent, PathView,
+    MAX_EXPANDED_CHANGES, PathContent, PathView, review_changes,
 };
 
 use std::collections::HashMap;

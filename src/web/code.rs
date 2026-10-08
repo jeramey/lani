@@ -11,7 +11,7 @@ use super::AppState;
 use super::views::{self, Crumb, MarkerView, PageError, ReviewHeader, ThreadView};
 use serde::Deserialize;
 
-use crate::git::{DiffHunk, EntryKind, RowKind};
+use crate::git::{DiffHunk, EntryKind, FileChange, RowKind};
 use crate::highlight::{self, HighlightedLines};
 use crate::model::{Anchor, IssueStatus, ReviewStatus, Side, short_sha};
 use crate::service::{
@@ -234,7 +234,6 @@ fn file_page(
                 .collect()
         })
         .unwrap_or_default();
-    let has_diff = view.view.review.base_ref.is_some();
     let mut other_threads = Vec::new();
     for issue in &issues {
         // The last lines of this issue's current spans in this file, in file order. The thread
@@ -251,12 +250,12 @@ fn file_page(
             Some((&first, rest)) => {
                 lines[first - 1]
                     .threads
-                    .push(views::thread(issue, &back, false, has_diff));
+                    .push(views::thread(issue, &back, false, &view.changes));
                 for &end_line in rest {
                     lines[end_line - 1].markers.push(views::marker(issue));
                 }
             }
-            None => other_threads.push(views::thread(issue, &back, true, has_diff)),
+            None => other_threads.push(views::thread(issue, &back, true, &view.changes)),
         }
     }
     Ok(FilePage {
@@ -565,6 +564,7 @@ fn place_threads(
     (head, merge_base): (&str, &str),
     back: &str,
 ) {
+    let changes: Vec<FileChange> = files.iter().map(|file| file.change.clone()).collect();
     // Every issue's rows on the page, as (section, hunk, row); an issue is listed under each
     // file it has a span in.
     let mut rows: HashMap<i64, Vec<(usize, usize, usize)>> = HashMap::new();
@@ -602,12 +602,12 @@ fn place_threads(
             let Some((&(section, hunk, row), rest)) = positions.split_first() else {
                 sections[index]
                     .other_threads
-                    .push(views::thread(issue, back, true, true));
+                    .push(views::thread(issue, back, true, &changes));
                 continue;
             };
             sections[section].hunks[hunk].rows[row]
                 .threads
-                .push(views::thread(issue, back, false, true));
+                .push(views::thread(issue, back, false, &changes));
             for &(section, hunk, row) in rest {
                 sections[section].hunks[hunk].rows[row]
                     .markers

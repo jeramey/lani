@@ -24,6 +24,8 @@ pub struct PathView {
     /// The path shown, relative to the repository root; `""` for the root directory.
     pub path: String,
     pub content: PathContent,
+    /// The review's file changes, for links to the Changes view ([`review_changes`]).
+    pub changes: Vec<FileChange>,
 }
 
 #[derive(Debug)]
@@ -78,7 +80,14 @@ impl Service {
         let view = self.review_view(store::get_review(&self.conn, review_id)?, true)?;
         let head = code_head(&view)?;
         let git = Git::new(&view.repo.git_dir);
-        let changed = changed_paths(&git, &view)?;
+        let changes = review_changes(&view)?;
+        // Paths the review's changes touch, on either side of a rename.
+        let changed_paths: HashSet<&str> = changes
+            .iter()
+            .flat_map(|change| [&change.old, &change.new])
+            .flatten()
+            .map(|version| version.path.as_str())
+            .collect();
         let entry = if path.is_empty() {
             None
         } else {
@@ -94,7 +103,7 @@ impl Service {
         let content = match entry {
             Some(entry) if entry.kind != EntryKind::Directory => PathContent::File {
                 file: read_content(&git, &entry)?,
-                changed: changed.contains(path),
+                changed: changed_paths.contains(path),
                 issues: self.issues_in_file(&view, path)?,
             },
             _ => {
@@ -102,7 +111,7 @@ impl Service {
                 let entries = git
                     .list_directory(&head, path)?
                     .into_iter()
-                    .map(|entry| directory_entry(entry, &changed, &open))
+                    .map(|entry| directory_entry(entry, &changed_paths, &open))
                     .collect();
                 PathContent::Directory(entries)
             }
@@ -112,6 +121,7 @@ impl Service {
             head,
             path: path.to_string(),
             content,
+            changes,
         })
     }
 
@@ -173,29 +183,25 @@ pub(super) fn code_head(view: &ReviewView) -> Result<String> {
         })
 }
 
-/// Paths the review's changes touch, on either side of a rename; empty for a whole-tree review.
-fn changed_paths(git: &Git, view: &ReviewView) -> Result<HashSet<String>> {
+/// The files the review's changes touch, from the merge-base to the head, in the Changes view's
+/// order. Empty for a whole-tree review, and when the repository, the head or the merge-base is
+/// missing (`view` must have been loaded with git state).
+pub fn review_changes(view: &ReviewView) -> Result<Vec<FileChange>> {
     let Some((merge_base, head)) = view
         .git
         .as_ref()
         .and_then(|state| Some((state.merge_base.as_ref()?, state.head_sha.as_ref()?)))
     else {
-        return Ok(HashSet::new());
+        return Ok(Vec::new());
     };
-    Ok(git
-        .file_changes(merge_base, head)?
-        .into_iter()
-        .flat_map(|change| [change.old, change.new])
-        .flatten()
-        .map(|version| version.path)
-        .collect())
+    Git::new(&view.repo.git_dir).file_changes(merge_base, head)
 }
 
 /// A directory entry with its marks. `open` holds each open issue's paths; an issue counts once
 /// for an entry however many of its spans are inside it.
 fn directory_entry(
     entry: TreeEntry,
-    changed: &HashSet<String>,
+    changed: &HashSet<&str>,
     open: &[Vec<String>],
 ) -> DirectoryEntry {
     let inside = |path: &str| {

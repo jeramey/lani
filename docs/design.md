@@ -1154,7 +1154,9 @@ back to the page (303 See Other); M4 may add htmx fragments for live updates:
   - **No placeable span:** an issue with no span on a shown line is listed in a box at the top of
     its file (in the Changes view, its first file on the page), with every span's snippet. That
     covers outdated issues and, in the diff view, spans outside the hunks.
-  - **Issue page:** lists every span with its location, its code, and links to both views.
+  - **Issue page:** lists every span with its location, its code, and links to both views: to
+    the Files view for a head-side span, and to the section of the Changes view that shows the
+    span's file, when the review's diff changes it.
   - **Files tree:** counts an issue once for a file or directory, however many of its spans are
     inside.
   - **Creating:** a new issue from the web UI has one span, the selected range.
