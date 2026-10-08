@@ -46,8 +46,10 @@ const EXACT_HUNKS: [&str; 5] = [
     "--no-textconv",
 ];
 
-/// The result of checking the `git` on PATH, computed once per process.
-static GIT_CHECK: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+/// Set once the `git` on PATH has passed [`check_git_version`]. Only success is remembered: after
+/// a failure the next git call checks again, so installing or upgrading git takes effect without
+/// restarting a long-running `lani serve` or `lani mcp`.
+static GIT_SUPPORTED: OnceLock<()> = OnceLock::new();
 
 /// A line-range change from a unified diff hunk header
 /// `@@ -old_start,old_count +new_start,new_count @@`.
@@ -451,10 +453,19 @@ fn run(mut command: Command, accepted_exit_codes: &[i32]) -> Result<Output> {
 /// Fail with an actionable message if the `git` on PATH is missing or older than
 /// [`MIN_GIT_VERSION`], instead of letting a newer git feature fail with a raw error later.
 fn require_supported_git() -> Result<()> {
-    GIT_CHECK
-        .get_or_init(check_git_version)
-        .clone()
-        .map_err(Error::Unavailable)
+    check_until_passed(&GIT_SUPPORTED, check_git_version)
+}
+
+/// Run `check` on every call until it passes once, and skip it on later calls.
+fn check_until_passed(
+    passed: &OnceLock<()>,
+    check: impl FnOnce() -> std::result::Result<(), String>,
+) -> Result<()> {
+    if passed.get().is_none() {
+        check().map_err(Error::Unavailable)?;
+        passed.get_or_init(|| ());
+    }
+    Ok(())
 }
 
 fn check_git_version() -> std::result::Result<(), String> {
@@ -687,6 +698,34 @@ mod tests {
                 .unwrap_err()
                 .contains("could not read the version")
         );
+    }
+
+    #[test]
+    fn only_a_passing_git_check_is_remembered() {
+        let passed = OnceLock::new();
+        let checks = std::cell::Cell::new(0);
+        let failing = || {
+            checks.set(checks.get() + 1);
+            Err("LANI needs git 2.41 or newer".to_string())
+        };
+        assert!(matches!(
+            check_until_passed(&passed, failing),
+            Err(Error::Unavailable(message)) if message == "LANI needs git 2.41 or newer"
+        ));
+        assert!(check_until_passed(&passed, failing).is_err());
+        assert_eq!(
+            checks.get(),
+            2,
+            "a failed check runs again on the next call"
+        );
+
+        let passing = || {
+            checks.set(checks.get() + 1);
+            Ok(())
+        };
+        check_until_passed(&passed, passing).unwrap();
+        check_until_passed(&passed, failing).unwrap();
+        assert_eq!(checks.get(), 3, "a passed check does not run again");
     }
 
     #[test]
