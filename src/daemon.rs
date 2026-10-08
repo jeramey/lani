@@ -4,10 +4,12 @@
 //!
 //! This module is synchronous: it is used by the CLI and by the MCP server's `open_web_ui` tool.
 
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -17,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::text::quoted;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// How long to wait for a health check or shutdown response.
@@ -225,7 +228,7 @@ pub fn start_detached(
         .truncate(true)
         .mode(0o600)
         .open(log_path(home))?;
-    let mut command = Command::new(std::env::current_exe()?);
+    let mut command = Command::new(executable_to_run(&std::env::current_exe()?)?);
     command.arg("serve");
     if let Some(port) = port {
         command.args(["--port", &port.to_string()]);
@@ -246,6 +249,32 @@ pub fn start_detached(
         .process_group(0);
     let child = command.spawn()?;
     wait_until_running(home, child)
+}
+
+/// The `lani` binary to start the server from, given this process's [`std::env::current_exe`].
+///
+/// On Linux that reads `/proc/self/exe`, which shows `<path> (deleted)` once the binary is
+/// replaced on disk, as `cargo install` does. The path without the suffix is the replacement, so
+/// run that; [`RunningServer::version_warning`] covers a version difference.
+fn executable_to_run(current: &Path) -> Result<PathBuf> {
+    if current.exists() {
+        return Ok(current.to_path_buf());
+    }
+    if let Some(original) = current
+        .as_os_str()
+        .as_bytes()
+        .strip_suffix(b" (deleted)")
+        .map(|original| Path::new(OsStr::from_bytes(original)))
+        && original.exists()
+    {
+        return Ok(original.to_path_buf());
+    }
+    Err(Error::Unavailable(format!(
+        "cannot start the LANI server: the lani binary this process was started from, {}, has been \
+         removed or replaced. Restart this process (for `lani mcp`, the Claude Code session), or \
+         start the server with `lani open`.",
+        quoted(&current.display().to_string())
+    )))
 }
 
 fn wait_until_running(home: &Path, mut child: Child) -> Result<RunningServer> {
@@ -459,6 +488,30 @@ fn escape_html(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_binary_is_run_from_its_original_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let installed = directory.path().join("lani");
+        std::fs::write(&installed, "").unwrap();
+        assert_eq!(executable_to_run(&installed).unwrap(), installed);
+
+        // What Linux reports for a binary that `cargo install` renamed a new file over.
+        let replaced = directory.path().join("lani (deleted)");
+        assert_eq!(executable_to_run(&replaced).unwrap(), installed);
+
+        std::fs::remove_file(&installed).unwrap();
+        for gone in [&replaced, &installed] {
+            match executable_to_run(gone) {
+                Err(Error::Unavailable(message)) => assert!(
+                    message.contains("has been removed or replaced")
+                        && message.contains(&quoted(&gone.display().to_string())),
+                    "{message}"
+                ),
+                other => panic!("expected Unavailable, got {other:?}"),
+            }
+        }
+    }
 
     #[test]
     fn random_hex_has_the_requested_length() {

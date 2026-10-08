@@ -848,6 +848,10 @@ routine:
 2. Otherwise, start the server: re-exec `current_exe()` as `lani serve --detach` in a new process
    group, with stdin from `/dev/null` and stdout and stderr going to `logs/server.log`. The server
    ignores SIGHUP, so it survives both the Claude session and the terminal that started it.
+   On Linux, `current_exe()` reads `/proc/self/exe`, which shows `<path> (deleted)` once the
+   binary has been replaced on disk, as `cargo install` does. LANI then runs `<path>`, the
+   replacement, and the version-mismatch warning below covers the difference. If neither path
+   exists, the error says the binary was removed or replaced and the process must be restarted.
 3. Wait up to 5 s for `server.json` to show a new `instance_id` that passes the health check.
 4. Open the browser (§13.2).
 
