@@ -50,7 +50,9 @@
     <summary>Edit summary</summary>
     <form method="post" action="{{ review.url }}/summary">
       <input type="hidden" name="version" value="{{ summary_version }}">
-      <textarea name="summary" rows="10" aria-label="Summary">{{ summary_text }}</textarea>
+      {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
+      <textarea name="summary" rows="10" aria-label="Summary">
+{{ summary_text }}</textarea>
       <div class="form-actions"><button type="submit">Save summary</button></div>
     </form>
   </details>

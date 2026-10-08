@@ -12,7 +12,9 @@
     <summary>Edit</summary>
     <form method="post" action="{{ comment.edit_action }}">
       <input type="hidden" name="version" value="{{ comment.version }}">
-      <textarea name="body" rows="8" required>{{ comment.body }}</textarea>
+      {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
+      <textarea name="body" rows="8" required>
+{{ comment.body }}</textarea>
       <div class="form-actions"><button type="submit">Save</button></div>
     </form>
   </details>

@@ -11,7 +11,9 @@
   <form method="post" action="{{ action }}" class="panel">
     <h2>Your version</h2>
     <input type="hidden" name="version" value="{{ version }}">
-    <textarea name="{{ field }}" rows="10" aria-label="Your version">{{ yours }}</textarea>
+    {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
+    <textarea name="{{ field }}" rows="10" aria-label="Your version">
+{{ yours }}</textarea>
     <div class="form-actions"><button type="submit">Save my version</button> <a href="{{ cancel }}">Discard my version</a></div>
   </form>
 </section>

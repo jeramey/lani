@@ -641,6 +641,146 @@ async fn browser_line_endings_do_not_count_as_edits() {
     assert_eq!(last.body, "first\nsecond", "stored with LF line endings");
 }
 
+/// The values a browser shows in a page's textareas: the HTML parser drops one newline right
+/// after a `<textarea>` start tag, then decodes character references.
+fn textarea_values(page: &str) -> Vec<String> {
+    page.split("<textarea")
+        .skip(1)
+        .map(|rest| {
+            let content = &rest[rest.find('>').unwrap() + 1..rest.find("</textarea>").unwrap()];
+            let content = content.strip_prefix('\n').unwrap_or(content);
+            decode_references(content)
+        })
+        .collect()
+}
+
+/// Decode the character references an HTML escaper writes: `&#60;`, `&#x3C;` and `&lt;` forms.
+fn decode_references(text: &str) -> String {
+    let mut decoded = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        let end = start + rest[start..].find(';').unwrap();
+        let name = &rest[start + 1..end];
+        let character = match name {
+            "lt" => '<',
+            "gt" => '>',
+            "amp" => '&',
+            "quot" => '"',
+            "apos" => '\'',
+            _ => {
+                let code = match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+                    Some(hex) => u32::from_str_radix(hex, 16).unwrap(),
+                    None => name.strip_prefix('#').unwrap().parse().unwrap(),
+                };
+                char::from_u32(code).unwrap()
+            }
+        };
+        decoded.push(character);
+        rest = &rest[end + 1..];
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
+/// `text` as a form value, percent-encoded the way browsers submit it.
+fn form_value(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn text_that_starts_with_a_newline_survives_every_textarea() {
+    let f = fixture();
+    let review_url = format!("/reviews/{}", f.review_id);
+    let issue_url = format!("{review_url}/issues/{}", f.issue_id);
+    let summary = "\nAfter a blank line, <b>bold</b> & more.";
+    let body = "\n\nTwo blank lines first.";
+    send(
+        &f.app,
+        post(
+            &format!("{review_url}/summary"),
+            &format!("version=1&summary={}", form_value(summary)),
+        ),
+    )
+    .await;
+    let edit_url = format!("/comments/{}/edit", f.issue_comment_id);
+    send(
+        &f.app,
+        post(&edit_url, &format!("version=1&body={}", form_value(body))),
+    )
+    .await;
+
+    // Saving each editor's text back unchanged, as a browser submits it, is not an edit.
+    let (_, _, page) = send(&f.app, get(&review_url)).await;
+    assert!(
+        textarea_values(&page).contains(&summary.to_string()),
+        "{page}"
+    );
+    let (_, _, page) = send(&f.app, get(&issue_url)).await;
+    assert!(textarea_values(&page).contains(&body.to_string()), "{page}");
+    send(
+        &f.app,
+        post(
+            &format!("{review_url}/summary"),
+            &format!("version=2&summary={}", form_value(summary)),
+        ),
+    )
+    .await;
+    send(
+        &f.app,
+        post(&edit_url, &format!("version=2&body={}", form_value(body))),
+    )
+    .await;
+    let (review_id, comment_id) = (f.review_id, f.issue_comment_id);
+    let (comment, detail) = f
+        .state
+        .call(move |service| {
+            Ok((
+                service.get_comment(comment_id)?,
+                service.get_review(review_id, None)?,
+            ))
+        })
+        .await
+        .unwrap();
+    assert_eq!((comment.body.as_str(), comment.version), (body, 2));
+    let review = &detail.view.review;
+    assert_eq!(
+        (review.summary.as_str(), review.summary_version),
+        (summary, 2)
+    );
+
+    // A conflict page shows the text that was not saved.
+    let mine = "\nMine.";
+    let (status, _, page) = send(
+        &f.app,
+        post(&edit_url, &format!("version=1&body={}", form_value(mine))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(textarea_values(&page), vec![mine.to_string()], "{page}");
+
+    // So does an error page.
+    send(&f.app, post(&format!("{review_url}/close"), "")).await;
+    let late = "\nToo late.";
+    let (status, _, page) = send(
+        &f.app,
+        post(
+            &format!("{review_url}/comments"),
+            &format!("body={}", form_value(late)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(textarea_values(&page), vec![late.to_string()], "{page}");
+}
+
 #[tokio::test]
 async fn pages_still_render_when_the_repository_is_gone() {
     let f = fixture();

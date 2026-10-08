@@ -596,6 +596,10 @@ object database, the issue is treated as outdated.
   - The web UI shows *edited by you* on a Claude comment you changed.
   - MCP output shows *edited by human*, so Claude knows the text is no longer purely its own.
   - The summary shows who last edited it.
+- **Saving unchanged text is not an edit.** Line endings are stored as LF, so a browser's CRLF
+  doesn't count as a change, and a save that leaves the text identical records nothing. The web
+  editors show text exactly as stored, including a leading newline, which HTML parsers would
+  otherwise drop after a `<textarea>` tag.
 - **No drafts.** Everything is visible to all parties as soon as it is posted. You shape the review
   by editing any text, adding issues and comments, and resolving issues.
 
