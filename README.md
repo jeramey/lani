@@ -155,4 +155,4 @@ The design, including the MCP interface, the security model and the performance 
 
 ## License
 
-MIT, as declared in `Cargo.toml`.
+MIT; see [`LICENSE`](LICENSE).
