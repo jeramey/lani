@@ -219,13 +219,6 @@ impl IssueView {
     pub fn spans(&self) -> impl Iterator<Item = (&Anchor, &Location)> {
         self.issue.anchors.iter().zip(&self.locations)
     }
-
-    /// Whether any span is in file `path`: where it was opened, or where its lines are now.
-    #[must_use]
-    pub fn is_in_file(&self, path: &str) -> bool {
-        self.spans()
-            .any(|(anchor, location)| is_in_file(anchor, location, path))
-    }
 }
 
 #[derive(Clone, Debug)]
