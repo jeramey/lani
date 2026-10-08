@@ -618,6 +618,8 @@ fn git_command() -> Command {
         // `.gitattributes`. `-C` paths are absolute, so they are unaffected.
         .current_dir("/")
         .args(["--no-optional-locks", "-c", "core.quotePath=false"])
+        // A blank context line in a diff must start with a space like any other (`parse_diff`).
+        .args(["-c", "diff.suppressBlankEmpty=false"])
         .env("LC_ALL", "C")
         .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(Stdio::null());

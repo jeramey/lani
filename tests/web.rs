@@ -1185,6 +1185,41 @@ async fn large_binary_and_renamed_files_are_described_and_large_diffs_load_on_re
 }
 
 #[tokio::test]
+async fn the_changes_view_does_not_depend_on_the_users_git_config() {
+    let f = fixture();
+    let repo = TestRepo::new(&[("notes.txt", "a\n\nb\nc\n")]);
+    repo.switch_new("feature");
+    repo.write("notes.txt", "a\n\nB\nc\n");
+    repo.commit_all("capitalize b");
+    // This prints the blank context line above the change as an empty line, not a single space.
+    repo.git(&["config", "diff.suppressBlankEmpty", "true"]);
+    let repo_path = repo.path.clone();
+    let review_id = f
+        .state
+        .call(move |service| {
+            let started = service.start_review(&StartReview {
+                repo_path: &repo_path,
+                title: "Capitalize b",
+                author: Actor::Reviewer,
+                base_mode: BaseMode::Auto,
+                summary: None,
+                head_ref: None,
+            })?;
+            Ok(started.view.review.id)
+        })
+        .await
+        .unwrap();
+    let (status, _, page) = send(&f.app, get(&format!("/reviews/{review_id}/changes"))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("1 file · +1 −1"), "{page}");
+    let anchor = "file-6e6f7465732e747874"; // "notes.txt" in hex
+    assert!(
+        page.contains(&format!("id=\"{anchor}-H2\"")),
+        "the blank line is shown: {page}"
+    );
+}
+
+#[tokio::test]
 async fn a_whole_tree_review_has_no_changes_view() {
     let f = fixture();
     let review_id = f.review_id;

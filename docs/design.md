@@ -436,7 +436,8 @@ Rules for every invocation:
 - **No redirection.** Environment variables that would point git at another repository or index
   (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and similar) are removed from every invocation.
 - **Stable output.** These overrides make output independent of user config: `-c
-  core.quotePath=false`, `--no-color --no-ext-diff --no-textconv`, and `LC_ALL=C`. From unified
+  core.quotePath=false`, `-c diff.suppressBlankEmpty=false` (otherwise a blank context line has
+  no leading space), `--no-color --no-ext-diff --no-textconv`, and `LC_ALL=C`. From unified
   diffs LANI reads only `@@` hunk headers and the first character of each hunk line, never file
   headers. Paths come from `-z` name-status or raw output, and line text from the blobs. That is
   why the diff view runs one `git diff` per file: splitting a multi-file diff would mean matching
