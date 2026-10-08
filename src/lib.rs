@@ -8,6 +8,7 @@ pub mod base;
 pub mod daemon;
 pub mod error;
 pub mod git;
+pub mod highlight;
 pub mod markdown;
 pub mod mcp;
 pub mod model;

@@ -187,6 +187,7 @@ pub fn router(state: AppState) -> Router {
             get(pages::settings).post(actions::save_settings),
         )
         .route("/static/lani.css", get(pages::stylesheet))
+        .route("/static/highlight.css", get(pages::highlight_stylesheet))
         .route("/login", get(auth::login))
         .route("/api/health", get(pages::health))
         .route("/api/shutdown", post(actions::shutdown))

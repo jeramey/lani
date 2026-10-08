@@ -383,6 +383,14 @@ pub async fn stylesheet() -> impl IntoResponse {
     )
 }
 
+/// `GET /static/highlight.css`: colours for highlighted code (§13.6).
+pub async fn highlight_stylesheet() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        crate::highlight::theme_css(),
+    )
+}
+
 pub async fn not_found() -> PageError {
     PageError::new(
         StatusCode::NOT_FOUND,

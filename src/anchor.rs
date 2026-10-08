@@ -35,6 +35,26 @@ pub fn validate_path(path: &str) -> Result<()> {
     }
 }
 
+/// Whether file content is binary: it has a NUL byte near the start, as git also judges.
+#[must_use]
+pub fn is_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0)
+}
+
+/// Split file content into lines, without line terminators (`\n` or `\r\n`). Invalid UTF-8 is
+/// replaced. Anchors and every code view number lines this way, so their numbers agree.
+#[must_use]
+pub fn split_lines(bytes: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let body = text.strip_suffix('\n').unwrap_or(&text);
+    body.split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .collect()
+}
+
 /// A text file split into lines. Line numbers are 1-based.
 #[derive(Clone, Debug)]
 pub struct FileLines {
@@ -45,23 +65,15 @@ impl FileLines {
     /// Split file content into lines, without line terminators (`\n` or `\r\n`).
     /// Binary files are rejected because issues cannot be anchored to them.
     pub fn from_bytes(path: &str, bytes: &[u8]) -> Result<Self> {
-        let sniffed = &bytes[..bytes.len().min(BINARY_SNIFF_BYTES)];
-        if sniffed.contains(&0) {
+        if is_binary(bytes) {
             return Err(Error::Invalid(format!(
                 "{} is a binary file; issues can only be anchored to text files",
                 crate::text::quoted(path)
             )));
         }
-        let text = String::from_utf8_lossy(bytes);
-        let body = text.strip_suffix('\n').unwrap_or(&text);
-        let lines = if text.is_empty() {
-            Vec::new()
-        } else {
-            body.split('\n')
-                .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
-                .collect()
-        };
-        Ok(Self { lines })
+        Ok(Self {
+            lines: split_lines(bytes),
+        })
     }
 
     #[must_use]

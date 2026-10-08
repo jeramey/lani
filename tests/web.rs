@@ -398,6 +398,21 @@ async fn pages_render_with_security_headers() {
             .unwrap()
             .starts_with("text/css")
     );
+    let (status, headers, css) = send(&f.app, get("/static/highlight.css")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("text/css")
+    );
+    assert!(
+        css.contains(".hl-comment"),
+        "{}",
+        &css[..css.len().min(300)]
+    );
 
     assert_eq!(send(&f.app, get("/nowhere")).await.0, StatusCode::NOT_FOUND);
     assert_eq!(

@@ -1028,15 +1028,19 @@ redirect back to the page (303 See Other); M3 and M4 add htmx fragments for inli
     compatibility.
   - Output uses CSS classes rather than inline styles, which keeps it CSP-compatible and allows
     light and dark themes through `prefers-color-scheme`.
-  - The theme CSS is generated once and served as a static file.
+  - The theme CSS is generated once and served as a static file (`/static/highlight.css`). It
+    uses InspiredGitHub for light mode and OneHalfDark for dark mode. Each theme's rules sit
+    inside its own media query, because one theme styles scopes the other leaves alone, and a
+    light colour must not leak into dark mode.
 - **Language detection.** By file name or extension, then by the first line (shebang or modeline),
   falling back to plain text.
 - **Per-line output.** The whole file is highlighted with syntect's line-by-line parser, so
   multi-line constructs are correct. Each line is emitted as a balanced HTML fragment, with scopes
   re-opened at the start of each line. The file view, diff rows and snippets all index into this
   per-line array.
-- **Caching.** An in-memory LRU, capped at 32 MiB, keyed by blob SHA. Blobs are content-addressed,
-  so cached entries are never stale. The syntax set loads lazily on first use, at an estimated
+- **Caching.** An in-memory LRU, capped at 32 MiB of HTML, keyed by blob SHA and file name. The
+  file name is part of the key because it selects the language, so the same blob under two names
+  can highlight differently. Blobs are content-addressed, so cached entries are never stale. The syntax set loads lazily on first use, at an estimated
   20–60 ms once per server lifetime.
 - **Limits.**
   - Files over 1 MiB or 20,000 lines render as plain text.
@@ -1052,7 +1056,8 @@ Comments and summaries are rendered with **comrak**:
 - GitHub-flavored extensions are on: tables, task lists, strikethrough and autolinks.
 - Raw HTML is disabled, which is comrak's default. That setting also drops dangerous link schemes
   such as `javascript:`.
-- Fenced code blocks use the same syntect highlighter (from M3; plain until then).
+- Fenced code blocks use the same syntect highlighter, chosen by the fence's language token
+  (` ```rust `); unknown languages are shown as plain text.
 - Links open in the same tab, and `Referrer-Policy: same-origin` keeps LANI URLs from leaking to
   linked sites, so no `rel` attributes are needed.
 - One-line previews in lists render the first line of a description as inline Markdown.

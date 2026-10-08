@@ -2,10 +2,50 @@
 //!
 //! Raw HTML is never passed through: comrak escapes it (its default), and the same setting drops
 //! dangerous link schemes such as `javascript:`. Remote images are additionally blocked by the
-//! web server's Content-Security-Policy.
+//! web server's Content-Security-Policy. Fenced code blocks are highlighted like the code views.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fmt;
+
+use comrak::adapters::SyntaxHighlighterAdapter;
+use comrak::html::write_opening_tag;
 use comrak::nodes::NodeValue;
-use comrak::{Arena, Options, format_html, markdown_to_html, parse_document};
+use comrak::options::Plugins;
+use comrak::{Arena, Options, format_html, markdown_to_html_with_plugins, parse_document};
+
+use crate::highlight;
+
+/// Highlights fenced code blocks with [`highlight::highlight_snippet`]. comrak passes the tag
+/// attributes, which include the fence's info string, and `write_opening_tag` escapes them.
+struct CodeBlocks;
+
+impl SyntaxHighlighterAdapter for CodeBlocks {
+    fn write_highlighted(
+        &self,
+        output: &mut dyn fmt::Write,
+        lang: Option<&str>,
+        code: &str,
+    ) -> fmt::Result {
+        output.write_str(&highlight::highlight_snippet(lang.unwrap_or(""), code))
+    }
+
+    fn write_pre_tag(
+        &self,
+        output: &mut dyn fmt::Write,
+        attributes: HashMap<&'static str, Cow<'_, str>>,
+    ) -> fmt::Result {
+        write_opening_tag(output, "pre", attributes)
+    }
+
+    fn write_code_tag(
+        &self,
+        output: &mut dyn fmt::Write,
+        attributes: HashMap<&'static str, Cow<'_, str>>,
+    ) -> fmt::Result {
+        write_opening_tag(output, "code", attributes)
+    }
+}
 
 fn options() -> Options<'static> {
     let mut options = Options::default();
@@ -21,7 +61,9 @@ fn options() -> Options<'static> {
 /// Render GitHub-flavored Markdown to HTML that is safe to embed in a page.
 #[must_use]
 pub fn render(markdown: &str) -> String {
-    markdown_to_html(markdown, &options())
+    let mut plugins = Plugins::default();
+    plugins.render.codefence_syntax_highlighter = Some(&CodeBlocks);
+    markdown_to_html_with_plugins(markdown, &options(), &plugins)
 }
 
 /// Render a single line of Markdown as inline HTML, for one-line previews in lists. Links are
@@ -103,6 +145,20 @@ mod tests {
             "Read the <strong>spec</strong> first"
         );
         assert!(!render_inline("<https://example.com> and www.example.com").contains("<a"));
+    }
+
+    #[test]
+    fn fenced_code_is_highlighted_and_its_info_string_escaped() {
+        let html = render("```rust\nfn f() -> u8 { 1 }\n```\n");
+        assert!(
+            html.contains("<pre><code class=\"language-rust\">"),
+            "{html}"
+        );
+        assert!(html.contains("hl-"), "{html}");
+
+        let hostile = render("```\"><script>alert(1)</script>\n<b>x</b>\n```\n");
+        assert!(!hostile.contains("<script"), "{hostile}");
+        assert!(!hostile.contains("<b>"), "{hostile}");
     }
 
     #[test]
