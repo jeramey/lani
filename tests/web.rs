@@ -782,6 +782,49 @@ async fn text_that_starts_with_a_newline_survives_every_textarea() {
 }
 
 #[tokio::test]
+async fn the_issue_page_shows_its_location_in_the_webs_own_style() {
+    let f = fixture();
+    let issue_url = format!("/reviews/{}/issues/{}", f.review_id, f.issue_id);
+    let shown_location = |page: &str| {
+        let tag = "<code class=\"location\">";
+        let start = page.find(tag).unwrap() + tag.len();
+        page[start..start + page[start..].find("</code>").unwrap()].to_string()
+    };
+    let opened = f.repo.head();
+    let opened_at = format!("src/lib.rs:5 @ {}", &opened[..7]);
+
+    f.repo.write("other.txt", "x\n");
+    let unrelated = f.repo.commit_all("touch another file");
+    let (_, _, page) = send(&f.app, get(&issue_url)).await;
+    assert_eq!(
+        shown_location(&page),
+        format!("{opened_at}; unchanged at {}", &unrelated[..7])
+    );
+
+    let file = numbered(20).replace("line 5\n", "line five\n");
+    f.repo.write("src/lib.rs", &format!("new 1\nnew 2\n{file}"));
+    let moved = f.repo.commit_all("insert above");
+    let (_, _, page) = send(&f.app, get(&issue_url)).await;
+    assert_eq!(
+        shown_location(&page),
+        format!("src/lib.rs:7 @ {} (opened at {opened_at})", &moved[..7])
+    );
+
+    f.repo.write(
+        "src/lib.rs",
+        &format!("new 1\nnew 2\n{}", file.replace("line five", "line 5")),
+    );
+    f.repo.commit_all("change the lines");
+    let (_, _, page) = send(&f.app, get(&issue_url)).await;
+    assert_eq!(
+        shown_location(&page),
+        opened_at,
+        "the outdated notice explains the rest"
+    );
+    assert!(page.contains("Outdated: "), "{page}");
+}
+
+#[tokio::test]
 async fn pages_still_render_when_the_repository_is_gone() {
     let f = fixture();
     let elsewhere = tempfile::tempdir().unwrap();

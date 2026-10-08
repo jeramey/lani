@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 
 use crate::error::Error;
-use crate::mcp::render::location_text;
 use crate::model::{
     Actor, BaseSource, Comment, Event, EventKind, IssueStatus, ReviewStatus, Side, short_ref,
     short_sha,
@@ -210,13 +209,6 @@ pub struct IssueRow {
 #[must_use]
 pub fn issue_row(view: &IssueView) -> IssueRow {
     let issue = &view.issue;
-    let lines = |start: u32, end: u32| {
-        if start == end {
-            start.to_string()
-        } else {
-            format!("{start}-{end}")
-        }
-    };
     let (location, outdated) = match &view.location {
         Location::Current {
             path,
@@ -317,10 +309,53 @@ pub fn code(view: &IssueView) -> Option<CodeView> {
     Some(CodeView { label, lines })
 }
 
-/// The issue's location in words, e.g. "src/a.rs:42-44 (head side) @ a1b2c3d".
+/// The issue's location in words, e.g. "src/a.rs:42-44 @ a1b2c3d", in the web's plain style
+/// rather than the quoted style of MCP output (docs/design.md §12.4). An outdated issue shows
+/// where it was opened; the page explains why it is outdated separately.
 #[must_use]
 pub fn location(view: &IssueView) -> String {
-    location_text(view)
+    let anchor = &view.issue.anchor;
+    let side = if anchor.side == Side::Base {
+        " (base side)"
+    } else {
+        ""
+    };
+    let opened_at = format!(
+        "{}:{}{side} @ {}",
+        anchor.path,
+        lines(anchor.start_line, anchor.end_line),
+        short_sha(&anchor.commit)
+    );
+    match &view.location {
+        Location::Current {
+            commit,
+            path,
+            start_line,
+            end_line,
+        } => {
+            if *commit == anchor.commit {
+                opened_at
+            } else if *path == anchor.path && *start_line == anchor.start_line {
+                format!("{opened_at}; unchanged at {}", short_sha(commit))
+            } else {
+                format!(
+                    "{path}:{}{side} @ {} (opened at {opened_at})",
+                    lines(*start_line, *end_line),
+                    short_sha(commit)
+                )
+            }
+        }
+        Location::Outdated { .. } => opened_at,
+    }
+}
+
+/// A line range as "42-44", or "42" for one line.
+fn lines(start: u32, end: u32) -> String {
+    if start == end {
+        start.to_string()
+    } else {
+        format!("{start}-{end}")
+    }
 }
 
 pub struct EventView {

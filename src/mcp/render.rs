@@ -329,7 +329,7 @@ pub fn issue_full(view: &IssueView) -> String {
 }
 
 /// One line describing where an issue is, e.g.
-/// `src/a.rs:44-46 (head side) @ 3f9c2a1 (opened at src/a.rs:42-44 @ a1b2c3d)`.
+/// `"src/a.rs":44-46 (head side) @ 3f9c2a1 (opened at "src/a.rs":42-44 (head side) @ a1b2c3d)`.
 #[must_use]
 pub fn location_text(view: &IssueView) -> String {
     let anchor = &view.issue.anchor;
