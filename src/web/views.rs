@@ -256,6 +256,93 @@ pub struct ReviewHeader {
     pub changes_url: Option<String>,
     /// The active tab: "overview", "changes" or "files"; `""` for none.
     pub tab: &'static str,
+    /// Whose turn the review is; `None` for a closed review or when it is nobody's (§11.5).
+    pub turn: Option<TurnView>,
+    /// Issues with a question for you, as links.
+    pub questions: Vec<QuestionLink>,
+}
+
+/// Whose turn a review is, as review pages show it.
+pub struct TurnView {
+    /// "You", or "Claude · reviewer" / "Claude · implementer".
+    pub label: &'static str,
+    pub class: &'static str,
+    /// Whether it is the human's turn.
+    pub yours: bool,
+    /// E.g. "handed over by Claude · reviewer · 2026-10-08 10:30 · 2 rounds without you".
+    pub detail: Option<String>,
+    /// The hand-off note, rendered.
+    pub note_html: Option<String>,
+}
+
+/// An issue with a question for the human.
+pub struct QuestionLink {
+    pub id: i64,
+    pub title: String,
+    pub url: String,
+    pub asked_by: AuthorView,
+}
+
+/// Whose turn an open review is, or `None` when closed or nobody's.
+#[must_use]
+pub fn turn(review: &crate::model::Review) -> Option<TurnView> {
+    if review.status != ReviewStatus::Open {
+        return None;
+    }
+    let holder = review.turn?;
+    let who = author(holder);
+    let detail = match (review.turn_by, &review.turn_at) {
+        (Some(by), Some(at)) => {
+            let by = if by == Actor::Human {
+                "you"
+            } else {
+                author(by).label
+            };
+            let rounds = match review.rounds {
+                0 => String::new(),
+                1 => " · 1 round without you".to_string(),
+                count => format!(" · {count} rounds without you"),
+            };
+            Some(format!(
+                "handed over by {by} · {}{rounds}",
+                time::to_local(at)
+            ))
+        }
+        _ => None,
+    };
+    Some(TurnView {
+        label: who.label,
+        class: who.class,
+        yours: holder == Actor::Human,
+        detail,
+        note_html: review.turn_note.as_deref().map(markdown::render),
+    })
+}
+
+/// Links to the issues with a question for the human.
+#[must_use]
+pub fn question_links(view: &ReviewView) -> Vec<QuestionLink> {
+    view.questions
+        .iter()
+        .map(|question| QuestionLink {
+            id: question.issue_id,
+            title: question.title.clone(),
+            url: issue_url(view.review.id, question.issue_id),
+            asked_by: author(question.asked_by),
+        })
+        .collect()
+}
+
+/// What an issue's question for the human says, while it is open: e.g. "Claude · implementer
+/// asked you about this issue · 2026-10-08 10:30".
+#[must_use]
+pub fn question_notice(issue: &crate::model::Issue) -> Option<String> {
+    let (asker, at) = (issue.asked_by?, issue.asked_at.as_deref()?);
+    Some(format!(
+        "{} asked you about this issue · {}",
+        author(asker).label,
+        time::to_local(at)
+    ))
 }
 
 #[must_use]
@@ -309,6 +396,12 @@ pub fn review_header(view: &ReviewView) -> ReviewHeader {
         files_url: files_url(review.id, "", true),
         changes_url: review.base_ref.is_some().then(|| changes_url(review.id)),
         tab: "overview",
+        turn: turn(review),
+        questions: if review.status == ReviewStatus::Open {
+            question_links(view)
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -326,6 +419,8 @@ pub struct IssueRow {
     pub severity: SeverityView,
     pub comments: String,
     pub last_author: Option<AuthorView>,
+    /// Whether a question about this issue is waiting for the human.
+    pub needs_you: bool,
 }
 
 #[must_use]
@@ -378,6 +473,7 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
         outdated,
         title: issue.title.clone(),
         severity: severity(issue.severity),
+        needs_you: issue.asked_by.is_some(),
         comments: match view.comments.len() {
             1 => "1 comment".to_string(),
             count => format!("{count} comments"),
@@ -548,6 +644,8 @@ pub struct ThreadView {
     pub status_class: &'static str,
     pub resolved: bool,
     pub opened_by: AuthorView,
+    /// A question about the issue waiting for the human.
+    pub question: Option<String>,
     /// Every span, with code for threads shown apart from the lines they are about.
     pub spans: Vec<SpanView>,
     pub comments: Vec<CommentView>,
@@ -573,6 +671,7 @@ pub fn thread(view: &IssueView, back: &str, with_code: bool, has_diff: bool) -> 
         status_class,
         resolved: issue.status == IssueStatus::Resolved,
         opened_by: author(issue.author),
+        question: question_notice(issue),
         spans: span_views(view, with_code, has_diff),
         comments: view
             .comments
@@ -682,6 +781,12 @@ pub fn event(event: &Event) -> EventView {
         EventKind::IssueReopened => format!("reopened {issue}"),
         EventKind::CommentAdded if event.issue_id.is_some() => format!("commented on {issue}"),
         EventKind::CommentAdded => "commented on the summary".to_string(),
+        EventKind::TurnChanged => match event.turn_to {
+            Some(Actor::Human) => "handed the review to you".to_string(),
+            Some(role) => format!("handed the review to {}", author(role).label),
+            None => "cleared the turn".to_string(),
+        },
+        EventKind::HumanAsked => format!("asked you about {issue}"),
         EventKind::CommentEdited => match event.comment_id {
             Some(id) => format!("edited comment c{id}"),
             None => "edited a comment".to_string(),

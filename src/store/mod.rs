@@ -19,7 +19,10 @@ use crate::model::{
 
 /// Migrations in order. The first creates the baseline schema at [`BASELINE_VERSION`]; each
 /// later one brings the schema to the next `user_version`.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0002_baseline.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0002_baseline.sql"),
+    include_str!("migrations/0003_turns.sql"),
+];
 
 /// The schema version the baseline migration creates. Databases at an earlier version come from
 /// development builds before the schema was restructured; they are refused, not upgraded.
@@ -137,7 +140,7 @@ fn repo_from_row(row: &Row<'_>) -> rusqlite::Result<Repo> {
 
 const REVIEW_COLUMNS: &str = "id, repo_id, title, head_ref, base_ref, base_source, status, \
      created_by, created_at, closed_at, summary, summary_updated_by, summary_updated_at, \
-     summary_version";
+     summary_version, turn, turn_by, turn_at, turn_note, rounds";
 
 fn review_from_row(row: &Row<'_>) -> rusqlite::Result<Review> {
     Ok(Review {
@@ -155,6 +158,11 @@ fn review_from_row(row: &Row<'_>) -> rusqlite::Result<Review> {
         summary_updated_by: row.get(11)?,
         summary_updated_at: row.get(12)?,
         summary_version: row.get(13)?,
+        turn: row.get(14)?,
+        turn_by: row.get(15)?,
+        turn_at: row.get(16)?,
+        turn_note: row.get(17)?,
+        rounds: row.get(18)?,
     })
 }
 
@@ -177,8 +185,9 @@ pub fn insert_review(conn: &Connection, new: &NewReview<'_>) -> Result<i64> {
     conn.execute(
         "INSERT INTO review (repo_id, title, head_ref, base_ref, base_source, status, created_by,
                              created_at, closed_at, summary, summary_updated_by,
-                             summary_updated_at, summary_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, 1)",
+                             summary_updated_at, summary_version, turn, turn_by, turn_at,
+                             turn_note, rounds)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, 1, NULL, NULL, NULL, NULL, 0)",
         params![
             new.repo_id,
             new.title,
@@ -319,7 +328,7 @@ pub fn issue_counts(conn: &Connection, review_id: i64) -> Result<IssueCounts> {
 // ── issues ───────────────────────────────────────────────────────────────────────────────────
 
 const ISSUE_COLUMNS: &str = "id, review_id, author, title, severity, status, resolved_by, \
-     resolved_at, created_at, edited_by, edited_at, version";
+     resolved_at, created_at, edited_by, edited_at, version, asked_by, asked_at";
 
 /// An issue row; its spans are loaded separately.
 fn issue_from_row(row: &Row<'_>) -> rusqlite::Result<Issue> {
@@ -337,6 +346,8 @@ fn issue_from_row(row: &Row<'_>) -> rusqlite::Result<Issue> {
         edited_by: row.get(9)?,
         edited_at: row.get(10)?,
         version: row.get(11)?,
+        asked_by: row.get(12)?,
+        asked_at: row.get(13)?,
     })
 }
 
@@ -374,8 +385,8 @@ pub struct NewIssue<'a> {
 pub fn insert_issue(conn: &Connection, issue: &NewIssue<'_>) -> Result<i64> {
     conn.execute(
         "INSERT INTO issue (review_id, author, title, severity, status, resolved_by, resolved_at,
-                            created_at, edited_by, edited_at, version)
-         VALUES (?1, ?2, ?3, ?4, 'open', NULL, NULL, ?5, NULL, NULL, 1)",
+                            created_at, edited_by, edited_at, version, asked_by, asked_at)
+         VALUES (?1, ?2, ?3, ?4, 'open', NULL, NULL, ?5, NULL, NULL, 1, NULL, NULL)",
         params![
             issue.review_id,
             issue.author,
@@ -599,8 +610,8 @@ pub struct NewEvent<'a> {
 
 pub fn insert_event(conn: &Connection, event: &NewEvent<'_>) -> Result<()> {
     conn.execute(
-        "INSERT INTO event (review_id, issue_id, comment_id, kind, actor, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO event (review_id, issue_id, comment_id, kind, actor, turn_to, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
         params![
             event.review_id,
             event.issue_id,
@@ -616,7 +627,7 @@ pub fn insert_event(conn: &Connection, event: &NewEvent<'_>) -> Result<()> {
 /// A review's most recent events, newest first.
 pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<Event>> {
     let mut statement = conn.prepare(
-        "SELECT id, review_id, issue_id, comment_id, kind, actor, created_at FROM event
+        "SELECT id, review_id, issue_id, comment_id, kind, actor, turn_to, created_at FROM event
          WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2",
     )?;
     let rows = statement.query_map(params![review_id, limit], |row| {
@@ -627,7 +638,76 @@ pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<
             comment_id: row.get(3)?,
             kind: row.get(4)?,
             actor: row.get(5)?,
-            created_at: row.get(6)?,
+            turn_to: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+// ── turns and questions for the human (§11.5) ─────────────────────────────────────────────────
+
+/// A change of a review's turn: the new holder (`None` for nobody), who made the change, the note
+/// given with it, and the round count afterwards.
+pub struct TurnChange<'a> {
+    pub review_id: i64,
+    pub turn: Option<Actor>,
+    pub by: Actor,
+    pub note: Option<&'a str>,
+    pub rounds: u32,
+    pub now: &'a str,
+}
+
+/// Record a change of turn on the review and in its activity log.
+pub fn change_turn(conn: &Connection, change: &TurnChange<'_>) -> Result<()> {
+    conn.execute(
+        "UPDATE review SET turn = ?1, turn_by = ?2, turn_at = ?3, turn_note = ?4, rounds = ?5
+         WHERE id = ?6",
+        params![
+            change.turn,
+            change.by,
+            change.now,
+            change.note,
+            change.rounds,
+            change.review_id
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO event (review_id, issue_id, comment_id, kind, actor, turn_to, created_at)
+         VALUES (?1, NULL, NULL, 'turn_changed', ?2, ?3, ?4)",
+        params![change.review_id, change.by, change.turn, change.now],
+    )?;
+    Ok(())
+}
+
+/// Mark an issue as asked about by `role`, or clear the question with `None`.
+pub fn set_asked(conn: &Connection, issue_id: i64, role: Option<Actor>, now: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE issue SET asked_by = ?1, asked_at = ?2 WHERE id = ?3",
+        params![role, role.map(|_| now), issue_id],
+    )?;
+    Ok(())
+}
+
+/// An issue with an open question for the human.
+#[derive(Clone, Debug)]
+pub struct Question {
+    pub issue_id: i64,
+    pub title: String,
+    pub asked_by: Actor,
+}
+
+/// The issues of a review with an open question for the human, by issue number.
+pub fn questions(conn: &Connection, review_id: i64) -> Result<Vec<Question>> {
+    let mut statement = conn.prepare(
+        "SELECT id, title, asked_by FROM issue
+         WHERE review_id = ?1 AND asked_by IS NOT NULL ORDER BY id",
+    )?;
+    let rows = statement.query_map([review_id], |row| {
+        Ok(Question {
+            issue_id: row.get(0)?,
+            title: row.get(1)?,
+            asked_by: row.get(2)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

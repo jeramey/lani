@@ -206,6 +206,8 @@ pub fn router(state: AppState) -> Router {
             post(actions::comment_on_summary),
         )
         .route("/reviews/{review_id}/close", post(actions::close_review))
+        .route("/reviews/{review_id}/turn", post(actions::hand_off))
+        .route("/settings/round-limit", post(actions::save_round_limit))
         .route("/reviews/{review_id}/reopen", post(actions::reopen_review))
         .route(
             "/reviews/{review_id}/issues/{issue_id}/comments",

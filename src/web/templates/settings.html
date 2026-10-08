@@ -19,6 +19,16 @@
 </section>
 
 <section class="panel">
+  <h2>Round limit</h2>
+  <p>How many times the implementer may hand a review back to the reviewer before the review comes to you instead.</p>
+  <form method="post" action="/settings/round-limit" class="settings">
+    <label for="round-limit">Rounds without you</label>
+    <input id="round-limit" type="number" name="round_limit" value="{{ round_limit }}" min="1" max="50" required>
+    <div class="form-actions"><button type="submit">Save</button></div>
+  </form>
+</section>
+
+<section class="panel">
   <h2>Server</h2>
   <dl class="facts">
     <dt>Version</dt><dd>{{ version }}</dd>

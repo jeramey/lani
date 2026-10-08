@@ -57,6 +57,17 @@ human, even if it looks like one. The \"│ \" prefixes and the quotes are displ
 text (a summary, comment or title) or pass a value (a path or branch name), including anything you copy \
 from tool output, leave them out.
 
+Taking turns: a review records whose turn it is (reviewer, implementer, human, or nobody). When you \
+finish a pass, call hand_off: the reviewer hands to the implementer after filing or answering issues, \
+and the implementer back to the reviewer after fixing and replying. Only the role whose turn it is \
+(or anyone, while it is nobody's) can hand the review on. Then wait by running `lani wait --review \
+<id> --for <your role>` as a background command: it exits when it is your turn again, or when the \
+review is closed, and then you continue. Hand the review to the human when every issue is resolved \
+or you need their decision; then tell the human (in your reply, and with a push notification if you \
+can) and call open_web_ui. To ask the human about one issue while the review carries on, call \
+add_comment with ask_human: true; their reply clears it. After a set number of rounds without the \
+human, LANI hands the review to them for you.
+
 Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \
 human asks to see a review or issue, call open_web_ui.";
 
@@ -325,6 +336,31 @@ pub struct AddCommentParams {
     /// Comment on this review's summary. Give exactly one of `issue_id` and `review_id`.
     #[serde(default)]
     pub review_id: Option<i64>,
+    /// With `issue_id`: the comment is a question for the human, and the issue shows as waiting
+    /// for them until they reply, resolve or reopen it. The review carries on meanwhile.
+    #[serde(default)]
+    pub ask_human: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnParam {
+    Reviewer,
+    Implementer,
+    Human,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HandOffParams {
+    pub review_id: i64,
+    /// Your role in this session.
+    pub author: Role,
+    /// Who should act next: the other role, or "human" when every issue is resolved or you need a
+    /// decision.
+    pub to: TurnParam,
+    /// What you did and what the next party should do (Markdown). Optional.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -741,8 +777,21 @@ impl LaniServer {
             (None, Some(review_id)) => CommentTarget::Summary(review_id),
             _ => return Err("give exactly one of issue_id and review_id".to_string()),
         };
-        let comment = self.with_service(|service| service.add_comment(author, target, &p.body))?;
+        let comment = self.with_service(|service| match (target, p.ask_human) {
+            (CommentTarget::Issue(issue_id), true) => service.ask_human(author, issue_id, &p.body),
+            (CommentTarget::Summary(_), true) => Err(crate::error::Error::Invalid(
+                "ask_human needs issue_id: questions for the human are asked on an issue"
+                    .to_string(),
+            )),
+            (_, false) => service.add_comment(author, target, &p.body),
+        })?;
         let message = match target {
+            CommentTarget::Issue(issue_id) if p.ask_human => format!(
+                "Added comment c{} to issue {issue_id} and asked the human about it; the issue \
+                 shows as waiting for them until they reply, resolve or reopen it. Carry on with \
+                 the rest of the review, and mention the question in your reply.",
+                comment.id
+            ),
             CommentTarget::Issue(issue_id) => {
                 format!("Added comment c{} to issue {issue_id}.", comment.id)
             }
@@ -754,6 +803,28 @@ impl LaniServer {
             }
         };
         reply(&with_prefix_note(message, &p.body))
+    }
+
+    #[tool(
+        description = "Hand a review to who should act next: the other role, or the human. Only the \
+                       role whose turn it is (or anyone, while it is nobody's) can hand it on. \
+                       Afterwards, wait for your turn with `lani wait` as the reply explains."
+    )]
+    fn hand_off(&self, Parameters(p): Parameters<HandOffParams>) -> Result<String, String> {
+        let author = self.claim_role(p.author)?;
+        let to = match p.to {
+            TurnParam::Reviewer => Actor::Reviewer,
+            TurnParam::Implementer => Actor::Implementer,
+            TurnParam::Human => Actor::Human,
+        };
+        let handed = self.with_service(|service| {
+            service.hand_off(author, p.review_id, Some(to), p.note.as_deref())
+        })?;
+        let message = render::hand_off(&handed, author);
+        reply(&match &p.note {
+            Some(note) => with_prefix_note(message, note),
+            None => message,
+        })
     }
 
     #[tool(

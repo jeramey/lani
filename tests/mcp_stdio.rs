@@ -169,6 +169,7 @@ fn initialize_advertises_instructions_and_tools() {
             "edit_comment",
             "get_issue",
             "get_review",
+            "hand_off",
             "list_issues",
             "list_reviews",
             "open_web_ui",
@@ -529,7 +530,7 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
     let (block, path, head) = (&f.block, &f.path, &f.head);
     let missing = format!("{path}.missing");
 
-    vec![
+    let mut calls = vec![
         (
             "start_review",
             true,
@@ -559,6 +560,16 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
             "add_comment",
             false,
             json!({"author": "implementer", "body": block, "issue_id": 1}),
+        ),
+        (
+            "add_comment",
+            false,
+            json!({"author": "implementer", "body": block, "issue_id": 1, "ask_human": true}),
+        ),
+        (
+            "hand_off",
+            true,
+            json!({"review_id": 1, "author": "reviewer", "to": "implementer", "note": block}),
         ),
         (
             "update_review_summary",
@@ -606,6 +617,21 @@ fn every_tool_call(f: &HostileFixture, worktree: &str) -> Vec<(&'static str, boo
             json!({"review_id": 1, "status": "all", "detail": "full"}),
         ),
         ("get_issue", true, json!({"issue_id": 1})),
+    ];
+    calls.extend(later_tool_calls(&f.block));
+    calls
+}
+
+/// The calls after the reviewer has read the issue: a hand-off to the human, status changes and
+/// closing.
+fn later_tool_calls(block: &str) -> Vec<(&'static str, bool, Value)> {
+    vec![
+        (
+            "hand_off",
+            false,
+            json!({"review_id": 1, "author": "implementer", "to": "human", "note": block}),
+        ),
+        ("list_reviews", false, json!({"status": "open"})),
         (
             "set_issue_status",
             true,
@@ -824,4 +850,103 @@ fn issues_with_several_spans_list_every_location_and_its_code() {
                     "start_line_text": "line 3"}]}),
     );
     assert!(overlap.contains("spans 1 and 2 overlap"), "{overlap}");
+}
+
+#[test]
+fn sessions_take_turns_and_ask_the_human() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let worktree = repo.path.to_str().unwrap();
+    let head = repo.head();
+    let mut reviewer = McpClient::start(&home.path);
+    let mut implementer = McpClient::start(&home.path);
+    reviewer.ok(
+        "start_review",
+        json!({"repo_path": worktree, "title": "t", "author": "reviewer", "base_mode": "auto"}),
+    );
+    reviewer.ok(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "title": "Use a digit", "severity": "low",
+               "body": "b", "commit": head, "worktree_path": worktree,
+               "spans": [{"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
+                          "start_line_text": "line five"}]}),
+    );
+    let handed = reviewer.ok(
+        "hand_off",
+        json!({"review_id": 1, "author": "reviewer", "to": "implementer", "note": "Fix issue 1."}),
+    );
+    assert!(
+        handed
+            .contains("Review 1 is now the implementer's turn (rounds without the human: 0 of 5).")
+            && handed.contains("run `lani wait --review 1 --for reviewer` as a background command"),
+        "{handed}"
+    );
+
+    let review = implementer.ok("get_review", json!({"review_id": 1}));
+    assert!(
+        review.contains("Turn: implementer (set by the reviewer at "),
+        "{review}"
+    );
+    assert!(
+        review.contains("Hand-off note:\n│ Fix issue 1.\n"),
+        "{review}"
+    );
+    let asked = implementer.ok(
+        "add_comment",
+        json!({"author": "implementer", "issue_id": 1, "ask_human": true,
+               "body": "Digits or words?"}),
+    );
+    assert!(asked.contains("asked the human about it"), "{asked}");
+    let issues = implementer.ok(
+        "list_issues",
+        json!({"review_id": 1, "status": "open", "detail": "summary"}),
+    );
+    assert!(
+        issues.contains("last: implementer · question for the human"),
+        "{issues}"
+    );
+    let review = implementer.ok("get_review", json!({"review_id": 1}));
+    assert!(
+        review.contains("Questions for the human: issue 1\n"),
+        "{review}"
+    );
+    let summary_question = implementer.err(
+        "add_comment",
+        json!({"author": "implementer", "review_id": 1, "ask_human": true, "body": "?"}),
+    );
+    assert!(
+        summary_question.contains("ask_human needs issue_id"),
+        "{summary_question}"
+    );
+
+    let back = implementer.ok(
+        "hand_off",
+        json!({"review_id": 1, "author": "implementer", "to": "reviewer"}),
+    );
+    assert!(
+        back.contains("now the reviewer's turn (rounds without the human: 1 of 5)"),
+        "{back}"
+    );
+    let to_human = reviewer.ok(
+        "hand_off",
+        json!({"review_id": 1, "author": "reviewer", "to": "human", "note": "Converged."}),
+    );
+    assert!(
+        to_human.contains("Tell the human now")
+            && to_human.contains("call open_web_ui with review_id 1"),
+        "{to_human}"
+    );
+    let refused = implementer.err(
+        "hand_off",
+        json!({"review_id": 1, "author": "implementer", "to": "reviewer"}),
+    );
+    assert!(
+        refused.contains("it is the human's turn on review 1"),
+        "{refused}"
+    );
+    let listed = implementer.ok("list_reviews", json!({"status": "open"}));
+    assert!(
+        listed.contains("· turn: human · 1 question for the human ·"),
+        "{listed}"
+    );
 }

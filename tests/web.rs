@@ -1474,3 +1474,116 @@ async fn an_issue_with_several_spans_shows_one_thread_and_markers_elsewhere() {
     assert_eq!(page.matches("class=\"span\"").count(), 3, "{page}");
     assert!(page.contains("Span 3 · Code @ "), "{page}");
 }
+
+#[tokio::test]
+async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
+    let f = fixture();
+    let (review_id, issue_id) = (f.review_id, f.issue_id);
+    let head = f.repo.head();
+    let repo_path = f.repo.path.clone();
+    let second = f
+        .state
+        .call(move |service| {
+            // A second issue, then a question about the first: questions sort first.
+            let second = service.create_issue(&CreateIssue {
+                review_id,
+                author: Actor::Reviewer,
+                title: "Another",
+                severity: Severity::Nit,
+                body: "b",
+                spans: vec![SpanRequest {
+                    path: "src/lib.rs",
+                    side: Side::Head,
+                    start_line: 9,
+                    end_line: 9,
+                    start_line_text: Some("line 9"),
+                }],
+                commit: &head,
+                worktree_path: Some(&repo_path),
+                read_merge_base: None,
+            })?;
+            service.ask_human(Actor::Reviewer, second.issue.id, "Keep it?")?;
+            service.hand_off(
+                Actor::Reviewer,
+                review_id,
+                Some(Actor::Implementer),
+                Some("Please **fix** issue 1."),
+            )?;
+            Ok(second.issue.id)
+        })
+        .await
+        .unwrap();
+
+    let review_url = format!("/reviews/{review_id}");
+    let (_, _, page) = send(&f.app, get(&review_url)).await;
+    assert!(page.contains("<strong>Waiting for:</strong> <span class=\"author author-implementer\">Claude · implementer</span>"), "{page}");
+    assert!(
+        page.contains("Please <strong>fix</strong> issue 1."),
+        "the note is rendered: {page}"
+    );
+    let question =
+        format!("<a href=\"/reviews/{review_id}/issues/{second}\">#{second} Another</a>");
+    assert!(
+        page.contains(&question),
+        "questions link to their issues: {page}"
+    );
+    let list = page.find("class=\"issue-list\"").unwrap();
+    let first_row = page[list..].find(&format!("#{second}</a>")).unwrap();
+    let other_row = page[list..].find(&format!("#{issue_id}</a>")).unwrap();
+    assert!(
+        first_row < other_row,
+        "the issue that needs you comes first: {page}"
+    );
+    assert!(page[list..].contains("Needs you"), "{page}");
+
+    let (_, _, index) = send(&f.app, get("/")).await;
+    assert!(index.contains("Needs you"), "{index}");
+    assert!(
+        index.contains("waiting for <span class=\"author author-implementer\">"),
+        "{index}"
+    );
+    let (_, _, issue_page) = send(&f.app, get(&format!("{review_url}/issues/{second}"))).await;
+    assert!(
+        issue_page.contains("Claude · reviewer asked you about this issue"),
+        "{issue_page}"
+    );
+
+    // Replying answers the question.
+    send(
+        &f.app,
+        post(
+            &format!("{review_url}/issues/{second}/comments"),
+            "body=Keep+it.",
+        ),
+    )
+    .await;
+    let (_, _, page) = send(&f.app, get(&review_url)).await;
+    assert!(!page.contains("Questions for you"), "{page}");
+
+    // The human hands the review on.
+    let turn = format!("{review_url}/turn");
+    let (status, headers, _) =
+        send(&f.app, post(&turn, "to=reviewer&note=Have+another+look.")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location(&headers), review_url);
+    let (_, _, page) = send(&f.app, get(&review_url)).await;
+    assert!(page.contains("author-reviewer\">Claude · reviewer</span> <span class=\"muted small\">· handed over by you"), "{page}");
+    let (status, _, _) = send(&f.app, post(&turn, "to=human")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    send(&f.app, post(&turn, "to=nobody")).await;
+    let (_, _, page) = send(&f.app, get(&review_url)).await;
+    assert!(!page.contains("Waiting for:"), "{page}");
+
+    // The round limit is a setting.
+    let (_, _, settings) = send(&f.app, get("/settings")).await;
+    assert!(
+        settings.contains("name=\"round_limit\" value=\"5\""),
+        "{settings}"
+    );
+    let (status, _, _) = send(&f.app, post("/settings/round-limit", "round_limit=3")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, _, settings) = send(&f.app, get("/settings")).await;
+    assert!(settings.contains("value=\"3\""), "{settings}");
+    let (status, _, _) = send(&f.app, post("/settings/round-limit", "round_limit=0")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

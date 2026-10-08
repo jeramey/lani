@@ -102,6 +102,8 @@ db_enum!(
         IssueReopened => "issue_reopened",
         CommentAdded => "comment_added",
         CommentEdited => "comment_edited",
+        TurnChanged => "turn_changed",
+        HumanAsked => "human_asked",
     }
 );
 
@@ -131,6 +133,16 @@ pub struct Review {
     pub summary_updated_by: Option<Actor>,
     pub summary_updated_at: Option<String>,
     pub summary_version: i64,
+    /// Who should act on the review now; `None` for nobody (§11.5).
+    pub turn: Option<Actor>,
+    /// Who last changed the turn, and when.
+    pub turn_by: Option<Actor>,
+    pub turn_at: Option<String>,
+    /// The note given with the last change of turn.
+    pub turn_note: Option<String>,
+    /// Times the implementer handed the review back to the reviewer since the human last handed
+    /// it on.
+    pub rounds: u32,
 }
 
 /// One span of an issue: a line range in one file, as its author read it (§10).
@@ -168,6 +180,9 @@ pub struct Issue {
     pub edited_at: Option<String>,
     /// The version of the title and severity, for optimistic concurrency (§11.4).
     pub version: i64,
+    /// The role that asked the human about this issue, while the question is open (§11.5).
+    pub asked_by: Option<Actor>,
+    pub asked_at: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -195,6 +210,8 @@ pub struct Event {
     pub comment_id: Option<i64>,
     pub kind: EventKind,
     pub actor: Actor,
+    /// For `TurnChanged`: who has the turn now; `None` for nobody.
+    pub turn_to: Option<Actor>,
     pub created_at: String,
 }
 

@@ -84,6 +84,24 @@ pub struct SpanRequest<'a> {
     pub start_line_text: Option<&'a str>,
 }
 
+/// The result of handing a review on.
+#[derive(Clone, Debug)]
+pub struct HandOff {
+    /// The review after the change.
+    pub review: Review,
+    /// Set when the round limit sent the review to the human instead of the reviewer.
+    pub limit_reached: Option<u32>,
+    pub round_limit: u32,
+}
+
+/// How waiting for a turn ended.
+#[derive(Clone, Debug)]
+pub enum WaitOutcome {
+    YourTurn(Box<ReviewView>),
+    Closed(Review),
+    TimedOut(Review),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum CommentTarget {
     Issue(i64),
@@ -120,6 +138,8 @@ pub struct ReviewView {
     pub review: Review,
     pub repo: Repo,
     pub counts: IssueCounts,
+    /// Issues with an open question for the human, by number (§11.5).
+    pub questions: Vec<store::Question>,
     /// Present when the caller needs current git state (not in review lists) and the
     /// repository still exists.
     pub git: Option<ReviewGitState>,
@@ -540,6 +560,28 @@ impl Service {
         target: CommentTarget,
         body: &str,
     ) -> Result<Comment> {
+        self.post_comment(actor, target, body, false)
+    }
+
+    /// Ask the human about an issue: add `body` as a comment and mark the issue as waiting for
+    /// the human until they comment on it, resolve it or reopen it (§11.5). Only Claude asks.
+    pub fn ask_human(&mut self, actor: Actor, issue_id: i64, body: &str) -> Result<Comment> {
+        if actor == Actor::Human {
+            return Err(Error::Invalid(
+                "the human answers questions; only the reviewer and the implementer ask them"
+                    .to_string(),
+            ));
+        }
+        self.post_comment(actor, CommentTarget::Issue(issue_id), body, true)
+    }
+
+    fn post_comment(
+        &mut self,
+        actor: Actor,
+        target: CommentTarget,
+        body: &str,
+        ask_human: bool,
+    ) -> Result<Comment> {
         let body = require_text("body", body)?;
         let (review_id, issue_id) = match target {
             CommentTarget::Issue(issue_id) => (
@@ -569,13 +611,25 @@ impl Service {
                 now: &now,
             },
         )?;
+        if let Some(issue_id) = issue_id {
+            if ask_human {
+                store::set_asked(&tx, issue_id, Some(actor), &now)?;
+            } else if actor == Actor::Human {
+                // The human's reply answers any question about the issue.
+                store::set_asked(&tx, issue_id, None, &now)?;
+            }
+        }
         store::insert_event(
             &tx,
             &NewEvent {
                 review_id,
                 issue_id,
                 comment_id: Some(comment_id),
-                kind: EventKind::CommentAdded,
+                kind: if ask_human {
+                    EventKind::HumanAsked
+                } else {
+                    EventKind::CommentAdded
+                },
                 actor,
                 now: &now,
             },
@@ -763,6 +817,10 @@ impl Service {
             IssueStatus::Open => (None, EventKind::IssueReopened),
         };
         store::set_issue_status(&tx, issue_id, status, resolved_by, &now)?;
+        if actor == Actor::Human {
+            // Resolving or reopening is the human's answer to any question about the issue.
+            store::set_asked(&tx, issue_id, None, &now)?;
+        }
         store::insert_event(
             &tx,
             &NewEvent {
@@ -776,6 +834,140 @@ impl Service {
         )?;
         tx.commit()?;
         self.get_issue(issue_id)
+    }
+
+    /// Hand a review to `to`, or with `None` (the human only) to nobody (§11.5).
+    ///
+    /// The reviewer and the implementer hand on a review only when it is their turn or nobody's,
+    /// to the other role or to the human. The human hands it to either role or to nobody, which
+    /// starts the round count again. When the implementer hands back to the reviewer for the
+    /// `round_limit`-th time since the human last handed it on, the review goes to the human
+    /// instead.
+    pub fn hand_off(
+        &mut self,
+        actor: Actor,
+        review_id: i64,
+        to: Option<Actor>,
+        note: Option<&str>,
+    ) -> Result<HandOff> {
+        let review = store::get_review(&self.conn, review_id)?;
+        require_open(&review)?;
+        let note = note
+            .map(normalize_newlines)
+            .filter(|note| !note.trim().is_empty());
+        if actor == Actor::Human {
+            if to == Some(Actor::Human) {
+                return Err(Error::Invalid(
+                    "hand the review to the reviewer, the implementer, or nobody".to_string(),
+                ));
+            }
+        } else {
+            match to {
+                None => {
+                    return Err(Error::Invalid(
+                        "hand the review to the other role or to the human; only the human \
+                         clears the turn"
+                            .to_string(),
+                    ));
+                }
+                Some(target) if target == actor => {
+                    return Err(Error::Invalid(format!(
+                        "you are the {}; hand the review to the other role or to the human",
+                        actor.as_str()
+                    )));
+                }
+                Some(_) => {}
+            }
+            if let Some(holder) = review.turn
+                && holder != actor
+            {
+                return Err(Error::Invalid(format!(
+                    "it is the {}'s turn on review {review_id}, not yours; only the role whose turn \
+                     it is can hand the review on. Wait for your turn with \
+                     `lani wait --review {review_id} --for {}`.",
+                    holder.as_str(),
+                    actor.as_str()
+                )));
+            }
+        }
+        let limit = self.round_limit()?;
+        let (to, rounds, limit_reached) = match (actor, to) {
+            (Actor::Human, to) => (to, 0, None),
+            (Actor::Implementer, Some(Actor::Reviewer)) => {
+                let rounds = review.rounds + 1;
+                if rounds >= limit {
+                    (Some(Actor::Human), rounds, Some(limit))
+                } else {
+                    (Some(Actor::Reviewer), rounds, None)
+                }
+            }
+            (_, to) => (to, review.rounds, None),
+        };
+        let now = time::now();
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        store::change_turn(
+            &tx,
+            &store::TurnChange {
+                review_id,
+                turn: to,
+                by: actor,
+                note: note.as_deref(),
+                rounds,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        Ok(HandOff {
+            review: store::get_review(&self.conn, review_id)?,
+            limit_reached,
+            round_limit: limit,
+        })
+    }
+
+    /// The round limit: how many times the implementer may hand a review back to the reviewer
+    /// before it goes to the human (§11.5).
+    pub fn round_limit(&self) -> Result<u32> {
+        let value =
+            store::get_setting(&self.conn, settings::ROUND_LIMIT_KEY)?.ok_or_else(|| {
+                Error::NotFound("the round_limit setting is missing from the database".to_string())
+            })?;
+        settings::parse_round_limit(&value)
+    }
+
+    /// Save the round limit. Only the human may change settings.
+    pub fn set_round_limit(&mut self, actor: Actor, limit: u32) -> Result<()> {
+        require_human(actor, "change settings")?;
+        let limit = settings::parse_round_limit(&limit.to_string())?;
+        store::set_setting(&self.conn, settings::ROUND_LIMIT_KEY, &limit.to_string())
+    }
+
+    /// Wait until it is `role`'s turn on a review, checking every `poll`. Returns early when the
+    /// review is closed, or when `timeout` passes.
+    pub fn wait_for_turn(
+        &self,
+        review_id: i64,
+        role: Actor,
+        timeout: Option<std::time::Duration>,
+        poll: std::time::Duration,
+    ) -> Result<WaitOutcome> {
+        let deadline = timeout.map(|timeout| std::time::Instant::now() + timeout);
+        loop {
+            let review = store::get_review(&self.conn, review_id)?;
+            if review.status == ReviewStatus::Closed {
+                return Ok(WaitOutcome::Closed(review));
+            }
+            if review.turn == Some(role) {
+                return Ok(WaitOutcome::YourTurn(Box::new(
+                    self.review_view(review, false)?,
+                )));
+            }
+            if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+                return Ok(WaitOutcome::TimedOut(review));
+            }
+            std::thread::sleep(poll);
+        }
     }
 
     /// Close a review. Only the reviewer and the human may do this (§11.2).
@@ -971,6 +1163,7 @@ impl Service {
     fn review_view(&self, review: Review, with_git: bool) -> Result<ReviewView> {
         let repo = store::get_repo(&self.conn, review.repo_id)?;
         let counts = store::issue_counts(&self.conn, review.id)?;
+        let questions = store::questions(&self.conn, review.id)?;
         // A missing repository is expected (moved or deleted) and degrades to stored data;
         // any other git failure is a real error and is reported.
         let (git, repo_unavailable) = if !with_git {
@@ -987,6 +1180,7 @@ impl Service {
             review,
             repo,
             counts,
+            questions,
             git,
             repo_unavailable,
         })

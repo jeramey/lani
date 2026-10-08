@@ -1103,7 +1103,7 @@ fn reopening_the_database_keeps_the_schema() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2, "the baseline schema");
+    assert_eq!(version, 3, "the baseline schema and the turns migration");
     let timeout: String = conn
         .query_row(
             "SELECT value FROM setting WHERE key = 'idle_timeout'",
@@ -1679,4 +1679,248 @@ fn a_users_inter_hunk_context_does_not_merge_hunks() {
     );
     let accepted = service.create_issue(&issue_request(review_id, &repo, &head, 5, 6, "line 5"));
     assert!(accepted.is_ok(), "{accepted:?}");
+}
+
+// ── turns and questions for the human (§11.5) ───────────────────────────────────────────────
+
+#[test]
+fn turns_pass_only_from_their_holder_and_the_round_limit_brings_in_the_human() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let review = service.get_review(review_id, None).unwrap().view.review;
+    assert_eq!(
+        (review.turn, review.rounds),
+        (None, 0),
+        "nobody's turn at first"
+    );
+    service.set_round_limit(Actor::Human, 2).unwrap();
+    assert!(matches!(
+        service.set_round_limit(Actor::Reviewer, 9),
+        Err(Error::Forbidden(_))
+    ));
+
+    let handed = service
+        .hand_off(
+            Actor::Reviewer,
+            review_id,
+            Some(Actor::Implementer),
+            Some("Two issues."),
+        )
+        .unwrap();
+    assert_eq!(handed.review.turn, Some(Actor::Implementer));
+    assert_eq!(handed.review.turn_note.as_deref(), Some("Two issues."));
+    expect_invalid(
+        service.hand_off(Actor::Reviewer, review_id, Some(Actor::Human), None),
+        "it is the implementer's turn on review 1, not yours",
+    );
+    expect_invalid(
+        service.hand_off(
+            Actor::Implementer,
+            review_id,
+            Some(Actor::Implementer),
+            None,
+        ),
+        "hand the review to the other role or to the human",
+    );
+    expect_invalid(
+        service.hand_off(Actor::Implementer, review_id, None, None),
+        "only the human clears the turn",
+    );
+
+    // Round 1 ends when the implementer hands back; round 2 would reach the limit of 2.
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.review.rounds),
+        (Some(Actor::Reviewer), 1)
+    );
+    assert_eq!(handed.limit_reached, None);
+    service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    the_round_limit_brings_in_the_human_who_hands_back(&mut service, review_id);
+}
+
+/// The rest of the turn test: the implementer's hand-back that reaches the round limit, then the
+/// human handing the review on, and the activity log of all of it.
+fn the_round_limit_brings_in_the_human_who_hands_back(service: &mut Service, review_id: i64) {
+    let handed = service
+        .hand_off(
+            Actor::Implementer,
+            review_id,
+            Some(Actor::Reviewer),
+            Some("Fixed."),
+        )
+        .unwrap();
+    assert_eq!(
+        handed.review.turn,
+        Some(Actor::Human),
+        "the limit sends it to the human"
+    );
+    assert_eq!((handed.limit_reached, handed.review.rounds), (Some(2), 2));
+    assert_eq!(
+        handed.review.turn_note.as_deref(),
+        Some("Fixed."),
+        "the note is kept as written"
+    );
+    expect_invalid(
+        service.hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None),
+        "it is the human's turn",
+    );
+
+    // The human hands it back, which starts the count again, or clears the turn.
+    expect_invalid(
+        service.hand_off(Actor::Human, review_id, Some(Actor::Human), None),
+        "the reviewer, the implementer, or nobody",
+    );
+    let handed = service
+        .hand_off(Actor::Human, review_id, Some(Actor::Reviewer), Some("  "))
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.review.rounds),
+        (Some(Actor::Reviewer), 0)
+    );
+    assert_eq!(handed.review.turn_note, None, "a blank note is no note");
+    let handed = service
+        .hand_off(Actor::Human, review_id, None, None)
+        .unwrap();
+    assert_eq!(handed.review.turn, None);
+
+    let events = service.list_events(review_id).unwrap();
+    let turns: Vec<_> = events
+        .iter()
+        .rev()
+        .filter(|event| event.kind == lani::model::EventKind::TurnChanged)
+        .map(|event| (event.actor, event.turn_to))
+        .collect();
+    assert_eq!(
+        turns,
+        [
+            (Actor::Reviewer, Some(Actor::Implementer)),
+            (Actor::Implementer, Some(Actor::Reviewer)),
+            (Actor::Reviewer, Some(Actor::Implementer)),
+            (Actor::Implementer, Some(Actor::Human)),
+            (Actor::Human, Some(Actor::Reviewer)),
+            (Actor::Human, None),
+        ]
+    );
+
+    service.close_review(Actor::Human, review_id).unwrap();
+    assert!(
+        service
+            .hand_off(Actor::Human, review_id, Some(Actor::Reviewer), None)
+            .is_err()
+    );
+}
+
+#[test]
+fn questions_for_the_human_are_cleared_by_the_humans_reply_or_status_change() {
+    let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
+    let review_id = service.get_issue(issue_id).unwrap().issue.review_id;
+    expect_invalid(
+        service.ask_human(Actor::Human, issue_id, "Me?"),
+        "the human answers questions",
+    );
+    service
+        .ask_human(Actor::Implementer, issue_id, "Should this stay public?")
+        .unwrap();
+    let issue = service.get_issue(issue_id).unwrap().issue;
+    assert_eq!(issue.asked_by, Some(Actor::Implementer));
+    let questions = service.get_review(review_id, None).unwrap().view.questions;
+    assert_eq!(questions.len(), 1);
+    assert_eq!(
+        (questions[0].issue_id, questions[0].title.as_str()),
+        (issue_id, "A problem")
+    );
+
+    // Claude's comments leave the question open; the human's reply answers it.
+    service
+        .add_comment(
+            Actor::Reviewer,
+            CommentTarget::Issue(issue_id),
+            "I think so.",
+        )
+        .unwrap();
+    assert!(
+        service
+            .get_issue(issue_id)
+            .unwrap()
+            .issue
+            .asked_by
+            .is_some()
+    );
+    service
+        .add_comment(
+            Actor::Human,
+            CommentTarget::Issue(issue_id),
+            "Keep it public.",
+        )
+        .unwrap();
+    assert_eq!(service.get_issue(issue_id).unwrap().issue.asked_by, None);
+
+    service
+        .ask_human(Actor::Reviewer, issue_id, "Close it?")
+        .unwrap();
+    service
+        .set_issue_status(Actor::Human, issue_id, IssueStatus::Resolved, None)
+        .unwrap();
+    assert_eq!(service.get_issue(issue_id).unwrap().issue.asked_by, None);
+    let asked = service
+        .list_events(review_id)
+        .unwrap()
+        .iter()
+        .filter(|event| event.kind == lani::model::EventKind::HumanAsked)
+        .count();
+    assert_eq!(asked, 2);
+}
+
+#[test]
+fn migrating_a_version_2_database_keeps_its_data_and_event_ids() {
+    let home = TestHome::new();
+    let path = home.db_path();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../src/store/migrations/0002_baseline.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO repo (git_dir, name, created_at) VALUES ('/r/.git', 'r', 't');
+             INSERT INTO review (repo_id, title, head_ref, base_ref, base_source, status,
+                                 created_by, created_at, closed_at, summary, summary_updated_by,
+                                 summary_updated_at, summary_version)
+               VALUES (1, 'Old', 'refs/heads/x', NULL, 'explicit', 'open', 'reviewer', 't', NULL,
+                       '', NULL, NULL, 1);
+             INSERT INTO event (review_id, issue_id, comment_id, kind, actor, created_at)
+               VALUES (1, NULL, NULL, 'review_created', 'reviewer', 't'),
+                      (1, NULL, NULL, 'review_retitled', 'human', 't');
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+    }
+    let mut service = Service::open(&path).unwrap();
+    let review = service.get_review(1, None).unwrap().view.review;
+    assert_eq!(
+        (review.title.as_str(), review.turn, review.rounds),
+        ("Old", None, 0)
+    );
+    assert_eq!(service.round_limit().unwrap(), 5);
+    service
+        .hand_off(Actor::Human, 1, Some(Actor::Reviewer), None)
+        .unwrap();
+    let ids: Vec<i64> = service
+        .list_events(1)
+        .unwrap()
+        .iter()
+        .map(|event| event.id)
+        .collect();
+    assert_eq!(
+        ids,
+        [3, 2, 1],
+        "old events kept, new ones numbered after them"
+    );
 }

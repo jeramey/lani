@@ -6,8 +6,10 @@ use rmcp::ServiceExt as _;
 
 use lani::daemon::{self, RunningServer};
 use lani::mcp::LaniServer;
+use lani::mcp::render;
+use lani::model::Actor;
 use lani::paths;
-use lani::service::Service;
+use lani::service::{Service, WaitOutcome};
 use lani::settings::{self, IdleTimeout};
 use lani::web::{self, ServeOptions, View};
 
@@ -61,8 +63,30 @@ enum Command {
     Status,
     /// Stop the web server.
     Stop,
+    /// Wait until it is a role's turn on a review, then print what to do (§11.5). Claude runs this
+    /// as a background command after `hand_off`. Exits 0 when it is the role's turn, 3 if the
+    /// review is closed, and 2 when --timeout passes.
+    Wait {
+        /// The review to watch.
+        #[arg(long)]
+        review: i64,
+        /// The role that is waiting.
+        #[arg(long = "for", value_enum, value_name = "ROLE")]
+        role: RoleArg,
+        /// Give up after this long: a whole number of seconds, minutes or hours, like 30s, 10m or
+        /// 2h. Without it, wait until the turn comes or the review is closed.
+        #[arg(long, value_name = "DURATION")]
+        timeout: Option<String>,
+    },
     /// Print the version.
     Version,
+}
+
+/// The roles that wait for their turn.
+#[derive(Clone, Copy, ValueEnum)]
+enum RoleArg {
+    Reviewer,
+    Implementer,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -91,6 +115,11 @@ fn main() -> anyhow::Result<()> {
         } => serve(port, idle_timeout.as_deref(), detach),
         Command::Status => status(),
         Command::Stop => stop(),
+        Command::Wait {
+            review,
+            role,
+            timeout,
+        } => wait(review, role, timeout.as_deref()),
         Command::Version => {
             println!("lani {}", daemon::VERSION);
             Ok(())
@@ -109,6 +138,63 @@ fn init_logging() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .init();
+}
+
+/// How often `lani wait` checks the review.
+const WAIT_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn wait(review_id: i64, role: RoleArg, timeout: Option<&str>) -> anyhow::Result<()> {
+    let role = match role {
+        RoleArg::Reviewer => Actor::Reviewer,
+        RoleArg::Implementer => Actor::Implementer,
+    };
+    let timeout = timeout.map(parse_wait_timeout).transpose()?;
+    let service = Service::open(&paths::db_path(&home()?))?;
+    // The output reaches Claude like a tool result, so it follows the same contract (§12.4).
+    let print = |text: &str| print!("{}", lani::text::neutralize_line_breaks(text));
+    match service.wait_for_turn(review_id, role, timeout, WAIT_POLL)? {
+        WaitOutcome::YourTurn(view) => {
+            print(&render::your_turn(&view, role));
+            Ok(())
+        }
+        WaitOutcome::Closed(_) => {
+            print(&format!(
+                "Review {review_id} was closed; there is nothing more to wait for.\n"
+            ));
+            std::process::exit(3);
+        }
+        WaitOutcome::TimedOut(review) => {
+            let holder = match review.turn {
+                Some(holder) => format!("the {}", holder.as_str()),
+                None => "nobody".to_string(),
+            };
+            print(&format!(
+                "Still not your turn on review {review_id}: it is {holder}'s turn.\n"
+            ));
+            std::process::exit(2);
+        }
+    }
+}
+
+/// A `lani wait --timeout`: a whole number of seconds, minutes or hours.
+fn parse_wait_timeout(text: &str) -> anyhow::Result<std::time::Duration> {
+    let invalid = || {
+        anyhow::anyhow!(
+            "invalid timeout {text:?}: use a whole number followed by s, m or h, like 30s, 10m or 2h"
+        )
+    };
+    let unit_at = text
+        .find(|c: char| !c.is_ascii_digit())
+        .ok_or_else(invalid)?;
+    let (number, unit) = text.split_at(unit_at);
+    let number: u64 = number.parse().map_err(|_| invalid())?;
+    let seconds = match unit {
+        "s" => number,
+        "m" => number.checked_mul(60).ok_or_else(invalid)?,
+        "h" => number.checked_mul(3600).ok_or_else(invalid)?,
+        _ => return Err(invalid()),
+    };
+    Ok(std::time::Duration::from_secs(seconds))
 }
 
 fn home() -> anyhow::Result<PathBuf> {

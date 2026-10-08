@@ -37,6 +37,9 @@ struct ReviewRow {
     resolved_issues: u64,
     created_by: AuthorView,
     created: String,
+    /// It is the human's turn, or a question is waiting for them.
+    needs_you: bool,
+    turn: Option<views::TurnView>,
 }
 
 struct RepoGroup {
@@ -93,6 +96,10 @@ pub async fn index(
             resolved_issues: item.view.counts.resolved,
             created_by: author(review.created_by),
             created: time::to_local(&review.created_at),
+            needs_you: open
+                && (review.turn == Some(crate::model::Actor::Human)
+                    || !item.view.questions.is_empty()),
+            turn: views::turn(review),
         };
         let repo = &item.view.repo;
         match groups.iter_mut().find(|group| group.repo_id == repo.id) {
@@ -245,7 +252,12 @@ pub async fn review(
         summary_edited,
         summary_comments: detail.summary_comments.iter().map(views::comment).collect(),
         issue_filters,
-        issues: issues.issues.iter().map(views::issue_row).collect(),
+        issues: {
+            // Issues waiting for the human come first, so they are easy to find.
+            let mut rows: Vec<IssueRow> = issues.issues.iter().map(views::issue_row).collect();
+            rows.sort_by_key(|row| !row.needs_you);
+            rows
+        },
         issues_empty,
         base_options,
         events: events.iter().map(views::event).collect(),
@@ -273,6 +285,7 @@ struct IssuePage {
     resolved: bool,
     opened_by: AuthorView,
     opened: String,
+    question: Option<String>,
     spans: Vec<SpanView>,
     comments: Vec<CommentView>,
     status_action: String,
@@ -319,6 +332,7 @@ pub async fn issue(
         resolved: issue.status == IssueStatus::Resolved,
         opened_by: author(issue.author),
         opened: time::to_local(&issue.created_at),
+        question: views::question_notice(issue),
         spans: views::span_views(&view, true, detail.view.review.base_ref.is_some()),
         comments: view.comments.iter().map(views::comment).collect(),
         status_action: format!("{}/status", views::issue_url(review_id, issue_id)),
@@ -351,11 +365,14 @@ struct SettingsPage {
     pid: u32,
     port: u16,
     started: String,
+    round_limit: u32,
 }
 
 /// `GET /settings`: the idle timeout and facts about the running server.
 pub async fn settings(State(state): State<AppState>) -> Result<Html<String>, PageError> {
-    let saved = state.call(|service| service.idle_timeout()).await?;
+    let (saved, round_limit) = state
+        .call(|service| Ok((service.idle_timeout()?, service.round_limit()?)))
+        .await?;
     let idle = state.idle();
     let instance = state.instance();
     let page = SettingsPage {
@@ -367,6 +384,7 @@ pub async fn settings(State(state): State<AppState>) -> Result<Html<String>, Pag
         pid: instance.pid,
         port: instance.port,
         started: time::to_local(&instance.started_at),
+        round_limit,
     };
     Ok(Html(page.render()?))
 }

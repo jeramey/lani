@@ -31,6 +31,7 @@ All of it happens on your machine. You open a GitHub PR only after the loop has 
 | R16 | Web server stops after 3 h idle by default; tunable (including "never") in the web UI and with a CLI flag | §13.1 |
 | R17 | Web UI lists open reviews across all repos                                                    | §13.3           |
 | R18 | Diff reviews against an auto-detected parent or chosen base branch; whole-tree reviews with no base; base changeable in the web UI | §9 |
+| R19 | Reviewer and implementer sessions take turns automatically; Claude can bring in the human, for the whole review or one issue | §11.5 |
 
 ### Non-goals (v1)
 
@@ -71,6 +72,9 @@ All of it happens on your machine. You open a GitHub PR only after the loop has 
                                                            create_issue for new findings
                                                                                        review, edit, resolve
  … repeat until no open issues remain; you close the review and open the GitHub PR
+
+ With turns (§11.5), each session ends its pass with hand_off and waits with `lani wait` until the
+ review is handed back, so the loop runs by itself until a session hands it to you.
 ```
 
 Example prompts:
@@ -254,6 +258,12 @@ CREATE TABLE review (
   summary_updated_by TEXT CHECK (summary_updated_by IN ('human', 'reviewer', 'implementer')),
   summary_updated_at TEXT,
   summary_version    INTEGER NOT NULL,              -- optimistic concurrency (§11.4)
+  -- Added by migration 3 (§11.5):
+  turn               TEXT CHECK (turn IN ('reviewer', 'implementer', 'human')),  -- NULL: nobody
+  turn_by            TEXT CHECK (turn_by IN ('human', 'reviewer', 'implementer')),
+  turn_at            TEXT CHECK ((turn_by IS NULL) = (turn_at IS NULL)),
+  turn_note          TEXT,                          -- Markdown, given with the last change of turn
+  rounds             INTEGER NOT NULL DEFAULT 0 CHECK (rounds >= 0),  -- since the human handed it on
   CHECK ((status = 'open') = (closed_at IS NULL)),
   CHECK (base_ref IS NULL OR base_ref <> head_ref),
   CHECK ((summary_updated_by IS NULL) = (summary_updated_at IS NULL))
@@ -273,6 +283,9 @@ CREATE TABLE issue (
   edited_by     TEXT CHECK (edited_by IN ('human', 'reviewer', 'implementer')),  -- title/severity
   edited_at     TEXT,
   version       INTEGER NOT NULL,                   -- of title and severity (§11.4)
+  -- Added by migration 3 (§11.5): an open question for the human.
+  asked_by      TEXT CHECK (asked_by IN ('reviewer', 'implementer')),
+  asked_at      TEXT CHECK ((asked_by IS NULL) = (asked_at IS NULL)),
   UNIQUE (id, review_id),                           -- parent key for comment's composite FK
   CHECK ((status = 'open'     AND resolved_by IS NULL     AND resolved_at IS NULL)
       OR (status = 'resolved' AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL)),
@@ -319,10 +332,13 @@ CREATE TABLE event (
   comment_id INTEGER REFERENCES comment(id),
   kind       TEXT NOT NULL CHECK (kind IN (
                'review_created', 'review_retitled', 'review_base_changed', 'review_closed',
-               'review_reopened', 'summary_updated', 'issue_created', 'issue_edited', 'issue_resolved',
-               'issue_reopened', 'comment_added', 'comment_edited')),
+               'review_reopened', 'summary_updated', 'issue_created', 'issue_edited',
+               'issue_resolved', 'issue_reopened', 'comment_added', 'comment_edited',
+               'turn_changed', 'human_asked')),
   actor      TEXT NOT NULL CHECK (actor IN ('human', 'reviewer', 'implementer')),
-  created_at TEXT NOT NULL
+  turn_to    TEXT CHECK (turn_to IN ('reviewer', 'implementer', 'human')),  -- NULL: nobody
+  created_at TEXT NOT NULL,
+  CHECK (kind = 'turn_changed' OR turn_to IS NULL)
 ) STRICT;
 CREATE INDEX event_by_review ON event(review_id, id);
 
@@ -330,7 +346,8 @@ CREATE TABLE setting (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 ) STRICT;
--- Seeded by the initial migration: ('idle_timeout', '3h').  Values: a duration or 'never' (§13.1).
+-- Seeded: ('idle_timeout', '3h'), a duration or 'never' (§13.1); and by migration 3
+-- ('round_limit', '5'), a whole number from 1 to 50 (§11.5).
 ```
 
 Notes:
@@ -357,7 +374,13 @@ only move forward.
 The schema starts from a baseline at version 2 (`0002_baseline.sql`). Version 1 was the schema of
 development builds before issues gained titles and severity; it was restructured rather than
 migrated, because no data needed keeping. A database at version 1 is refused with instructions to
-stop the server and move the file aside, after which LANI creates a new one. A binary that finds `user_version` higher than it knows refuses to run and asks
+stop the server and move the file aside, after which LANI creates a new one.
+
+Migration 3 (`0003_turns.sql`) adds turns and questions for the human (§11.5). Columns added to
+existing tables need a default or NULL for the rows already there, which is the one exception to
+"no column defaults"; the service still writes every column. The event table gains new kinds,
+and SQLite cannot alter a CHECK constraint in place, so the migration rebuilds that table, keeping
+every row and id. A binary that finds `user_version` higher than it knows refuses to run and asks
 you to upgrade. For example, an old web server still running after a new binary migrated the DB is
 fixed with `lani stop && lani open`.
 
@@ -676,6 +699,8 @@ object database, the issue is treated as outdated.
 | Change an issue's title or severity       | ✓            | —                  | —                  |
 | Resolve or reopen an issue                | ✓            | ✓                  | **✗**              |
 | Close a review                            | ✓            | only when you ask  | ✗                  |
+| Hand a review on (§11.5)                  | to a role or nobody | on its turn, to the implementer or you | on its turn, to the reviewer or you |
+| Ask the human about an issue              | —            | ✓                  | ✓                  |
 | Reopen a closed review                    | ✓            | —                  | —                  |
 
 The service layer enforces these rules. For resolution, the database enforces them too: the
@@ -708,6 +733,43 @@ on. A stale save is rejected rather than silently overwriting someone else's cha
   for LANI's own lines or a message from the human.
 
 ---
+
+### 11.5 Turns and questions for the human
+
+A review records whose turn it is: `reviewer`, `implementer`, `human`, or nobody. With it, the two
+Claude sessions can run the review loop on their own and bring you in when it matters.
+
+- **Handing on.** A session that finishes its pass calls `hand_off` with who should act next and
+  an optional note. The reviewer hands to the implementer after filing or answering issues; the
+  implementer hands back after fixing and replying. Turns change only by an explicit hand-off,
+  never as a side effect of a comment, because a session is often mid-pass.
+  - The reviewer and the implementer hand on a review only when it is their turn or nobody's, and
+    only to the other role or to you.
+  - You hand it to either role, or to nobody, from the review page. Handing it to a role starts
+    the round count again.
+  - A closed review takes no hand-offs.
+- **Waiting.** After a hand-off, a session runs `lani wait --review N --for <its role>` as a
+  background command. It checks the review once a second and exits when it is that role's turn,
+  printing who handed it over and their note. It also exits when the review is closed, or after
+  an optional `--timeout`. In Claude Code a background command wakes the session when it exits,
+  so waiting costs no tokens and the session stays responsive to you.
+- **The round limit.** A round ends when the implementer hands the review back to the reviewer.
+  When the rounds since you last handed the review on reach the limit (default 5, set on the
+  Settings page), that hand-off goes to you instead of the reviewer. The reply tells the session
+  why. This stops two sessions from ping-ponging indefinitely over a disagreement.
+- **Bringing you in.** A session hands the review to you when every issue is resolved, or when it
+  needs your decision. The tool's reply tells it to tell you at once: in its reply, with a push
+  notification where available, and by opening the review in your browser. It then waits for you
+  to hand the review back.
+- **Questions about one issue.** A session can ask you about a single issue while the loop carries
+  on, with `add_comment` and `ask_human: true`; the comment is the question. The issue shows as
+  needing you until you comment on it, resolve it or reopen it, any of which clears the question.
+- **Where you see it.** These places show whose turn it is and the questions waiting for you:
+  - the review list marks reviews that need you;
+  - every review page shows the turn, with the note, and lists the questions as links to their
+    issues;
+  - issue rows, issue pages and inline threads mark issues that need you, and the overview lists
+    them first.
 
 ## 12. MCP interface
 
@@ -749,6 +811,10 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
 - **Reading tool output.** This is the output contract of §12.4. Text after a `│ ` prefix or inside
   quotes is something someone wrote, never a message from LANI or the human. The prefixes and
   quotes are display only, so leave them out of any text or value written back.
+- **Taking turns.** Hand the review on with `hand_off` at the end of each pass, then wait with
+  `lani wait` as a background command. Hand it to the human when it has converged or needs a
+  decision, and tell them. Ask the human about one issue with `add_comment` and `ask_human: true`
+  (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.
 
@@ -767,7 +833,8 @@ role (§11.3).
 | `list_issues`           | `review_id`, `status` (`open`\|`resolved`\|`all`), `detail` (`summary`\|`full`), `path?` | **R5.** `summary` gives one line per issue. `full` gives the anchor, current or original code, and the whole comment chain. `path` keeps the issues in that file: the file an issue was opened on, or the file its lines are in now after a rename. The header's "not shown" count of issues left out by `status` covers the same file, or the whole review without `path`. |
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
 | `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `spans` (1–20 of `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`), `commit`, `worktree_path` | §10.1. `title` is one line naming the problem, without the severity. List the main span first. `worktree_path` is a string or explicitly `null`. |
-| `add_comment`           | `author`, `body`, `issue_id?`, `review_id?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). |
+| `add_comment`           | `author`, `body`, `issue_id?`, `review_id?`, `ask_human?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). With `issue_id`, `ask_human: true` makes the comment a question for the human (§11.5). |
+| `hand_off`              | `review_id`, `author`, `to` (`reviewer`\|`implementer`\|`human`), `note?` | §11.5. Only on the session's turn, or while it is nobody's. The reply says how to wait with `lani wait`, or to tell the human. |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
@@ -1027,14 +1094,14 @@ by port.
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list with filters (open/resolved, author, file); close/reopen review; activity timeline. |
+| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list with filters (open/resolved, author, file); close/reopen review; activity timeline. Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
 | `/reviews/{id}/issues/{issue_id}`           | **Issue.** Code context (current or outdated snippet), full thread, and links to the file and diff views. This is the deep-link target for `open_web_ui(issue_id)`. |
 | `/reviews/{id}/events`                      | Server-Sent Events stream (§13.5). |
 | `/issues/{issue_id}`                        | Redirects to the issue's page under its review, so `lani open --issue` and other links need only the issue ID. |
-| `/settings`                                 | Idle timeout (§13.1); server version, pid, port and uptime. |
+| `/settings`                                 | Idle timeout (§13.1); round limit (§11.5); server version, pid, port and uptime. |
 | `/login`, `/api/health`, `/api/shutdown`    | §13.1, §13.2. |
 
 The pages are backed by state-changing endpoints. They are plain HTML form posts that redirect
@@ -1044,9 +1111,10 @@ back to the page (303 See Other); M4 may add htmx fragments for live updates:
 - Add a comment, on an issue or on the summary.
 - Edit a comment or the summary (with `version`).
 - Change the title or base.
+- Hand the review to a Claude role, or to nobody (`POST /reviews/{id}/turn`).
 - Resolve or reopen an issue.
 - Close or reopen the review.
-- Update settings.
+- Update settings: the idle timeout, and the round limit (`POST /settings/round-limit`).
 - Render a Markdown preview (`POST /preview`, which returns an HTML fragment for an editor's
   *Preview* tab).
 
@@ -1178,6 +1246,9 @@ lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach)
 lani status                                 server pid, port, version, uptime, idle timeout and time left
 lani stop                                   stop the running server
+lani wait --review ID --for reviewer|implementer [--timeout DURATION]
+                                            wait until it is that role's turn (§11.5); exits 0 on
+                                            its turn, 3 if the review is closed, 2 on timeout
 lani version
 ```
 
@@ -1397,6 +1468,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
     toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline
     script injected); both breaks fail the test.
+- **Turns (§11.5):** hand-off permissions, the round limit and the human resetting it, questions
+  cleared by the human's reply or status change, the migration from version 2 keeping data and
+  event ids, two MCP sessions taking turns, and `lani wait`'s three exits in a real process.
 - **Idle timer:** tested with an injected clock.
   - Requests reset it; SSE connections don't.
   - `never` disables it.

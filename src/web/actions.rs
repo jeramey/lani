@@ -86,6 +86,20 @@ pub struct IssueDetailsForm {
     version: i64,
 }
 
+/// The human handing a review on (§11.5).
+#[derive(Deserialize)]
+pub struct TurnForm {
+    /// "reviewer", "implementer" or "nobody".
+    to: String,
+    #[serde(default)]
+    note: String,
+}
+
+#[derive(Deserialize)]
+pub struct RoundLimitForm {
+    round_limit: String,
+}
+
 #[derive(Deserialize)]
 pub struct PreviewForm {
     body: String,
@@ -481,6 +495,53 @@ pub async fn save_settings(
         .await
         .map_err(|error| failed(error, back(), "Back to settings", &form.idle_timeout))?;
     state.set_idle_timeout(timeout, TimeoutSource::Saved);
+    Ok(redirect("/settings"))
+}
+
+/// `POST /reviews/{id}/turn`: hand the review to a Claude role, or to nobody.
+pub async fn hand_off(
+    State(state): State<AppState>,
+    Path(review_id): Path<i64>,
+    Form(form): Form<TurnForm>,
+) -> Result<Response, PageError> {
+    let back = review_url(review_id);
+    let to = match form.to.as_str() {
+        "reviewer" => Some(Actor::Reviewer),
+        "implementer" => Some(Actor::Implementer),
+        "nobody" => None,
+        other => {
+            return Err(PageError::new(
+                StatusCode::BAD_REQUEST,
+                "Unknown role",
+                &format!("{other:?} is not someone a review can be handed to."),
+            )
+            .back(back, "Back to the review")
+            .submitted(&form.note));
+        }
+    };
+    let note = form.note.clone();
+    state
+        .call(move |service| {
+            service.hand_off(Actor::Human, review_id, to, Some(&note))?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| failed(error, back.clone(), "Back to the review", &form.note))?;
+    Ok(redirect(&back))
+}
+
+/// `POST /settings/round-limit`: how many rounds Claude takes before the review comes to you.
+pub async fn save_round_limit(
+    State(state): State<AppState>,
+    Form(form): Form<RoundLimitForm>,
+) -> Result<Response, PageError> {
+    let back = || "/settings".to_string();
+    let limit = crate::settings::parse_round_limit(&form.round_limit)
+        .map_err(|error| failed(error, back(), "Back to settings", &form.round_limit))?;
+    state
+        .call(move |service| service.set_round_limit(Actor::Human, limit))
+        .await
+        .map_err(|error| failed(error, back(), "Back to settings", &form.round_limit))?;
     Ok(redirect("/settings"))
 }
 

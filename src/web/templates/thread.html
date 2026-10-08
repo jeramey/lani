@@ -1,11 +1,13 @@
 <div class="thread {{ thread.status_class }}" id="{{ thread.anchor }}">
   <details{% if !thread.resolved %} open{% endif %}>
     <summary>
+      {% if thread.question.is_some() %}<span class="badge needs-you">Needs you</span>{% endif %}
       <a href="{{ thread.url }}">#{{ thread.id }} {{ thread.title }}</a>
       <span class="badge {{ thread.severity.class }}">{{ thread.severity.label }}</span>
       <span class="badge {{ thread.status_class }}">{{ thread.status_label }}</span>
       <span class="author {{ thread.opened_by.class }}">{{ thread.opened_by.label }}</span>
     </summary>
+    {% if let Some(question) = thread.question %}<p class="notice needs-you-notice">{{ question }}. Reply below, or resolve or reopen the issue, to answer.</p>{% endif %}
     <div class="thread-spans">{% for span in thread.spans %}{% include "span.html" %}{% endfor %}</div>
     {% for comment in thread.comments %}{% include "comment.html" %}{% endfor %}
     {% if editable %}

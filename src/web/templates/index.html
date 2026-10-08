@@ -19,8 +19,9 @@
       <div class="row-main">
         <a class="review-title" href="{{ row.url }}">{{ row.title }}</a>
         <span class="badge {{ row.status_class }}">{{ row.status_label }}</span>
+        {% if row.needs_you %}<span class="badge needs-you">Needs you</span>{% endif %}
       </div>
-      <p class="meta">#{{ row.id }} · <code>{{ row.refs }}</code> · {{ row.open_issues }} open, {{ row.resolved_issues }} resolved · started by <span class="author {{ row.created_by.class }}">{{ row.created_by.label }}</span> · {{ row.created }}</p>
+      <p class="meta">#{{ row.id }} · <code>{{ row.refs }}</code> · {{ row.open_issues }} open, {{ row.resolved_issues }} resolved{% if let Some(turn) = row.turn %} · waiting for <span class="author {{ turn.class }}">{{ turn.label }}</span>{% endif %} · started by <span class="author {{ row.created_by.class }}">{{ row.created_by.label }}</span> · {{ row.created }}</p>
     </li>
     {% endfor %}
   </ul>

@@ -14,7 +14,7 @@ use crate::model::{
     Actor, Anchor, BaseSource, Comment, IssueStatus, ReviewStatus, Side, short_ref, short_sha,
 };
 use crate::service::{
-    CodeExcerpt, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
+    CodeExcerpt, HandOff, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
     StartedReview, WorktreeReport,
 };
 use crate::text::{self, quoted};
@@ -61,6 +61,7 @@ pub fn started_review(started: &StartedReview) -> String {
     } else {
         let _ = writeln!(out, "{head} · {}", base_text(view));
         let _ = writeln!(out, "{}", counts_text(view));
+        out.push_str(&turn_text(view));
     }
     let _ = writeln!(out, "{}", worktree_text(&started.worktree));
     if !started.worktree.modified.is_empty() {
@@ -108,9 +109,18 @@ pub fn review_list(list: &ReviewList, status_label: &str) -> String {
         } else {
             ""
         };
+        let turn = match (review.status, review.turn) {
+            (ReviewStatus::Open, Some(holder)) => format!(" · turn: {}", holder.as_str()),
+            _ => String::new(),
+        };
+        let questions = match item.view.questions.len() {
+            0 => String::new(),
+            count => format!(" · {} for the human", plural(count, "question")),
+        };
         let _ = writeln!(
             out,
-            "Review {} · {repo}{} · {} · {} {base} · {} open, {} resolved issues · started by {} {}{marker}",
+            "Review {} · {repo}{} · {} · {} {base} · {} open, {} resolved issues{turn}{questions} · \
+             started by {} {}{marker}",
             review.id,
             review_status(review.status),
             quoted(&review.title),
@@ -140,6 +150,7 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     );
     let _ = writeln!(out, "{} · {}", head_text(view), base_text(view));
     let _ = writeln!(out, "{}", counts_text(view));
+    out.push_str(&turn_text(view));
     if let Some(reason) = &view.repo_unavailable {
         let _ = writeln!(out, "Repository not available: {reason}");
     }
@@ -179,6 +190,117 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     for comment in &detail.summary_comments {
         out.push_str(&comment_text(comment));
     }
+    out
+}
+
+/// Whose turn an open review is, the note given with it, and the questions open for the human
+/// (§11.5). Empty for a closed review.
+fn turn_text(view: &ReviewView) -> String {
+    let review = &view.review;
+    if review.status != ReviewStatus::Open {
+        return String::new();
+    }
+    let mut out = String::new();
+    let holder = review.turn.map_or("nobody", Actor::as_str);
+    match (review.turn_by, &review.turn_at) {
+        (Some(by), Some(at)) => {
+            let _ = writeln!(
+                out,
+                "Turn: {holder} (set by the {} at {}) · rounds without the human: {}",
+                by.as_str(),
+                time::to_minutes(at),
+                review.rounds
+            );
+        }
+        _ => {
+            let _ = writeln!(out, "Turn: {holder}");
+        }
+    }
+    if let Some(note) = &review.turn_note {
+        out.push_str("Hand-off note:\n");
+        out.push_str(&text::quote_body(note));
+    }
+    if !view.questions.is_empty() {
+        let issues: Vec<String> = view
+            .questions
+            .iter()
+            .map(|question| question.issue_id.to_string())
+            .collect();
+        let _ = writeln!(
+            out,
+            "Questions for the human: {} {}",
+            if issues.len() == 1 { "issue" } else { "issues" },
+            issues.join(", ")
+        );
+    }
+    out
+}
+
+/// The reply to `hand_off`: who has the review now, and what to do next.
+#[must_use]
+pub fn hand_off(handed: &HandOff, actor: Actor) -> String {
+    let review = &handed.review;
+    let mut out = String::new();
+    if let Some(limit) = handed.limit_reached {
+        let _ = writeln!(
+            out,
+            "The reviewer and implementer have now taken {} without the human (the round limit), \
+             so review {} went to the human instead of the reviewer.",
+            plural(usize::try_from(limit).unwrap_or(usize::MAX), "round"),
+            review.id
+        );
+    }
+    let wait = format!(
+        "run `lani wait --review {} --for {}` as a background command; it exits when the review \
+         is handed back to you, or if it is closed.",
+        review.id,
+        actor.as_str()
+    );
+    match review.turn {
+        Some(Actor::Human) => {
+            let _ = writeln!(
+                out,
+                "Review {} is now the human's turn. Tell the human now: say so in your reply, \
+                 send a push notification if you can, and call open_web_ui with review_id {}. \
+                 Then wait: {wait}",
+                review.id, review.id
+            );
+        }
+        Some(role) => {
+            let _ = writeln!(
+                out,
+                "Review {} is now the {}'s turn (rounds without the human: {} of {}). Now wait \
+                 for your turn: {wait}",
+                review.id,
+                role.as_str(),
+                review.rounds,
+                handed.round_limit
+            );
+        }
+        None => {
+            let _ = writeln!(out, "Review {} is now nobody's turn.", review.id);
+        }
+    }
+    out
+}
+
+/// What `lani wait` prints when it is the waiting role's turn.
+#[must_use]
+pub fn your_turn(view: &ReviewView, role: Actor) -> String {
+    let review = &view.review;
+    let mut out = format!(
+        "It is your turn ({}) on review {} {}.\n",
+        role.as_str(),
+        review.id,
+        quoted(&review.title)
+    );
+    let _ = writeln!(out, "{}", counts_text(view));
+    out.push_str(&turn_text(view));
+    let _ = writeln!(
+        out,
+        "Next: read the review with get_review and list_issues (status \"open\"), act on it, \
+         then call hand_off."
+    );
     out
 }
 
@@ -251,8 +373,13 @@ fn issue_summary_line(view: &IssueView) -> String {
         .comments
         .last()
         .map_or("nobody", |comment| comment.author.as_str());
+    let asked = if issue.asked_by.is_some() {
+        " · question for the human"
+    } else {
+        ""
+    };
     format!(
-        "Issue {} · {} · {} · {} · {} · {}, last: {last}\n",
+        "Issue {} · {} · {} · {} · {} · {}, last: {last}{asked}\n",
         issue.id,
         issue_status(issue.status, issue.resolved_by),
         issue.severity.as_str(),
@@ -327,6 +454,14 @@ pub fn issue_full(view: &IssueView) -> String {
         None => String::new(),
     };
     let _ = writeln!(out, "Title: {}{edited}", quoted(&issue.title));
+    if let (Some(asker), Some(at)) = (issue.asked_by, &issue.asked_at) {
+        let _ = writeln!(
+            out,
+            "Waiting for the human: the {} asked at {}; their reply clears it",
+            asker.as_str(),
+            time::to_minutes(at)
+        );
+    }
     out.push_str(&locations_text(view));
 
     if let Some(code) = &view.code {

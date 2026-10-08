@@ -27,6 +27,21 @@
       <div class="form-actions"><button type="submit">Save base</button></div>
     </form>
   </details>
+  <details class="inline-edit">
+    <summary>Hand on</summary>
+    <form method="post" action="{{ review.url }}/turn">
+      <label for="turn-to">Whose turn is it?</label>
+      <select id="turn-to" name="to" required>
+        <option value="reviewer">Claude · reviewer</option>
+        <option value="implementer">Claude · implementer</option>
+        <option value="nobody">Nobody</option>
+      </select>
+      <label for="turn-note">Note (optional)</label>
+      <textarea id="turn-note" name="note" rows="3" placeholder="What should happen next? Markdown is supported"></textarea>
+      <p class="hint">Handing the review to Claude starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
+      <div class="form-actions"><button type="submit">Hand on</button></div>
+    </form>
+  </details>
   <form method="post" action="{{ review.url }}/close" class="inline">
     <button type="submit" class="secondary">Close review</button>
   </form>
@@ -75,6 +90,7 @@
       <div class="row-main">
         <a href="{{ issue.url }}" class="issue-link">#{{ issue.id }}</a>
         <span class="badge {{ issue.status_class }}">{{ issue.status_label }}</span>
+        {% if issue.needs_you %}<span class="badge needs-you">Needs you</span>{% endif %}
         <span class="badge {{ issue.severity.class }}">{{ issue.severity.label }}</span>
         <a href="{{ issue.url }}" class="issue-title">{{ issue.title }}</a>
       </div>

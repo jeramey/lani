@@ -444,3 +444,28 @@ form.new-issue .preview {
 .span { margin: 6px 0; }
 .span-link { font-size: 13px; margin-left: 8px; }
 .thread-spans .span:first-child { margin-top: 2px; }
+
+/* Turns and questions for the human (§11.5) */
+.badge.needs-you { background: #c4314b; }
+.turn {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.turn.yours { border-left-color: #c4314b; background: var(--notice-bg); }
+.turn p { margin: 0; }
+.turn-note { margin-top: 6px; font-size: 14px; }
+.questions {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid #c4314b;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.questions p { margin: 0 0 4px; }
+.questions ul { margin: 0; padding: 0; list-style: none; }
+.questions li { padding: 3px 0; }
+.needs-you-notice .badge { margin-right: 4px; }

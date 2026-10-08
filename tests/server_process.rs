@@ -328,3 +328,70 @@ fn the_server_does_not_depend_on_the_directory_it_was_started_from() {
         &response[..response.len().min(600)]
     );
 }
+
+#[test]
+fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() {
+    let home = TestHome::new();
+    let repo = common::TestRepo::new(&[("a.txt", "a\n")]);
+    let mut service = lani::service::Service::open(&home.db_path()).unwrap();
+    service
+        .start_review(&lani::service::StartReview {
+            repo_path: &repo.path,
+            title: "t",
+            author: lani::model::Actor::Reviewer,
+            base_mode: lani::base::BaseMode::None,
+            summary: None,
+            head_ref: None,
+        })
+        .unwrap();
+    let wait = |role: &str, extra: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lani"));
+        command
+            .args(["wait", "--review", "1", "--for", role])
+            .args(extra)
+            .env("LANI_HOME", &home.path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        common::spawn(&mut command)
+    };
+
+    // Not the implementer's turn yet: the wait blocks until the reviewer hands off.
+    let waiting = wait("implementer", &[]);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    service
+        .hand_off(
+            lani::model::Actor::Reviewer,
+            1,
+            Some(lani::model::Actor::Implementer),
+            Some("Over to you."),
+        )
+        .unwrap();
+    let output = waiting.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.starts_with("It is your turn (implementer) on review 1 \"t\"."),
+        "{text}"
+    );
+    assert!(text.contains("│ Over to you."), "{text}");
+
+    let timed_out = wait("reviewer", &["--timeout", "1s"])
+        .wait_with_output()
+        .unwrap();
+    assert_eq!(timed_out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&timed_out.stdout).contains("it is the implementer's turn"),
+        "{}",
+        String::from_utf8_lossy(&timed_out.stdout)
+    );
+
+    service.close_review(lani::model::Actor::Human, 1).unwrap();
+    let closed = wait("reviewer", &[]).wait_with_output().unwrap();
+    assert_eq!(closed.status.code(), Some(3));
+
+    let bad = wait("reviewer", &["--timeout", "soon"])
+        .wait_with_output()
+        .unwrap();
+    assert!(!bad.status.success());
+}

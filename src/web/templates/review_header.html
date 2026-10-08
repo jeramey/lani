@@ -10,6 +10,20 @@
   <dt>Base</dt><dd><code>{{ review.base }}</code>{% if let Some(note) = review.base_note %} <span class="note">{{ note }}</span>{% endif %}</dd>
   <dt>Started</dt><dd>by <span class="author {{ review.created_by.class }}">{{ review.created_by.label }}</span> · {{ review.created }}</dd>
 </dl>
+{% if let Some(turn) = review.turn %}
+<div class="turn{% if turn.yours %} yours{% endif %}">
+  <p><strong>Waiting for:</strong> <span class="author {{ turn.class }}">{{ turn.label }}</span>{% if let Some(detail) = turn.detail %} <span class="muted small">· {{ detail }}</span>{% endif %}</p>
+  {% if let Some(html) = turn.note_html %}<div class="markdown turn-note">{{ html|safe }}</div>{% endif %}
+</div>
+{% endif %}
+{% if !review.questions.is_empty() %}
+<div class="questions">
+  <p><strong>Questions for you</strong> <span class="muted small">— reply, resolve or reopen an issue to answer</span></p>
+  <ul>
+    {% for question in review.questions %}<li><span class="badge needs-you">Needs you</span> <a href="{{ question.url }}">#{{ question.id }} {{ question.title }}</a> <span class="muted small">asked by <span class="author {{ question.asked_by.class }}">{{ question.asked_by.label }}</span></span></li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
 <nav class="tabs" aria-label="Review views">
   <a href="{{ review.url }}"{% if review.tab == "overview" %} class="active" aria-current="page"{% endif %}>Overview</a>
   {% if let Some(url) = review.changes_url %}<a href="{{ url }}"{% if review.tab == "changes" %} class="active" aria-current="page"{% endif %}>Changes</a>{% endif %}

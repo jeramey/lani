@@ -1,4 +1,5 @@
-//! Persisted settings (docs/design.md §13.1). The only one is the web server's idle timeout.
+//! Persisted settings: the web server's idle timeout (docs/design.md §13.1) and the round limit
+//! for turns (§11.5).
 
 use std::fmt;
 use std::time::Duration;
@@ -7,6 +8,24 @@ use crate::error::{Error, Result};
 
 /// The `setting` table key for the idle timeout.
 pub const IDLE_TIMEOUT_KEY: &str = "idle_timeout";
+
+/// The `setting` table key for the round limit (§11.5).
+pub const ROUND_LIMIT_KEY: &str = "round_limit";
+
+/// The largest round limit accepted.
+pub const MAX_ROUND_LIMIT: u32 = 50;
+
+/// Parse a round limit: how many times the implementer may hand a review back to the reviewer
+/// before it goes to the human. A whole number from 1 to [`MAX_ROUND_LIMIT`].
+pub fn parse_round_limit(text: &str) -> Result<u32> {
+    match text.trim().parse::<u32>() {
+        Ok(limit) if (1..=MAX_ROUND_LIMIT).contains(&limit) => Ok(limit),
+        _ => Err(Error::Invalid(format!(
+            "invalid round limit {:?}: use a whole number from 1 to {MAX_ROUND_LIMIT}",
+            text.trim()
+        ))),
+    }
+}
 
 /// The shortest idle timeout accepted, so a typo cannot stop the server almost immediately.
 pub const MIN_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -135,6 +154,15 @@ mod tests {
         }
         assert_eq!(IdleTimeout::parse("180m").unwrap().to_string(), "3h");
         assert_eq!(IdleTimeout::parse("48h").unwrap().to_string(), "2d");
+    }
+
+    #[test]
+    fn round_limits_are_whole_numbers_from_1_to_50() {
+        assert_eq!(parse_round_limit(" 5 ").unwrap(), 5);
+        assert_eq!(parse_round_limit("50").unwrap(), 50);
+        for bad in ["0", "51", "-1", "five", "", "2.5"] {
+            assert!(parse_round_limit(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
