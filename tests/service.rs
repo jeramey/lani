@@ -1820,6 +1820,41 @@ fn the_round_limit_brings_in_the_human_who_hands_back(service: &mut Service, rev
 }
 
 #[test]
+fn only_a_hand_back_after_the_reviewers_hand_off_counts_as_a_round() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Implementer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let rounds = |handed: lani::service::HandOff| (handed.review.turn, handed.review.rounds);
+
+    // The implementer opens the loop: nothing has been reviewed yet.
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(rounds(handed), (Some(Actor::Reviewer), 0));
+    // The reviewer hands it over and the implementer hands it back: one round.
+    service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(rounds(handed), (Some(Actor::Reviewer), 1));
+
+    // The human hands it to the implementer, who hands it on: the count starts again at 0.
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(rounds(handed), (Some(Actor::Reviewer), 0));
+}
+
+#[test]
 fn questions_for_the_human_are_cleared_by_the_humans_reply_or_status_change() {
     let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
     let review_id = service.get_issue(issue_id).unwrap().issue.review_id;

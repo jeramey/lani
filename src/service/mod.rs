@@ -898,7 +898,11 @@ impl Service {
         let limit = round_limit(&tx)?;
         let (to, rounds, limit_reached) = match (actor, to) {
             (Actor::Human, to) => (to, 0, None),
-            (Actor::Implementer, Some(Actor::Reviewer)) => {
+            // A round is the reviewer handing the review to the implementer and the implementer
+            // handing it back; a loop the implementer opened, or the human handed it, starts none.
+            (Actor::Implementer, Some(Actor::Reviewer))
+                if review.turn_by == Some(Actor::Reviewer) =>
+            {
                 let rounds = review.rounds + 1;
                 if rounds >= limit {
                     (Some(Actor::Human), rounds, Some(limit))
