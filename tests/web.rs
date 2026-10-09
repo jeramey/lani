@@ -2083,15 +2083,24 @@ async fn the_hand_off_note_is_on_the_overview_only_and_the_issue_page_links_back
     );
 }
 
-/// Each issue row's role lights in page order, as "classes | tooltip".
+/// Each issue row's role lights in page order, as "classes | name". A light's `aria-label` names
+/// it, and its `title` repeats the name as a tooltip.
 fn role_lights(page: &str) -> Vec<String> {
     page.split("<span class=\"light ")
         .skip(1)
         .map(|light| {
             let light = &light[..light.find("></span>").unwrap()];
-            let (classes, rest) = light.split_once('"').unwrap();
-            let title = rest.split_once("title=\"").unwrap().1.trim_end_matches('"');
-            format!("{classes} | {title}")
+            let (classes, attributes) = light.split_once('"').unwrap();
+            let attribute = |name: &str| {
+                let value = attributes
+                    .split_once(&format!(" {name}=\""))
+                    .unwrap_or_else(|| panic!("no {name}: {light}"))
+                    .1;
+                value[..value.find('"').unwrap()].to_string()
+            };
+            let name = attribute("aria-label");
+            assert_eq!(attribute("title"), name, "{light}");
+            format!("{classes} | {name}")
         })
         .collect()
 }

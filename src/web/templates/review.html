@@ -99,7 +99,7 @@
       <p class="meta"><code class="location">{{ issue.location }}</code>{% if let Some(outdated) = issue.outdated %} <span class="badge outdated">{{ outdated }}</span>{% endif %}</p>
       <div class="row-foot">
         <p class="meta">{{ issue.comments }}{% if let Some(last) = issue.last_author %} · last by <span class="author {{ last.class }}">{{ last.label }}</span>{% endif %}</p>
-        <span class="role-lights" role="group" aria-label="Who has taken part">{% for light in issue.lights %}<span class="light {{ light.class }}{% if light.lit %} lit{% endif %}" role="img" title="{{ light.tooltip }}"></span>{% endfor %}</span>
+        <span class="role-lights" role="group" aria-label="Who has taken part">{% for light in issue.lights %}<span class="light {{ light.class }}{% if light.lit %} lit{% endif %}" role="img" aria-label="{{ light.tooltip }}" title="{{ light.tooltip }}"></span>{% endfor %}</span>
       </div>
     </li>
     {% endfor %}
