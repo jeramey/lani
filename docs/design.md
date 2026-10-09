@@ -1091,7 +1091,8 @@ So when `lani stop` returns, the cleanup is done, or the process died without it
 case `lani stop`, still holding the lock, removes the `server.json` and redirect files the server
 left. A server that another command started meanwhile, such as `lani open` or `open_web_ui`, may
 take the lock first. `lani stop` then sees a different instance answering in `server.json`, which
-proves the old process has ended. It reports the new server and leaves it running. Two simpler waits were tried and failed:
+proves the old process has ended. It reports the new server and leaves it running. Two simpler
+waits were tried and failed:
 
 - **Waiting for the health check to fail** (M2): the server stops listening before it cleans up,
   and a test caught `lani stop` returning in between.
