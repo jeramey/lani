@@ -556,7 +556,7 @@ fn role_lights(view: &IssueView) -> [RoleLight; 3] {
         let status = match (created, comments) {
             (true, 0) => "created this issue".to_string(),
             (true, count) => format!("created this issue and added {}", plural(count, "comment")),
-            (false, 0) => "no comments yet".to_string(),
+            (false, 0) => "no comments".to_string(),
             (false, count) => format!("added {}", plural(count, "comment")),
         };
         let who = author(role);

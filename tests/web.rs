@@ -2105,8 +2105,8 @@ async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
         role_lights(&overview),
         [
             "author-reviewer lit | Claude · reviewer: created this issue",
-            "author-human | You: no comments yet",
-            "author-implementer | Claude · implementer: no comments yet",
+            "author-human | You: no comments",
+            "author-implementer | Claude · implementer: no comments",
         ],
         "{overview}"
     );
