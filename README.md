@@ -21,7 +21,7 @@ It makes no network connections, and it only reads your repositories; it never w
   something. You can edit any text, and edits are marked.
 - **Who resolves.** Only the reviewer and you can resolve issues; the implementer can't.
 - **Taking turns.** Sessions hand the review to each other and wait with `lani wait`. The
-  reviewer's first findings come to you before the implementer sees them. After five rounds
+  reviewer's first findings come to you before the implementer acts on them. After five rounds
   without you, or when a session needs a decision, the review comes to you again. A session can
   also ask you about a single issue.
 - **The web UI.**
