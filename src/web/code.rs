@@ -8,7 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use super::AppState;
-use super::views::{self, Crumb, Live, MarkerView, PageError, ReviewHeader, ThreadView};
+use super::views::{self, Crumb, Live, MarkerView, PageError, ReviewHeader, ThreadView, plural};
 use serde::Deserialize;
 
 use crate::git::{DiffHunk, EntryKind, FileChange, RowKind};
@@ -302,14 +302,6 @@ fn inline_line(anchor: &Anchor, location: &Location, head: &str, path: &str) -> 
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
-}
-
-fn plural(count: usize, noun: &str) -> String {
-    if count == 1 {
-        format!("1 {noun}")
-    } else {
-        format!("{count} {noun}s")
-    }
 }
 
 fn plural_bytes(size: u64) -> String {

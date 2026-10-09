@@ -553,15 +553,11 @@ fn role_lights(view: &IssueView) -> [RoleLight; 3] {
             .skip(1)
             .filter(|comment| comment.author == role)
             .count();
-        let added = match comments {
-            1 => "added 1 comment".to_string(),
-            count => format!("added {count} comments"),
-        };
         let status = match (created, comments) {
             (true, 0) => "created this issue".to_string(),
-            (true, _) => format!("created this issue and {added}"),
+            (true, count) => format!("created this issue and added {}", plural(count, "comment")),
             (false, 0) => "no comments yet".to_string(),
-            (false, _) => added,
+            (false, count) => format!("added {}", plural(count, "comment")),
         };
         let who = author(role);
         RoleLight {
@@ -845,6 +841,16 @@ fn lines(start: u32, end: u32) -> String {
         start.to_string()
     } else {
         format!("{start}-{end}")
+    }
+}
+
+/// A count with its noun, e.g. "1 line" or "3 lines"; for nouns that take a plain "s".
+#[must_use]
+pub fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
     }
 }
 
