@@ -139,6 +139,8 @@ struct ConflictPage {
     yours: String,
     version: i64,
     cancel: String,
+    /// The page the form returns to after saving, sent along again (§13.4).
+    back: Option<String>,
 }
 
 fn editor_label(editor: Option<Actor>) -> String {
@@ -171,7 +173,7 @@ pub async fn retitle(
         .map_err(|error| {
             failed(
                 error,
-                review_url(review_id),
+                overview(review_id, form.back.as_deref(), ""),
                 "Back to the review",
                 &form.title,
             )
@@ -192,7 +194,14 @@ pub async fn change_base(
     state
         .call(move |service| service.change_base(Actor::Human, review_id, &base))
         .await
-        .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
+        .map_err(|error| {
+            failed(
+                error,
+                overview(review_id, form.back.as_deref(), ""),
+                "Back to the review",
+                "",
+            )
+        })?;
     Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
@@ -223,15 +232,16 @@ pub async fn edit_summary(
                 current_editor: editor_label(review.summary_updated_by),
                 action: format!("{}/summary", review_url(review_id)),
                 field: "summary",
-                yours: form.summary,
                 version: review.summary_version,
-                cancel: format!("{}#summary", review_url(review_id)),
+                cancel: overview(review_id, form.back.as_deref(), "#summary"),
+                back: back_page(form.back.as_deref()),
+                yours: form.summary,
             };
             Ok((StatusCode::CONFLICT, Html(page.render()?)).into_response())
         }
         Err(error) => Err(failed(
             error,
-            review_url(review_id),
+            overview(review_id, form.back.as_deref(), ""),
             "Back to the review",
             &form.summary,
         )),
@@ -252,7 +262,7 @@ pub async fn comment_on_summary(
         .map_err(|error| {
             failed(
                 error,
-                review_url(review_id),
+                overview(review_id, form.back.as_deref(), ""),
                 "Back to the review",
                 &form.body,
             )
@@ -272,7 +282,14 @@ pub async fn close_review(
     state
         .call(move |service| service.close_review(Actor::Human, review_id))
         .await
-        .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
+        .map_err(|error| {
+            failed(
+                error,
+                overview(review_id, form.back.as_deref(), ""),
+                "Back to the review",
+                "",
+            )
+        })?;
     Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
@@ -284,7 +301,14 @@ pub async fn reopen_review(
     state
         .call(move |service| service.reopen_review(Actor::Human, review_id))
         .await
-        .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
+        .map_err(|error| {
+            failed(
+                error,
+                overview(review_id, form.back.as_deref(), ""),
+                "Back to the review",
+                "",
+            )
+        })?;
     Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
@@ -503,7 +527,11 @@ pub async fn edit_comment(
                 field: "body",
                 yours: form.body,
                 version: current.version,
-                cancel: comment_url(&current),
+                cancel: match &back {
+                    Some(page) => format!("{page}#c{comment_id}"),
+                    None => comment_url(&current),
+                },
+                back,
             };
             Ok((StatusCode::CONFLICT, Html(page.render()?)).into_response())
         }
@@ -538,7 +566,7 @@ pub async fn hand_off(
     Path(review_id): Path<i64>,
     Form(form): Form<TurnForm>,
 ) -> Result<Response, PageError> {
-    let back = review_url(review_id);
+    let back = overview(review_id, form.back.as_deref(), "");
     let to = match form.to.as_str() {
         "reviewer" => Some(Actor::Reviewer),
         "implementer" => Some(Actor::Implementer),
@@ -561,7 +589,7 @@ pub async fn hand_off(
         })
         .await
         .map_err(|error| failed(error, back.clone(), "Back to the review", &form.note))?;
-    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
+    Ok(redirect(&back))
 }
 
 /// `POST /settings/round-limit`: how many rounds Claude takes before the review comes to you.

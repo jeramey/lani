@@ -1990,6 +1990,37 @@ async fn overview_forms_return_to_the_view_they_were_posted_from() {
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}");
         assert_eq!(location(&headers), view, "{action}");
     }
+    // Failures lead back to the same view: an error page, and a conflict page, whose form
+    // returns there once saved.
+    let escaped = view.replace('&', "&#38;");
+    let (status, _, page) = send(
+        &f.app,
+        post(&format!("{url}/title"), &format!("title=&{back}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        page.contains(&format!("href=\"{escaped}\">Back to the review</a>")),
+        "{page}"
+    );
+    let (status, _, page) = send(
+        &f.app,
+        post(
+            &format!("{url}/summary"),
+            &format!("summary=Mine&version=0&{back}"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        page.contains(&format!(
+            "<input type=\"hidden\" name=\"back\" value=\"{escaped}\">"
+        )) && page.contains(&format!(
+            "<a href=\"{escaped}#summary\">Discard my version</a>"
+        )),
+        "{page}"
+    );
+
     // Without the script the field is empty; a foreign page is not returned to.
     for back in ["back=", "back=%2F%2Fevil.example"] {
         let (_, headers, _) = send(
