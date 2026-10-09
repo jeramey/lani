@@ -687,17 +687,30 @@ pub fn list_events(conn: &Connection, review_id: i64, page: EventPage) -> Result
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// How many of a review's events have ids up to `upto`, or after `upto` when `after` is true.
-pub fn count_events(conn: &Connection, review_id: i64, upto: i64, after: bool) -> Result<u64> {
-    let comparison = if after { ">" } else { "<=" };
-    Ok(conn.query_row(
-        &format!("SELECT count(*) FROM event WHERE review_id = ?1 AND id {comparison} ?2"),
-        params![review_id, upto],
-        |row| {
-            let count: i64 = row.get(0)?;
-            u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count))
-        },
-    )?)
+/// How many of a review's events have ids up to and including `id`.
+pub fn count_events_upto(conn: &Connection, review_id: i64, id: i64) -> Result<u64> {
+    count(
+        conn,
+        "SELECT count(*) FROM event WHERE review_id = ?1 AND id <= ?2",
+        params![review_id, id],
+    )
+}
+
+/// How many of a review's events have ids after `id`.
+pub fn count_events_after(conn: &Connection, review_id: i64, id: i64) -> Result<u64> {
+    count(
+        conn,
+        "SELECT count(*) FROM event WHERE review_id = ?1 AND id > ?2",
+        params![review_id, id],
+    )
+}
+
+/// The single `count(*)` that `sql` selects.
+fn count(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> Result<u64> {
+    Ok(conn.query_row(sql, params, |row| {
+        let count: i64 = row.get(0)?;
+        u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count))
+    })?)
 }
 
 /// Every change of a review's turn, with its note, newest first.

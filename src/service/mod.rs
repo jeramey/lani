@@ -1220,9 +1220,9 @@ impl Service {
         let latest_id = store::latest_event_id(&tx, review_id)?
             .ok_or_else(|| Error::NotFound(format!("review {review_id} does not exist")))?;
         let upto = request.anchor.unwrap_or(latest_id);
-        let total = store::count_events(&tx, review_id, upto, false)?;
+        let total = store::count_events_upto(&tx, review_id, upto)?;
         let newer = match request.anchor {
-            Some(anchor) => store::count_events(&tx, review_id, anchor, true)?,
+            Some(anchor) => store::count_events_after(&tx, review_id, anchor)?,
             None => 0,
         };
         let pages = request
