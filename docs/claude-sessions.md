@@ -69,7 +69,9 @@ There are two phases. Each is useful on its own.
   over it. `--cwd <path>`, which lists only the sessions started under a directory, may be a
   simpler filter than the name.
 - **Attaching.** The review page shows the command, `claude attach lani-3-reviewer`, for any
-  terminal on the machine where LANI runs. Over SSH, that's the remote machine.
+  terminal on the machine where LANI runs. Over SSH, that's the remote machine. In socket mode
+  the server knows that machine's name (design §13.2), so the page can show
+  `ssh -t devbox claude attach lani-3-reviewer`.
 - **Size:** about the size of the port change (item 3). It needs a prompt template, a form, one
   subprocess call, one JSON parse and a status line.
 
@@ -80,7 +82,8 @@ There are two phases. Each is useful on its own.
 - **The connection.** The page opens a WebSocket. For each open tab, the server runs
   `claude attach <name>` in a pseudo-terminal and relays bytes in both directions. It also passes
   resize messages on as the terminal's window size. Closing the tab ends only that `attach`; the
-  session keeps running.
+  session keeps running. An SSH forward carries the WebSocket like any other connection, and so
+  does the test suite's stand-in for one (design §19).
 - **New dependencies:**
   - axum's `ws` feature (tokio-tungstenite).
   - A PTY crate: `portable-pty` or `pty-process`. Setting up a controlling terminal needs
@@ -106,12 +109,28 @@ as you:
   commands at once depends on your Claude Code permission rules.
 - **Phase B:** they can type into a running session.
 
-On a single-user machine this adds no exposure, because anything that could steal the token could
-already run commands as you. On a shared machine, it makes the residual risk in design §15 (the
-cookie reaching other loopback ports) serious. Before shipping, then:
+Where that adds exposure depends on where LANI and your browser run:
+
+- **LANI on your own single-user machine:** none, because anything that could steal the token
+  could already run commands as you.
+- **A shared machine:** the residual risk in design §15, the cookie reaching other loopback ports,
+  becomes serious.
+  - On a shared *remote* machine reached over TCP forwarding, there are two more ways to the
+    token. Another user can take the port your SSH forward points at, or connect to LANI directly.
+  - Socket mode (design §13.2) closes both, so it is the mode to use there.
+- **A remote LANI, from a single-user machine of your own:** your browser reaches the forward at
+  `127.0.0.1:<port>` on your machine, so the cookie exposure applies there.
+  - A process on your machine can't read the remote `server.json`. But it can get the cookie
+    through another loopback port, then use your forward.
+  - That gains it something only if your ssh key is protected, with a passphrase or a hardware
+    key; otherwise it could ssh in itself.
+  - Socket mode doesn't change this, because it protects the remote end only.
+
+Before shipping, then:
 
 1. **Harden the cookie.** Build the hardening deferred in design §21, the per-server secret path
-   prefix with the cookie's `Path` set to it. It should work in every browser.
+   prefix with the cookie's `Path` set to it. It should work in every browser. A remote LANI needs
+   it too, even reached from a single-user machine.
 2. **Check `Origin` on the WebSocket upgrade.** The upgrade is a GET, which the current guard
    doesn't check for origin, and WebSockets aren't covered by CORS. A page served from another
    loopback port counts as same-site, so the browser sends the `SameSite=Strict` cookie with that
