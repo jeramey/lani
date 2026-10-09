@@ -281,6 +281,12 @@ fn serve_prints_the_sign_in_link_but_never_logs_it() {
         foreground, printed,
         "in the foreground too, beside the running server"
     );
+    // The configuration file is read only to start a server, so a mistake in it doesn't stop
+    // either form naming the running one.
+    home.write_config("prot = 1\n");
+    for command in [&["serve", "--detach"][..], &["serve"]] {
+        assert_eq!(stdout(&lani(&home, command)), printed, "{command:?}");
+    }
     let log = std::fs::read_to_string(home.path.join("logs/server.log")).unwrap();
     assert!(log.contains("LANI server listening on"), "{log}");
     assert!(
@@ -564,7 +570,11 @@ fn ports_browsers_refuse_and_mistakes_in_the_config_file_are_reported() {
         "{flag}"
     );
     home.write_config("port = 6668\n");
-    for command in [&["open", "--no-browser"][..], &["serve", "--detach"]] {
+    for command in [
+        &["open", "--no-browser"][..],
+        &["serve", "--detach"],
+        &["serve"],
+    ] {
         let configured = error_of(&lani(&home, command));
         assert!(
             configured.contains("browsers refuse to connect to port 6668")

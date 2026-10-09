@@ -285,7 +285,9 @@ pub fn router(state: AppState) -> Router {
 /// Options for `lani serve`.
 pub struct ServeOptions {
     pub home: PathBuf,
-    pub port: PortChoice,
+    /// The port from `--port`. Without it, the server reads the configuration file once it holds
+    /// the server lock, so a mistake in the file doesn't stop it naming a running server.
+    pub port: Option<PortChoice>,
     /// Overrides the saved idle timeout for this run.
     pub idle_timeout: Option<IdleTimeout>,
 }
@@ -314,6 +316,10 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         }
         return Ok(());
     };
+    let port = match options.port {
+        Some(choice) => choice,
+        None => PortChoice::from_config_file()?,
+    };
     let service = Service::open(&crate::paths::db_path(&options.home))?;
     let (timeout, source) = match options.idle_timeout {
         Some(timeout) => (timeout, TimeoutSource::Flag),
@@ -323,16 +329,17 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    runtime.block_on(run(options, service, executable, (timeout, source)))
+    runtime.block_on(run(options, port, service, executable, (timeout, source)))
 }
 
 async fn run(
     options: &ServeOptions,
+    port_choice: PortChoice,
     service: Service,
     executable: Option<Executable>,
     (timeout, source): (IdleTimeout, TimeoutSource),
 ) -> Result<()> {
-    let listener = listen(options.port).await?;
+    let listener = listen(port_choice).await?;
     let port = listener.local_addr()?.port();
     let instance = Instance {
         token: daemon::random_hex(32)?,
@@ -352,7 +359,7 @@ async fn run(
     };
     let state = AppState::new(service, instance, executable, (timeout, source));
     server_file.write(&options.home)?;
-    let taken = match options.port {
+    let taken = match port_choice {
         PortChoice::From(base) if base.get() != port => {
             format!("; port {base} was in use")
         }

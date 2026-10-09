@@ -292,10 +292,10 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
 fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow::Result<()> {
     let home = home()?;
     let idle_timeout = idle_timeout.map(IdleTimeout::parse).transpose()?;
-    let choice = match port {
-        Some(port) => PortChoice::flag(port)?,
-        None => PortChoice::from_config_file()?,
-    };
+    // The flag is checked at once. The configuration file is read only when a server is started,
+    // by `start_detached` or by the server itself, so a mistake in it doesn't stop `lani serve`
+    // naming a server that is already running.
+    let flag = port.map(PortChoice::flag).transpose()?;
     if detach {
         let server = if let Some(server) = daemon::find_running(&home) {
             eprintln!(
@@ -318,7 +318,7 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
     init_logging();
     web::serve(&ServeOptions {
         home,
-        port: choice,
+        port: flag,
         idle_timeout,
     })?;
     Ok(())
