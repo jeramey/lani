@@ -55,6 +55,7 @@ fn issue_request<'a>(
         commit,
         worktree_path: Some(&repo.path),
         read_merge_base: None,
+        ask_human: false,
     }
 }
 
@@ -918,6 +919,7 @@ fn create_issue_from_a_linked_worktree_needs_the_sha_it_read() {
             commit,
             worktree_path,
             read_merge_base: None,
+            ask_human: false,
         })
     };
 
@@ -2019,6 +2021,49 @@ fn the_reviewers_first_hand_off_goes_to_the_human() {
         .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
         .unwrap();
     assert_eq!(handed.review.turn, Some(Actor::Implementer));
+}
+
+#[test]
+fn an_issue_can_ask_the_human_as_it_is_filed() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let head = repo.head();
+    let asking = CreateIssue {
+        ask_human: true,
+        ..issue_request(review_id, &repo, &head, 3, 3, "line 3")
+    };
+    let view = service.create_issue(&asking).unwrap();
+    assert_eq!(view.issue.asked_by, Some(Actor::Reviewer));
+    let kinds: Vec<_> = service
+        .list_events(review_id)
+        .unwrap()
+        .iter()
+        .take(2)
+        .map(|event| (event.kind, event.comment_id))
+        .collect();
+    let root = Some(view.comments[0].id);
+    assert_eq!(
+        kinds,
+        [
+            (lani::model::EventKind::HumanAsked, root),
+            (lani::model::EventKind::IssueCreated, root),
+        ],
+        "the issue's body is the question"
+    );
+
+    let as_human = CreateIssue {
+        author: Actor::Human,
+        ..asking
+    };
+    expect_invalid(
+        service.create_issue(&as_human),
+        "the human answers questions",
+    );
 }
 
 #[test]

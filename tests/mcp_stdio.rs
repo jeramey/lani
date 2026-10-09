@@ -812,6 +812,33 @@ fn issues_with_several_spans_list_every_location_and_its_code() {
 }
 
 #[test]
+fn an_issue_filed_with_ask_human_waits_for_the_human() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let worktree = repo.path.to_str().unwrap();
+    let head = repo.head();
+    let mut reviewer = McpClient::start(&home.path);
+    reviewer.ok(
+        "start_review",
+        json!({"repo_path": worktree, "title": "t", "author": "reviewer", "base_mode": "auto"}),
+    );
+    let created = reviewer.ok(
+        "create_issue",
+        json!({"review_id": 1, "author": "reviewer", "title": "Keep the old name?",
+               "severity": "low", "body": "Your call: keep it or rename it?", "ask_human": true,
+               "commit": head, "worktree_path": worktree,
+               "spans": [{"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
+                          "start_line_text": "line five"}]}),
+    );
+    assert!(created.contains("It asks the human"), "{created}");
+    let review = reviewer.ok("get_review", json!({"review_id": 1}));
+    assert!(
+        review.contains("Questions for the human: issue 1\n"),
+        "{review}"
+    );
+}
+
+#[test]
 fn sessions_take_turns_and_ask_the_human() {
     let home = TestHome::new();
     let repo = feature_repo();

@@ -517,6 +517,7 @@ fn a_selection_survives_its_table_being_replaced(
             commit: &fixture.head,
             worktree_path: None,
             read_merge_base: None,
+            ask_human: false,
         })
         .unwrap();
     browser.wait_for(

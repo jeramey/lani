@@ -81,6 +81,7 @@ fn fixture_with(executable: Option<Executable>) -> Fixture {
             commit: &head,
             worktree_path: Some(&repo.path),
             read_merge_base: None,
+            ask_human: false,
         })
         .unwrap();
     service
@@ -1193,6 +1194,7 @@ async fn the_changes_view_shows_the_diff_with_threads_on_both_sides() {
                     None
                 },
                 read_merge_base: None,
+                ask_human: false,
             };
             service.create_issue(&issue(Side::Base, 5, "line 5"))?;
             service.create_issue(&issue(Side::Head, 15, "line 15"))?;
@@ -1331,6 +1333,7 @@ async fn span_links_lead_to_the_section_of_the_change_that_shows_them() {
                     None
                 },
                 read_merge_base: None,
+                ask_human: false,
             };
             // The removed side of the renamed file is at its old path.
             let renamed = service.create_issue(&issue("src/lib.rs", Side::Base, "line 1"))?;
@@ -1597,6 +1600,7 @@ async fn an_issue_with_several_spans_shows_one_thread_and_markers_elsewhere() {
                 commit: &head,
                 worktree_path: Some(&repo_path),
                 read_merge_base: None,
+                ask_human: false,
             })?;
             Ok(view.issue.id)
         })
@@ -1691,6 +1695,7 @@ async fn a_thread_goes_under_its_first_shown_span_even_in_a_later_file() {
                 commit: &head,
                 worktree_path: Some(&repo_path),
                 read_merge_base: None,
+                ask_human: false,
             })?;
             Ok(view.issue.id)
         })
@@ -1736,6 +1741,7 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
                 commit: &head,
                 worktree_path: Some(&repo_path),
                 read_merge_base: None,
+                ask_human: false,
             })?;
             service.ask_human(Actor::Reviewer, second.issue.id, "Keep it?")?;
             service.hand_off(

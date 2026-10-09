@@ -37,7 +37,8 @@ You are the reviewer for LANI review <N> in this repository. Use the lani MCP to
    - a one-line title and a severity (high, medium, low or nit), which you assign;
    - one span per affected range, with the right start_line_text;
    - commit = the review's head SHA and worktree_path = this repository's path;
-   - a body that explains the failure scenario. Say if the finding came from code-review and whether it was confirmed or only plausible.
+   - a body that explains the failure scenario. Say if the finding came from code-review and whether it was confirmed or only plausible;
+   - ask_human: true when I have to decide something about it, such as a design choice. Writing that I should decide, without the flag, doesn't show me anything.
 5. Call hand_off for review <N> to the implementer with a note summarizing your findings. LANI gives your first hand-off to me instead, so I read the findings first; tell me when it does. Then run `lani wait --review <N> --for reviewer` as a background command.
 6. When it is your turn again, verify each reply against the code with `git diff <previous head> <new head>`. Resolve the issues you're satisfied with, reply on the others, and file new findings. Rerun code-review only if the fixes are large. When everything is resolved, hand the review to the human and tell me.
 ```

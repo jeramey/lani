@@ -391,6 +391,7 @@ pub async fn create_issue(
                 commit: &commit,
                 worktree_path: None,
                 read_merge_base: merge_base.as_deref(),
+                ask_human: false,
             })
         })
         .await

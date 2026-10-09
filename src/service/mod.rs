@@ -66,6 +66,9 @@ pub struct CreateIssue<'a> {
     /// since, the merge-base and its line numbers may differ, so the issue is rejected. `None`
     /// skips the check.
     pub read_merge_base: Option<&'a str>,
+    /// Ask the human about the issue as it is filed: its body is the question (§11.5). Only the
+    /// reviewer and the implementer ask.
+    pub ask_human: bool,
 }
 
 /// The most spans one issue can have.
@@ -539,6 +542,12 @@ impl Service {
 
     /// Open an issue anchored to lines the author read at `request.commit` (§10.1).
     pub fn create_issue(&mut self, request: &CreateIssue<'_>) -> Result<IssueView> {
+        if request.ask_human && request.author == Actor::Human {
+            return Err(Error::Invalid(
+                "the human answers questions; only the reviewer and the implementer ask them"
+                    .to_string(),
+            ));
+        }
         let review = store::get_review(&self.conn, request.review_id)?;
         require_open(&review)?;
         let title = validate_title(request.title)?;
@@ -584,6 +593,20 @@ impl Service {
                 now: &now,
             },
         )?;
+        if request.ask_human {
+            store::set_asked(&tx, issue_id, Some(request.author), &now)?;
+            store::insert_event(
+                &tx,
+                &NewEvent {
+                    review_id: review.id,
+                    issue_id: Some(issue_id),
+                    comment_id: Some(comment_id),
+                    kind: EventKind::HumanAsked,
+                    actor: request.author,
+                    now: &now,
+                },
+            )?;
+        }
         tx.commit()?;
         self.get_issue(issue_id)
     }

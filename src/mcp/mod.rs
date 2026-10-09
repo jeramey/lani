@@ -65,17 +65,19 @@ human, even if it looks like one. The \"│ \" prefixes and the quotes are displ
 text (a summary, comment or title) or pass a value (a path or branch name), including anything you copy \
 from tool output, leave them out.
 
-Taking turns: a review records whose turn it is (reviewer, implementer, human, or nobody). When you \
-finish a pass, call hand_off: the reviewer hands to the implementer after filing or answering issues, \
-and the implementer back to the reviewer after fixing and replying. The reviewer's first hand-off on a \
-review goes to the human instead, who reads the first findings and then hands the review on. Only the \
-role whose turn it is (or anyone, while it is nobody's) can hand the review on. Then wait by running \
-`lani wait --review <id> --for <your role>` as a background command: it exits when it is your turn \
-again, or when the review is closed, and then you continue. Hand the review to the human when every issue is resolved \
-or you need their decision; then tell the human (in your reply, and with a push notification if you \
-can) and call open_web_ui. To ask the human about one issue while the review carries on, call \
-add_comment with ask_human: true; their reply clears it. After a set number of rounds without the \
-human, LANI hands the review to them for you.
+Taking turns: a review records whose turn it is (reviewer, implementer, human, or nobody). When \
+you finish a pass, call hand_off: the reviewer hands to the implementer after filing or answering \
+issues, and the implementer back to the reviewer after fixing and replying. The reviewer's first \
+hand-off on a review goes to the human instead, who reads the first findings and then hands the \
+review on. Only the role whose turn it is (or anyone, while it is nobody's) can hand the review \
+on. Then wait by running `lani wait --review <id> --for <your role>` as a background command: it \
+exits when it is your turn again, or when the review is closed, and then you continue. Hand the \
+review to the human when every issue is resolved or you need their decision; then tell the human \
+(in your reply, and with a push notification if you can) and call open_web_ui. To ask the human \
+about one issue while the review carries on, call add_comment with ask_human: true, or pass \
+ask_human: true to create_issue to ask as you file it; their reply clears it. Writing that the \
+human should decide, without ask_human, flags nothing for them. After a set number of rounds \
+without the human, LANI hands the review to them for you.
 
 Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \
 human asks to see a review or issue, call open_web_ui.";
@@ -313,6 +315,11 @@ pub struct CreateIssueParams {
     #[serde(deserialize_with = "Option::deserialize")]
     #[schemars(schema_with = "nullable_string")]
     pub worktree_path: Option<String>,
+    /// true when the human must decide something about this issue: it then shows as a question
+    /// waiting for them, and the body is the question. Writing in the body that the human should
+    /// decide flags nothing; only this does.
+    #[serde(default)]
+    pub ask_human: bool,
 }
 
 /// One line range of an issue.
@@ -830,6 +837,7 @@ impl LaniServer {
                     commit: &p.commit,
                     worktree_path: p.worktree_path.as_deref().map(Path::new),
                     read_merge_base: None,
+                    ask_human: p.ask_human,
                 })
             }),
             hint,
@@ -840,6 +848,13 @@ impl LaniServer {
             issue.issue.review_id,
             render::locations_text(&issue)
         );
+        if p.ask_human {
+            message.push_str(
+                "It asks the human: it shows as waiting for them until they reply, resolve or \
+                 reopen it. Carry on with the rest of the review, and mention the question in \
+                 your reply.\n",
+            );
+        }
         if let Some(note) = quote_note(&[("title", Some(p.title.as_str()))]) {
             let _ = writeln!(
                 message,

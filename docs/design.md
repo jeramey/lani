@@ -793,8 +793,13 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   notification where available, and by opening the review in your browser. It then waits for you
   to hand the review back.
 - **Questions about one issue.** A session can ask you about a single issue while the loop carries
-  on, with `add_comment` and `ask_human: true`; the comment is the question. The issue shows as
-  needing you until you comment on it, resolve it or reopen it, any of which clears the question.
+  on, with `add_comment` and `ask_human: true`; the comment is the question. It can also ask as it
+  files the issue, with `create_issue` and `ask_human: true`; the issue's body is then the
+  question. The issue shows as needing you until you comment on it, resolve it or reopen it, any
+  of which clears the question.
+  - **Only the flag counts.** Writing in a comment that the human should decide flags nothing.
+    A reviewer once did that, said it had marked the issue for you, and you saw no sign of it on
+    the overview. The tool descriptions and the server instructions now say so.
 - **Where you see it.** These places show whose turn it is and the questions waiting for you:
   - the review list marks reviews that need you;
   - every review page shows whose turn it is, and lists the questions as links to their issues;
@@ -866,7 +871,7 @@ role (§11.3).
 | `update_review_summary` | `review_id`, `author`, `summary`, `expected_version` | Replace the summary. Rejected if it changed after `expected_version`. |
 | `list_issues`           | `review_id`, `status` (`open`\|`resolved`\|`all`), `detail` (`summary`\|`full`), `path?` | **R5.** `summary` gives one line per issue. `full` gives the anchor, current or original code, and the whole comment chain. `path` keeps the issues in that file: the file an issue was opened on, or the file its lines are in now after a rename. The header's "not shown" count of issues left out by `status` covers the same file, or the whole review without `path`. |
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
-| `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `spans` (1–20 of `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`), `commit`, `worktree_path` | §10.1. `title` is one line naming the problem, without the severity. List the main span first. `worktree_path` is a string or explicitly `null`. |
+| `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `spans` (1–20 of `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`), `commit`, `worktree_path`, `ask_human?` | §10.1. `title` is one line naming the problem, without the severity. List the main span first. `worktree_path` is a string or explicitly `null`. `ask_human: true` asks the human about the issue as it is filed, its body being the question (§11.5). |
 | `add_comment`           | `author`, `body`, `issue_id?`, `review_id?`, `ask_human?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). With `issue_id`, `ask_human: true` makes the comment a question for the human (§11.5). |
 | `hand_off`              | `review_id`, `author`, `to` (`reviewer`\|`implementer`\|`human`), `note?` | §11.5. Only on the session's turn, or while it is nobody's. The reply says how to wait with `lani wait`, or to tell the human. |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
