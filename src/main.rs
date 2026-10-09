@@ -63,7 +63,12 @@ enum Command {
         detach: bool,
     },
     /// Show whether the web server is running.
-    Status,
+    Status {
+        /// Print only the running server's sign-in URL to stdout, never starting a server; exit 1
+        /// if none is running. The URL contains the access token, so keep it private.
+        #[arg(long)]
+        print_url: bool,
+    },
     /// Stop the web server.
     Stop,
     /// Wait until it is a role's turn on a review, then print what to do (§11.5). Claude runs this
@@ -116,7 +121,7 @@ fn main() -> anyhow::Result<()> {
             idle_timeout,
             detach,
         } => serve(port, idle_timeout.as_deref(), detach),
-        Command::Status => status(),
+        Command::Status { print_url } => status(print_url),
         Command::Stop => stop(),
         Command::Wait {
             review,
@@ -319,12 +324,23 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
     Ok(())
 }
 
-fn status() -> anyhow::Result<()> {
+fn status(print_url: bool) -> anyhow::Result<()> {
     let home = home()?;
     let Some(server) = daemon::find_running(&home) else {
+        if print_url {
+            anyhow::bail!(
+                "No LANI server is running, so there is no sign-in URL. Start one with \
+                 `lani serve --detach` or `lani open`."
+            );
+        }
         println!("No LANI server is running.");
         return Ok(());
     };
+    if print_url {
+        println!("{}", server.file.login_url("/"));
+        warn_on_version_mismatch(&server);
+        return Ok(());
+    }
     let health = &server.health;
     println!(
         "LANI server running: pid {}, port {}, version {}, started {}",

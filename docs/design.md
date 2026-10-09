@@ -1171,8 +1171,8 @@ remote$ lani serve --detach        # prints the sign-in link
 ```
 
 The fixed base port (§13.1) makes the forward the same every time. `lani serve` prints the
-sign-in link, in the foreground or with `--detach`; `lani open --print-url --no-browser` prints
-it too. If the server took a port above 5264, forward that one. If 5264 is taken on your own
+sign-in link, in the foreground or with `--detach`. `lani status --print-url` prints it again
+later, and `lani open --print-url --no-browser` prints it too. If the server took a port above 5264, forward that one. If 5264 is taken on your own
 machine, for example by a local LANI, forward another local port (`-L 5300:127.0.0.1:5264`) and
 change the link's port to match; the `Host` and `Origin` checks and the cookie name follow the
 port the browser addressed. The remote server's token protects it from other users of your
@@ -1380,7 +1380,8 @@ lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach);
                                             --port N uses exactly N (§13.1)
-lani status                                 server pid, port, version, uptime, idle timeout and time left
+lani status [--print-url]                   server pid, port, version, uptime, idle timeout and time left;
+                                            --print-url prints only the running server's sign-in URL
 lani stop                                   stop the running server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
                                             wait until it is that role's turn (§11.5); exits 0 on
@@ -1389,8 +1390,13 @@ lani version
 ```
 
 - `--print-url` writes the full tokenized URL to stdout. `lani serve` prints the same link to
-  stdout, in the foreground or with `--detach`. Both are for opening LANI by hand, such as over
-  SSH with port forwarding (§13.2).
+  stdout, in the foreground or with `--detach`. These are for opening LANI by hand, such as over
+  SSH with port forwarding (§13.2), or for scripts.
+  - `lani open --print-url` starts a server if none is running.
+  - `lani status --print-url` never starts one. It prints only the URL, or exits 1 if no server
+    is running, so a scrolled-off link can be shown again.
+  - `lani serve` introduces its link with a line about keeping it private, so `lani open` and
+    `lani status` are the ones to parse.
 - Every command exits 1 on an error and 2 on a usage error (from clap). `lani wait` therefore
   uses 3 and 4 for its other outcomes, so a mistyped command never looks like a timeout.
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line

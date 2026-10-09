@@ -91,7 +91,9 @@ The settings page sets how long the server waits before stopping when idle (3 ho
 or never) and the round limit (5 by default).
 
 The server listens only on 127.0.0.1 and asks for a random token, which `lani open` passes to your
-browser. `lani open --print-url --no-browser` prints a link with the token to open by hand instead.
+browser. `lani open --print-url --no-browser` prints a link with the token to open by hand instead,
+starting the server if needed. `lani status --print-url` prints the running server's link and never
+starts one; it exits 1 if no server is running.
 
 ### On a remote machine
 
@@ -118,7 +120,8 @@ lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --
                                  open the web UI, starting the server if needed
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                  run the web server; --port N uses exactly port N
-lani status                      whether the server is running, and its idle timeout
+lani status [--print-url]        whether the server is running, and its idle timeout;
+                                 --print-url prints only its sign-in URL
 lani stop                        stop the server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
                                  wait until it is that role's turn

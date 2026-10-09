@@ -285,6 +285,35 @@ fn serve_prints_the_sign_in_link_but_never_logs_it() {
 }
 
 #[test]
+fn status_prints_the_running_servers_sign_in_url_and_never_starts_one() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let none = lani(&home, &["status", "--print-url"]);
+    assert_eq!(none.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&none.stdout),
+        "",
+        "nothing on stdout"
+    );
+    assert!(
+        String::from_utf8_lossy(&none.stderr).contains("No LANI server is running"),
+        "{}",
+        String::from_utf8_lossy(&none.stderr)
+    );
+    assert!(
+        !home.path.join("run/server.json").exists(),
+        "no server was started"
+    );
+
+    let opened = stdout(&lani(&home, &["open", "--no-browser", "--print-url"]));
+    assert_eq!(
+        stdout(&lani(&home, &["status", "--print-url"])),
+        opened,
+        "only the URL, the same one `lani open` prints"
+    );
+}
+
+#[test]
 fn the_server_ignores_sighup_and_stops_cleanly_on_sigterm() {
     let home = TestHome::new();
     let _stop = StopOnDrop(&home);
