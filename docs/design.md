@@ -1349,7 +1349,8 @@ work on the review.
     kept.
   - A link activated from the keyboard has the focus, and the refresh replaces it. Focus then
     moves to the link with the same `data-in-place` key in the new page, or to the part's first
-    such link.
+    such link. That happens only while the focus is nowhere else, and only after that refresh: a
+    failed refresh forgets it, so a later one doesn't pull the focus out of a comment box.
   - Without the script, it is a plain link to the URL, hash and all.
 - **Added and removed parts.** Parts are only replaced, never added or removed. If a refresh finds
   that parts were added or removed (a commit changed which files the diff covers), the page asks

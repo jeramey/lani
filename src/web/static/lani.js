@@ -298,7 +298,9 @@
   });
 
   function restoreFocus() {
-    if (!refocus) {
+    // Only while the focus is nowhere, as it is once the activated link is replaced: a reader who
+    // has moved on, say into a comment box, keeps the focus there.
+    if (!refocus || (document.activeElement && document.activeElement !== document.body)) {
       return;
     }
     const part = document.getElementById(refocus.part);
@@ -348,6 +350,9 @@
       );
     } finally {
       refreshing = false;
+      // A failed refresh gives up the focus it was to restore, so a later refresh doesn't take
+      // the focus from wherever the reader has moved on to.
+      refocus = null;
     }
   }
 

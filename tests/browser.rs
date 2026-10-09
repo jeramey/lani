@@ -450,18 +450,44 @@ fn activity_pages_in_place(browser: &WebDriver, service: &mut Service, review_id
         ),
         "the new-events notice on an unmoved page",
     );
+    // Next from the keyboard while the server can't be reached: the refresh fails, and the
+    // reader moves on to the comment box. The next refresh that succeeds leaves the focus there.
+    browser.run(
+        "window.laniFetch = window.fetch; \
+         window.fetch = () => Promise.reject(new Error('offline')); \
+         const next = document.querySelector('#activity a[data-in-place=\"next\"]'); \
+         next.focus(); next.click(); return true;",
+    );
+    browser.wait_for(
+        "return [...document.querySelectorAll('.live-notice')]\
+           .some(notice => notice.textContent.includes('could not be updated'));",
+        "the failed refresh",
+    );
+    browser.run(
+        "window.fetch = window.laniFetch; \
+         document.querySelector('#new-summary-comment').focus(); return true;",
+    );
+    comment_until(service, 28);
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {activity}.includes('Events 21–25 of 25') \
+             && document.activeElement.id === 'new-summary-comment';"
+        ),
+        "page 3, with the focus still in the comment box",
+    );
+
     browser.click("#activity a[data-in-place='new-events']");
     browser.wait_for(
         &format!(
             "return {IN_PLACE} && !location.search.includes('page=') && {shown} === 10 \
-             && {activity}.includes('Events 1–10 of 27') && !document.querySelector('.new-events');"
+             && {activity}.includes('Events 1–10 of 28') && !document.querySelector('.new-events');"
         ),
         "the latest events again",
     );
     browser.click("#activity a[data-in-place='per-page-All']");
     browser.wait_for(
         &format!(
-            "return {IN_PLACE} && {shown} === 27 \
+            "return {IN_PLACE} && {shown} === 28 \
              && !document.querySelector('#activity a[data-in-place=\"next\"]');"
         ),
         "all the events",
