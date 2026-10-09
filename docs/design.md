@@ -834,8 +834,8 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
   quotes are display only, so leave them out of any text or value written back.
 - **Taking turns.** Hand the review on with `hand_off` at the end of each pass, then wait with
   `lani wait` as a background command. The reviewer's first hand-off goes to the human. Hand it to
-  the human when it has converged or needs a decision, and tell them. Ask the human about one issue with `add_comment` and `ask_human: true`
-  (§11.5).
+  the human when it has converged or needs a decision, and tell them. Ask the human about one
+  issue with `add_comment` and `ask_human: true` (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.
 
@@ -1175,11 +1175,11 @@ remote$ lani serve --detach        # prints the sign-in link
 
 The fixed base port (§13.1) makes the forward the same every time. `lani serve` prints the
 sign-in link, in the foreground or with `--detach`. `lani status --print-url` prints it again
-later, and `lani open --print-url --no-browser` prints it too. If the server took a port above 5264, forward that one. If 5264 is taken on your own
-machine, for example by a local LANI, forward another local port (`-L 5300:127.0.0.1:5264`) and
-change the link's port to match; the `Host` and `Origin` checks and the cookie name follow the
-port the browser addressed. The remote server's token protects it from other users of your
-machine as it does locally.
+later, and `lani open --print-url --no-browser` prints it too. If the server took a port above
+5264, forward that one. If 5264 is taken on your own machine, for example by a local LANI,
+forward another local port (`-L 5300:127.0.0.1:5264`) and change the link's port to match; the
+`Host` and `Origin` checks and the cookie name follow the port the browser addressed. The remote
+server's token protects it from other users of your machine as it does locally.
 
 ### 13.3 Pages and URLs
 
@@ -1383,8 +1383,9 @@ lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach);
                                             --port N uses exactly N (§13.1)
-lani status [--print-url]                   server pid, port, version, uptime, idle timeout and time left;
-                                            --print-url prints only the running server's sign-in URL
+lani status [--print-url]                   server pid, port, version, uptime, idle timeout and
+                                            time left; --print-url prints only the running
+                                            server's sign-in URL
 lani stop                                   stop the running server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
                                             wait until it is that role's turn (§11.5); exits 0 on
