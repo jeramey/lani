@@ -62,8 +62,12 @@ There are two phases. Each is useful on its own.
   - The session runs with your normal Claude Code settings and LANI MCP registration, and the
     prompt tells it its role.
 - **One session per role per review.** The name `lani-<review>-<role>` lets the server find the
-  session in `claude agents --json`. While one is running, the button shows its status instead of
-  starting another.
+  session in `claude agents --json --all`. Without `--all`, the list holds only active sessions,
+  so it can't tell a finished session from one that was never started. While a session is
+  running, the button shows its status instead of starting another. A finished one shows as
+  *exited*, with `claude attach` to reopen its conversation, rather than offering a new session
+  over it. `--cwd <path>`, which lists only the sessions started under a directory, may be a
+  simpler filter than the name.
 - **Attaching.** The review page shows the command, `claude attach lani-3-reviewer`, for any
   terminal on the machine where LANI runs. Over SSH, that's the remote machine.
 - **Size:** about the size of the port change (item 3). It needs a prompt template, a form, one
@@ -136,7 +140,8 @@ cookie reaching other loopback ports) serious. Before shipping, then:
    any worktree of the repository. If the branch isn't checked out anywhere, should LANI refuse
    to start an implementer, or let Claude Code create a worktree with `-w`? It's not yet checked
    which branch a `-w` worktree uses. If it makes a new one, the implementer's commits would need
-   to reach the review's branch somehow.
+   to reach the review's branch somehow. `claude rm` deletes a session's worktree as well, which
+   matters if LANI ever removes its sessions.
 4. **Permission mode.** Claude Code's default, where prompts wait until you attach? Or
    `acceptEdits` for the implementer, so it can edit files without asking but still asks before
    running commands?
@@ -152,7 +157,8 @@ Each of these is a short experiment or measurement:
   - Does it run in the current directory when `-w` isn't given?
   - Does the initial prompt start at once?
   - Does `--session-id` work together with `--bg`?
-  - Which `status` values does `claude agents --json` report? Only `busy` has been seen so far.
+  - Which `status` values does `claude agents --json --all` report, including for exited
+    sessions? Only `busy` has been seen so far.
   - Can LANI tell that a session is waiting for a permission answer?
 - **`claude attach` in a pseudo-terminal** that LANI creates, with xterm.js as the terminal
   (`TERM=xterm-256color`).
