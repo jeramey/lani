@@ -2083,6 +2083,61 @@ async fn the_hand_off_note_is_on_the_overview_only_and_the_issue_page_links_back
     );
 }
 
+/// Each issue row's role lights in page order, as "classes | tooltip".
+fn role_lights(page: &str) -> Vec<String> {
+    page.split("<span class=\"light ")
+        .skip(1)
+        .map(|light| {
+            let light = &light[..light.find("></span>").unwrap()];
+            let (classes, rest) = light.split_once('"').unwrap();
+            let title = rest.split_once("title=\"").unwrap().1.trim_end_matches('"');
+            format!("{classes} | {title}")
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
+    let f = fixture();
+    let url = format!("/reviews/{}", f.review_id);
+    let (_, _, overview) = send(&f.app, get(&url)).await;
+    assert_eq!(
+        role_lights(&overview),
+        [
+            "reviewer lit | Reviewer: created this issue",
+            "human | You: no comments yet",
+            "implementer | Implementer: no comments yet",
+        ],
+        "{overview}"
+    );
+
+    let issue_id = f.issue_id;
+    f.state
+        .call(move |service| {
+            for (author, body) in [
+                (Actor::Implementer, "Done."),
+                (Actor::Human, "Looks right to me."),
+                (Actor::Reviewer, "Not quite."),
+                (Actor::Reviewer, "Now it is."),
+            ] {
+                service.add_comment(author, CommentTarget::Issue(issue_id), body)?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, _, overview) = send(&f.app, get(&url)).await;
+    assert_eq!(
+        role_lights(&overview),
+        [
+            "reviewer lit | Reviewer: created this issue and added 2 comments",
+            "human lit | You: added 1 comment",
+            "implementer lit | Implementer: added 1 comment",
+        ],
+        "{overview}"
+    );
+}
+
 #[tokio::test]
 async fn the_round_limit_is_a_setting() {
     let f = fixture();

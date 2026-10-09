@@ -470,6 +470,17 @@ pub struct IssueRow {
     pub last_author: Option<AuthorView>,
     /// Whether a question about this issue is waiting for the human.
     pub needs_you: bool,
+    /// Which roles have created or commented on the issue: reviewer, human, implementer.
+    pub lights: Vec<RoleLight>,
+}
+
+/// One light in an issue row: whether a role has created or commented on the issue.
+pub struct RoleLight {
+    /// The role, as a CSS class giving the light its colour.
+    pub class: &'static str,
+    pub lit: bool,
+    /// E.g. "Reviewer: created this issue and added 2 comments".
+    pub tooltip: String,
 }
 
 #[must_use]
@@ -528,7 +539,43 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
             count => format!("{count} comments"),
         },
         last_author: view.comments.last().map(|comment| author(comment.author)),
+        lights: role_lights(view),
     }
+}
+
+fn role_lights(view: &IssueView) -> Vec<RoleLight> {
+    [
+        (Actor::Reviewer, "Reviewer", "reviewer"),
+        (Actor::Human, "You", "human"),
+        (Actor::Implementer, "Implementer", "implementer"),
+    ]
+    .into_iter()
+    .map(|(role, name, class)| {
+        let created = view.issue.author == role;
+        // The first comment is the issue's description, written by its creator.
+        let comments = view
+            .comments
+            .iter()
+            .skip(1)
+            .filter(|comment| comment.author == role)
+            .count();
+        let added = match comments {
+            1 => "added 1 comment".to_string(),
+            count => format!("added {count} comments"),
+        };
+        let status = match (created, comments) {
+            (true, 0) => "created this issue".to_string(),
+            (true, _) => format!("created this issue and {added}"),
+            (false, 0) => "no comments yet".to_string(),
+            (false, _) => added,
+        };
+        RoleLight {
+            class,
+            lit: created || comments > 0,
+            tooltip: format!("{name}: {status}"),
+        }
+    })
+    .collect()
 }
 
 /// How a severity is shown: its name, and a CSS class for its badge colour.

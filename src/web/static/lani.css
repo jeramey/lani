@@ -172,6 +172,28 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .issue-link { font-weight: 600; }
 .preview { display: block; color: var(--text); margin: 4px 0 2px; }
 .meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.row-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+/* Which roles have created or commented on an issue: a hollow light for none yet, filled once
+   they have, in the order reviewer, human, implementer. */
+.role-lights {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.light {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--role);
+  border-radius: 50%;
+  opacity: 0.5;
+}
+.light.lit { background: var(--role); opacity: 1; }
+.light.reviewer { --role: var(--reviewer); }
+.light.human { --role: var(--human); }
+.light.implementer { --role: var(--implementer); }
 
 .toolbar { display: flex; gap: 8px 20px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; }
 .toolbar details[open] { flex-basis: 100%; order: 1; }
