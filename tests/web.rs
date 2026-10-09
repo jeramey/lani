@@ -320,6 +320,59 @@ async fn state_changes_need_a_same_origin_request_unless_using_the_bearer_token(
 }
 
 #[tokio::test]
+async fn a_forwarded_port_works_with_its_own_cookie_and_origin() {
+    // Through `ssh -L 5999:127.0.0.1:4242`, the browser addresses port 5999.
+    let f = fixture();
+    let forwarded = |method: &str, path: &str, cookie: &str, origin: Option<&str>| {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, "localhost:5999")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(origin) = origin {
+            request = request.header(header::ORIGIN, origin);
+        }
+        request.body(Body::from("body=hi")).unwrap()
+    };
+    let login = forwarded("GET", &format!("/login?token={TOKEN}&next=/"), "", None);
+    let (status, headers, _) = send(&f.app, login).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .starts_with(&format!("lani_5999={TOKEN};")),
+        "named after the port the browser sees: {headers:?}"
+    );
+    let cookie = format!("lani_5999={TOKEN}");
+    let (status, _, _) = send(&f.app, forwarded("GET", "/", &cookie, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &f.app,
+        forwarded("GET", "/", &format!("lani_{PORT}={TOKEN}"), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the cookie for another port is not this one"
+    );
+
+    let url = format!("/reviews/{}/comments", f.review_id);
+    let same_page = forwarded("POST", &url, &cookie, Some("http://localhost:5999"));
+    assert_eq!(send(&f.app, same_page).await.0, StatusCode::SEE_OTHER);
+    for other in ["http://localhost:4242", "http://127.0.0.1:5999"] {
+        let other_page = forwarded("POST", &url, &cookie, Some(other));
+        assert_eq!(
+            send(&f.app, other_page).await.0,
+            StatusCode::FORBIDDEN,
+            "{other} is not the page's origin"
+        );
+    }
+}
+
+#[tokio::test]
 async fn health_checks_do_not_count_as_activity() {
     let f = fixture();
     let before = f.state.idle().last_activity;

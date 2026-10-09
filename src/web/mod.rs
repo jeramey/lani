@@ -26,7 +26,7 @@ use crate::port::PortChoice;
 use crate::service::Service;
 use crate::settings::IdleTimeout;
 
-pub use auth::{allowed_host, is_safe_next, same_origin};
+pub use auth::{browser_port, is_safe_next, same_origin};
 pub use views::{View, repo_location, review_page_path};
 
 /// How often the background task checks the idle timer and sweeps redirect files.
@@ -351,6 +351,9 @@ async fn run(
         "LANI server listening on 127.0.0.1:{port} (pid {}){taken}",
         server_file.pid
     );
+    // The sign-in link holds the token, so it goes to stdout, never to the log on stderr. A
+    // detached server's stdout is /dev/null (§13.2).
+    print!("{}", server_file.sign_in_text());
 
     tokio::spawn(housekeeping(state.clone()));
     tokio::spawn(handle_signals(state.clone()));

@@ -238,6 +238,53 @@ fn serve_detach_applies_the_idle_timeout_flag_for_that_run() {
 }
 
 #[test]
+fn serve_prints_the_sign_in_link_but_never_logs_it() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let mut foreground = common::spawn(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .arg("serve")
+            .envs(common::lani_env(&home.path))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    );
+    let mut printed =
+        std::io::BufRead::lines(std::io::BufReader::new(foreground.stdout.take().unwrap()));
+    let introduction = printed.next().unwrap().unwrap();
+    assert!(introduction.contains("keep it private"), "{introduction}");
+    let link = printed.next().unwrap().unwrap();
+    assert!(
+        link.starts_with("http://127.0.0.1:") && link.contains("/login?token="),
+        "{link}"
+    );
+    stdout(&lani(&home, &["stop"]));
+    assert!(foreground.wait().unwrap().success());
+
+    // In the background, the link is printed by `lani serve --detach`, and the server's own
+    // output goes to its log, which must have none of it.
+    let printed = stdout(&lani(&home, &["serve", "--detach"]));
+    let (introduction, link) = printed.split_once('\n').unwrap();
+    assert!(introduction.contains("keep it private"), "{printed}");
+    let token = link
+        .split("token=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+    assert_eq!(token.len(), 64, "{link}");
+    let again = stdout(&lani(&home, &["serve", "--detach"]));
+    assert_eq!(again, printed, "the running server's link, again");
+    let log = std::fs::read_to_string(home.path.join("logs/server.log")).unwrap();
+    assert!(log.contains("LANI server listening on"), "{log}");
+    assert!(
+        !log.contains(token) && !log.contains("sign in"),
+        "nothing of the sign-in text: {log}"
+    );
+}
+
+#[test]
 fn the_server_ignores_sighup_and_stops_cleanly_on_sigterm() {
     let home = TestHome::new();
     let _stop = StopOnDrop(&home);

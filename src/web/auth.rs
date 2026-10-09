@@ -1,6 +1,7 @@
 //! Authentication and browser-security checks (docs/design.md §13.2).
 
 use askama::Template;
+use axum::Extension;
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
@@ -31,13 +32,19 @@ pub async fn guard(State(state): State<AppState>, request: Request, next: Next) 
     response
 }
 
-async fn check(state: &AppState, request: Request, next: Next) -> Response {
+/// The port the browser addressed, from the `Host` header. Through SSH port forwarding it can
+/// differ from the port this server listens on (§13.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BrowserPort(pub u16);
+
+async fn check(state: &AppState, mut request: Request, next: Next) -> Response {
     let instance = state.instance();
     let host = request
         .headers()
         .get(header::HOST)
-        .and_then(|value| value.to_str().ok());
-    if !allowed_host(host, instance.port) {
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (Some(host), Some(port)) = (host.as_deref(), browser_port(host.as_deref())) else {
         // A foreign Host means DNS rebinding or a misdirected request.
         return PageError::new(
             StatusCode::MISDIRECTED_REQUEST,
@@ -45,11 +52,12 @@ async fn check(state: &AppState, request: Request, next: Next) -> Response {
             "LANI only answers requests addressed to 127.0.0.1 or localhost.",
         )
         .into_response();
-    }
+    };
+    request.extensions_mut().insert(BrowserPort(port));
     if request.uri().path() == "/login" {
         return next.run(request).await;
     }
-    let Some(credential) = credential(request.headers(), &instance.token, instance.port) else {
+    let Some(credential) = credential(request.headers(), &instance.token, port) else {
         return PageError::new(
             StatusCode::UNAUTHORIZED,
             "Not signed in",
@@ -58,10 +66,7 @@ async fn check(state: &AppState, request: Request, next: Next) -> Response {
         .into_response();
     };
     let changes_state = !matches!(*request.method(), Method::GET | Method::HEAD);
-    if credential == Credential::Cookie
-        && changes_state
-        && !same_origin(request.headers(), instance.port)
-    {
+    if credential == Credential::Cookie && changes_state && !same_origin(request.headers(), host) {
         return PageError::new(
             StatusCode::FORBIDDEN,
             "Request refused",
@@ -86,30 +91,38 @@ fn counts_as_activity(path: &str) -> bool {
     path != "/api/health" && !live_updates
 }
 
-/// Whether the `Host` header names this server on the loopback interface.
+/// The port the browser addressed, if the `Host` header names the loopback interface:
+/// `127.0.0.1:<port>` or `localhost:<port>`. `None` for any other `Host`.
+///
+/// Any port is accepted, not only the server's own, so that LANI works through SSH port
+/// forwarding to a different local port (§13.2). The host name is what blocks DNS rebinding: a
+/// rebinding page's requests carry its own domain name.
 #[must_use]
-pub fn allowed_host(host: Option<&str>, port: u16) -> bool {
-    host.is_some_and(|host| {
-        host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
-    })
+pub fn browser_port(host: Option<&str>) -> Option<u16> {
+    let (name, port) = host?.rsplit_once(':')?;
+    let digits = !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit());
+    if !(matches!(name, "127.0.0.1" | "localhost") && digits) {
+        return None;
+    }
+    port.parse().ok().filter(|port| *port != 0)
 }
 
-/// Whether a state-changing request came from one of this server's own pages.
-#[must_use]
+/// Whether a state-changing request came from one of this server's own pages, as the browser
+/// addressed it: `host` is the request's `Host` header, already checked by [`browser_port`].
 ///
 /// A matching `Origin` header is enough. `Origin: null` (which browsers send in some contexts,
 /// for example under a `no-referrer` policy) carries no information, so it is treated like a
 /// missing header: then the browser-set `Sec-Fetch-Site: same-origin`, which pages cannot forge,
 /// is required.
-pub fn same_origin(headers: &HeaderMap, port: u16) -> bool {
+#[must_use]
+pub fn same_origin(headers: &HeaderMap, host: &str) -> bool {
     let origin = headers
         .get(header::ORIGIN)
         .filter(|origin| origin.as_bytes() != b"null");
     if let Some(origin) = origin {
-        return origin.to_str().is_ok_and(|origin| {
-            origin == format!("http://127.0.0.1:{port}")
-                || origin == format!("http://localhost:{port}")
-        });
+        return origin
+            .to_str()
+            .is_ok_and(|origin| origin.strip_prefix("http://") == Some(host));
     }
     headers
         .get("sec-fetch-site")
@@ -155,8 +168,9 @@ fn token_matches(candidate: &str, token: &str) -> bool {
     candidate.as_bytes().ct_eq(token.as_bytes()).into()
 }
 
-/// The session cookie's name. It includes the port because browsers share 127.0.0.1 cookies
-/// across ports, so two users' servers would otherwise overwrite each other's cookie.
+/// The session cookie's name, with the port the browser addressed. Browsers share 127.0.0.1
+/// cookies across ports, so two servers would otherwise overwrite each other's cookie: two
+/// users' servers, or your own and a remote one forwarded to another local port (§13.2).
 fn cookie_name(port: u16) -> String {
     format!("lani_{port}")
 }
@@ -187,7 +201,11 @@ pub struct LoginQuery {
 }
 
 /// `GET /login?token=…&next=…`: exchange the token for a session cookie, then redirect.
-pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
+pub async fn login(
+    State(state): State<AppState>,
+    Extension(BrowserPort(port)): Extension<BrowserPort>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
     let instance = state.instance();
     if !token_matches(&query.token, &instance.token) {
         return PageError::new(
@@ -217,7 +235,7 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
     // (design §13.2).
     let cookie = format!(
         "{}={}; HttpOnly; SameSite=Strict; Path=/",
-        cookie_name(instance.port),
+        cookie_name(port),
         instance.token
     );
     let page = SignInPage { next: &next };
@@ -260,41 +278,68 @@ mod tests {
 
     #[test]
     fn hosts() {
-        assert!(allowed_host(Some("127.0.0.1:4242"), 4242));
-        assert!(allowed_host(Some("localhost:4242"), 4242));
-        assert!(!allowed_host(Some("127.0.0.1:4243"), 4242));
-        assert!(!allowed_host(Some("evil.example:4242"), 4242));
-        assert!(!allowed_host(None, 4242));
+        assert_eq!(browser_port(Some("127.0.0.1:4242")), Some(4242));
+        assert_eq!(browser_port(Some("localhost:4242")), Some(4242));
+        assert_eq!(
+            browser_port(Some("127.0.0.1:4243")),
+            Some(4243),
+            "a forwarded port"
+        );
+        for refused in [
+            "evil.example:4242",
+            "127.0.0.1.evil.example:4242",
+            "127.0.0.1",
+            "127.0.0.1:",
+            "127.0.0.1:0",
+            "127.0.0.1:+80",
+            "127.0.0.1:70000",
+            "localhost:4242:4242",
+        ] {
+            assert_eq!(browser_port(Some(refused)), None, "{refused}");
+        }
+        assert_eq!(browser_port(None), None);
     }
 
     #[test]
     fn origins() {
+        let host = "localhost:4242";
         let mut headers = HeaderMap::new();
-        assert!(!same_origin(&headers, 4242), "no evidence means refuse");
+        assert!(!same_origin(&headers, host), "no evidence means refuse");
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
-        assert!(same_origin(&headers, 4242));
+        assert!(same_origin(&headers, host));
         headers.insert(
             header::ORIGIN,
             HeaderValue::from_static("http://evil.example"),
         );
         assert!(
-            !same_origin(&headers, 4242),
+            !same_origin(&headers, host),
             "a foreign Origin wins over Sec-Fetch-Site"
         );
         headers.insert(
             header::ORIGIN,
             HeaderValue::from_static("http://localhost:4242"),
         );
-        assert!(same_origin(&headers, 4242));
+        assert!(same_origin(&headers, host));
+        for other in [
+            "http://127.0.0.1:4242",
+            "http://localhost:4243",
+            "https://localhost:4242",
+        ] {
+            headers.insert(header::ORIGIN, HeaderValue::from_static(other));
+            assert!(
+                !same_origin(&headers, host),
+                "{other} is another origin than the page's"
+            );
+        }
 
         // `Origin: null` is no evidence either way; Sec-Fetch-Site decides.
         let mut headers = HeaderMap::new();
         headers.insert(header::ORIGIN, HeaderValue::from_static("null"));
-        assert!(!same_origin(&headers, 4242));
+        assert!(!same_origin(&headers, host));
         headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
-        assert!(!same_origin(&headers, 4242));
+        assert!(!same_origin(&headers, host));
         headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
-        assert!(same_origin(&headers, 4242));
+        assert!(same_origin(&headers, host));
     }
 
     #[test]

@@ -127,6 +127,16 @@ impl ServerFile {
         )
     }
 
+    /// What `lani serve` prints to stdout: the sign-in link to the review list, introduced. It
+    /// contains the token, so a detached server's stdout is `/dev/null`, not the log.
+    #[must_use]
+    pub fn sign_in_text(&self) -> String {
+        format!(
+            "To sign in, open this link; it contains the access token, so keep it private:\n{}\n",
+            self.login_url("/")
+        )
+    }
+
     /// The URL of `path` without credentials, safe to show anywhere.
     #[must_use]
     pub fn public_url(&self, path: &str) -> String {
@@ -247,7 +257,9 @@ pub fn start_detached(
         // worktree that is deleted while the server keeps running.
         .current_dir("/")
         .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
+        // The server prints only its sign-in link to stdout, and the link holds the token, which
+        // must never reach the log (§13.2).
+        .stdout(Stdio::null())
         .stderr(log)
         // A new process group, so the server survives the terminal or Claude session that
         // started it; the server also ignores SIGHUP.

@@ -91,8 +91,23 @@ The settings page sets how long the server waits before stopping when idle (3 ho
 or never) and the round limit (5 by default).
 
 The server listens only on 127.0.0.1 and asks for a random token, which `lani open` passes to your
-browser. `lani open --print-url --no-browser` prints a link with the token to open by hand instead,
-for example over SSH with port forwarding.
+browser. `lani open --print-url --no-browser` prints a link with the token to open by hand instead.
+
+### On a remote machine
+
+LANI can run on the machine where the repository and the Claude Code sessions are, with your local
+browser reaching it over SSH port forwarding:
+
+```sh
+ssh -L 5264:127.0.0.1:5264 remote-host
+lani serve --detach        # on the remote host; prints the sign-in link
+```
+
+Open the printed link in your local browser. `lani serve` starts the server without opening a
+browser, and prints the link in the foreground too. If the server took a port above 5264 because
+5264 was in use, forward that port. If 5264 is taken on your own machine, for example by a local
+LANI, forward another local port, as in `-L 5300:127.0.0.1:5264`, and change the link's port to
+match.
 
 ## Command line
 

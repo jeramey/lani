@@ -1114,7 +1114,9 @@ that continues to `next` by itself (a meta refresh, plus a "Continue" link as a 
 cookie is `lani_<port>=<token>` with `HttpOnly`, `SameSite=Strict` and `Path=/`. `next` must be a
 local path that starts with `/` and not `//`, using only letters, digits and `-._~/?=&#%+`;
 anything else becomes `/`. The port is in the cookie name because browsers do not isolate cookies
-by port.
+by port, so two servers would otherwise sign each other out. It is the port the browser addressed,
+from `Host`, not the one the server listens on: through SSH port forwarding they differ, and your
+local server and a remote one forwarded to another local port may listen on the same port.
 
 - **Why Strict, not Lax.** Browsers send 127.0.0.1 cookies to every port on that host. A Lax
   cookie travels with any cross-site top-level navigation, so a website that sends the browser to
@@ -1136,10 +1138,13 @@ by port.
 
 - A valid cookie or `Authorization: Bearer <token>`.
 - A `Host` of `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS rebinding. Any other
-  `Host` gets 421 Misdirected Request.
-- For state-changing methods, an `Origin` matching the server, or `Sec-Fetch-Site: same-origin`.
-  This is CSRF defense in depth. `Origin: null` counts as no `Origin`, so `Sec-Fetch-Site`
-  decides.
+  `Host` gets 421 Misdirected Request. Any port is accepted, so that forwarding to a different
+  local port works. The host name is what blocks DNS rebinding, because a rebinding page's
+  requests carry its own domain name.
+- For state-changing methods, an `Origin` of `http://<Host>`, the page's own origin as the
+  browser addressed it, or `Sec-Fetch-Site: same-origin`. This is CSRF defense in depth. A page
+  on another loopback port has another origin and is refused. `Origin: null` counts as no
+  `Origin`, so `Sec-Fetch-Site` decides.
 
 **Response headers.**
 
@@ -1154,6 +1159,24 @@ by port.
   review). `same-origin` still sends no referrer to other sites.
 
 **Logging.** Query strings are never logged, so the `/login` token never appears in logs.
+`lani serve` prints the sign-in link to stdout and everything else to stderr. A detached server's
+stderr goes to its log, and its stdout to `/dev/null`, so the link never reaches the log.
+
+**Remote use over SSH.** LANI can run on another machine, where the repository and the Claude
+Code sessions are, with your local browser reaching it through SSH port forwarding:
+
+```
+ssh -L 5264:127.0.0.1:5264 remote-host
+remote$ lani serve --detach        # prints the sign-in link
+```
+
+The fixed base port (§13.1) makes the forward the same every time. `lani serve` prints the
+sign-in link, in the foreground or with `--detach`; `lani open --print-url --no-browser` prints
+it too. If the server took a port above 5264, forward that one. If 5264 is taken on your own
+machine, for example by a local LANI, forward another local port (`-L 5300:127.0.0.1:5264`) and
+change the link's port to match; the `Host` and `Origin` checks and the cookie name follow the
+port the browser addressed. The remote server's token protects it from other users of your
+machine as it does locally.
 
 ### 13.3 Pages and URLs
 
@@ -1365,8 +1388,9 @@ lani wait --review ID --for reviewer|implementer [--timeout DURATION]
 lani version
 ```
 
-- `--print-url` writes the full tokenized URL to stdout. This is useful over SSH with port
-  forwarding.
+- `--print-url` writes the full tokenized URL to stdout. `lani serve` prints the same link to
+  stdout, in the foreground or with `--detach`. Both are for opening LANI by hand, such as over
+  SSH with port forwarding (§13.2).
 - Every command exits 1 on an error and 2 on a usage error (from clap). `lani wait` therefore
   uses 3 and 4 for its other outcomes, so a mistyped command never looks like a timeout.
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line

@@ -57,7 +57,8 @@ enum Command {
         /// Overrides the saved setting for this run only.
         #[arg(long, value_name = "DURATION")]
         idle_timeout: Option<String>,
-        /// Start the server in the background and return once it is ready.
+        /// Start the server in the background and return once it is ready. Either way,
+        /// `lani serve` prints the sign-in link to stdout.
         #[arg(long)]
         detach: bool,
     },
@@ -291,19 +292,22 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
         None => PortChoice::from_config_file()?,
     };
     if detach {
-        if let Some(server) = daemon::find_running(&home) {
+        let server = if let Some(server) = daemon::find_running(&home) {
             eprintln!(
                 "A LANI server is already running (pid {}, port {}); its settings were not changed.",
                 server.health.pid, server.health.port
             );
-            return Ok(());
-        }
-        let timeout_text = idle_timeout.map(|timeout| timeout.to_string());
-        let server = daemon::start_detached(&home, port, timeout_text.as_deref())?;
-        eprintln!(
-            "LANI server running on 127.0.0.1:{} (pid {}).",
-            server.health.port, server.health.pid
-        );
+            server
+        } else {
+            let timeout_text = idle_timeout.map(|timeout| timeout.to_string());
+            let server = daemon::start_detached(&home, port, timeout_text.as_deref())?;
+            eprintln!(
+                "LANI server running on 127.0.0.1:{} (pid {}).",
+                server.health.port, server.health.pid
+            );
+            server
+        };
+        print!("{}", server.file.sign_in_text());
         return Ok(());
     }
     init_logging();
