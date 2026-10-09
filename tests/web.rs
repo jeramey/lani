@@ -1698,7 +1698,10 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
 
     let review_url = format!("/reviews/{review_id}");
     let (_, _, page) = send(&f.app, get(&review_url)).await;
-    assert!(page.contains("<strong>Waiting for:</strong> <span class=\"author author-implementer\">Claude · implementer</span>"), "{page}");
+    assert!(
+        page.contains("<strong>Waiting for:</strong> <span class=\"author author-human\">You</span> <span class=\"muted small\">· handed over by Claude · reviewer"),
+        "the reviewer's first findings come to the human: {page}"
+    );
     assert!(
         page.contains("Please <strong>fix</strong> issue 1."),
         "the note is rendered: {page}"
@@ -1721,7 +1724,7 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     let (_, _, index) = send(&f.app, get("/")).await;
     assert!(index.contains("Needs you"), "{index}");
     assert!(
-        index.contains("waiting for <span class=\"author author-implementer\">"),
+        index.contains("waiting for <span class=\"author author-human\">"),
         "{index}"
     );
     let (_, _, issue_page) = send(&f.app, get(&format!("{review_url}/issues/{second}"))).await;
@@ -1755,8 +1758,11 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     send(&f.app, post(&turn, "to=nobody")).await;
     let (_, _, page) = send(&f.app, get(&review_url)).await;
     assert!(!page.contains("Waiting for:"), "{page}");
+}
 
-    // The round limit is a setting.
+#[tokio::test]
+async fn the_round_limit_is_a_setting() {
+    let f = fixture();
     let (_, _, settings) = send(&f.app, get("/settings")).await;
     assert!(
         settings.contains("name=\"round_limit\" value=\"5\""),

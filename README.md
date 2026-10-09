@@ -20,8 +20,9 @@ It makes no network connections, and it only reads your repositories; it never w
 - **Clear authorship.** It is always visible whether you, the reviewer or the implementer wrote
   something. You can edit any text, and edits are marked.
 - **Who resolves.** Only the reviewer and you can resolve issues; the implementer can't.
-- **Taking turns.** Sessions hand the review to each other and wait with `lani wait`. After five
-  rounds without you, or when a session needs a decision, the review comes to you. A session can
+- **Taking turns.** Sessions hand the review to each other and wait with `lani wait`. The
+  reviewer's first findings come to you before the implementer sees them. After five rounds
+  without you, or when a session needs a decision, the review comes to you again. A session can
   also ask you about a single issue.
 - **The web UI.**
   - It lists reviews across all your repositories.
@@ -67,9 +68,10 @@ tools to them. For example:
 To let the sessions run the loop on their own, ask either one to "hand it to the reviewer (or the
 implementer) and wait for your turn". Each session then hands the review on when it finishes a
 pass. It waits with `lani wait` as a background command and continues when the review comes
-back. The review comes to you when every issue is resolved, when a session needs your decision,
-or after the round limit; the session that hands it to you tells you. You hand it back from the
-review page.
+back. The reviewer's first hand-off comes to you, so you read the first findings before the
+implementer acts on them. After that, the review comes to you when every issue is resolved, when a
+session needs your decision, or after the round limit; the session that hands it to you tells
+you. You hand it on from the review page.
 
 [`docs/reviewer-prompt.md`](docs/reviewer-prompt.md) is a ready-made prompt for the reviewer
 session. It uses Claude Code's `/code-review` to find bugs and files each finding in LANI.

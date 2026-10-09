@@ -257,13 +257,13 @@ fn changes_arrive_in_place(browser: &WebDriver, service: &mut Service, review_id
         )
         .unwrap();
     service
-        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
         .unwrap();
     browser.wait_for(
         &format!(
             "return {IN_PLACE} \
              && document.querySelector('#conversation').textContent.includes('From another session.') \
-             && document.querySelector('#review-head .turn').textContent.includes('Claude · implementer');"
+             && document.querySelector('#review-head .turn').textContent.includes('Claude · reviewer');"
         ),
         "the comment and the turn, in place",
     );

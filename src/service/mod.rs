@@ -89,9 +89,19 @@ pub struct SpanRequest<'a> {
 pub struct HandOff {
     /// The review after the change.
     pub review: Review,
-    /// Set when the round limit sent the review to the human instead of the reviewer.
-    pub limit_reached: Option<u32>,
+    /// Set when LANI sent the review to the human instead of the role named.
+    pub redirected: Option<Redirect>,
     pub round_limit: u32,
+}
+
+/// Why a hand-off went to the human instead of the role named (§11.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Redirect {
+    /// The reviewer's first hand-off on a review, so the human reads the first findings before
+    /// the implementer does.
+    FirstFindings,
+    /// The implementer's hand-back reached the round limit, given here.
+    RoundLimit(u32),
 }
 
 /// How waiting for a turn ended.
@@ -882,8 +892,18 @@ impl Service {
             }
         }
         let limit = round_limit(&tx)?;
-        let (to, rounds, limit_reached) = match (actor, to) {
+        let (to, rounds, redirected) = match (actor, to) {
             (Actor::Human, to) => (to, 0, None),
+            // The human reads the reviewer's first findings before the implementer does.
+            (Actor::Reviewer, Some(Actor::Implementer))
+                if !store::has_handed_off(&tx, review_id, Actor::Reviewer)? =>
+            {
+                (
+                    Some(Actor::Human),
+                    review.rounds,
+                    Some(Redirect::FirstFindings),
+                )
+            }
             // A round is the reviewer handing the review to the implementer and the implementer
             // handing it back; a loop the implementer opened, or the human handed it, starts none.
             (Actor::Implementer, Some(Actor::Reviewer))
@@ -891,7 +911,11 @@ impl Service {
             {
                 let rounds = review.rounds + 1;
                 if rounds >= limit {
-                    (Some(Actor::Human), rounds, Some(limit))
+                    (
+                        Some(Actor::Human),
+                        rounds,
+                        Some(Redirect::RoundLimit(limit)),
+                    )
                 } else {
                     (Some(Actor::Reviewer), rounds, None)
                 }
@@ -913,7 +937,7 @@ impl Service {
         tx.commit()?;
         Ok(HandOff {
             review: store::get_review(&self.conn, review_id)?,
-            limit_reached,
+            redirected,
             round_limit: limit,
         })
     }

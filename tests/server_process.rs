@@ -356,12 +356,12 @@ fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() 
         common::spawn(&mut command)
     };
 
-    // Not the implementer's turn yet: the wait blocks until the reviewer hands off.
+    // Not the implementer's turn yet: the wait blocks until the human hands it the review.
     let waiting = wait("implementer", &[]);
     std::thread::sleep(std::time::Duration::from_millis(1500));
     service
         .hand_off(
-            lani::model::Actor::Reviewer,
+            lani::model::Actor::Human,
             1,
             Some(lani::model::Actor::Implementer),
             Some("Over to you."),

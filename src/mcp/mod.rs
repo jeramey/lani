@@ -67,10 +67,11 @@ from tool output, leave them out.
 
 Taking turns: a review records whose turn it is (reviewer, implementer, human, or nobody). When you \
 finish a pass, call hand_off: the reviewer hands to the implementer after filing or answering issues, \
-and the implementer back to the reviewer after fixing and replying. Only the role whose turn it is \
-(or anyone, while it is nobody's) can hand the review on. Then wait by running `lani wait --review \
-<id> --for <your role>` as a background command: it exits when it is your turn again, or when the \
-review is closed, and then you continue. Hand the review to the human when every issue is resolved \
+and the implementer back to the reviewer after fixing and replying. The reviewer's first hand-off on a \
+review goes to the human instead, who reads the first findings and then hands the review on. Only the \
+role whose turn it is (or anyone, while it is nobody's) can hand the review on. Then wait by running \
+`lani wait --review <id> --for <your role>` as a background command: it exits when it is your turn \
+again, or when the review is closed, and then you continue. Hand the review to the human when every issue is resolved \
 or you need their decision; then tell the human (in your reply, and with a push notification if you \
 can) and call open_web_ui. To ask the human about one issue while the review carries on, call \
 add_comment with ask_human: true; their reply clears it. After a set number of rounds without the \

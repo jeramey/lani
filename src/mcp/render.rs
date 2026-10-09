@@ -14,8 +14,8 @@ use crate::model::{
     Actor, Anchor, BaseSource, Comment, IssueStatus, ReviewStatus, Side, short_ref, short_sha,
 };
 use crate::service::{
-    CodeExcerpt, HandOff, IssueList, IssueView, Location, ReviewDetail, ReviewList, ReviewView,
-    StartedReview, WorktreeReport,
+    CodeExcerpt, HandOff, IssueList, IssueView, Location, Redirect, ReviewDetail, ReviewList,
+    ReviewView, StartedReview, WorktreeReport,
 };
 use crate::text::{self, quoted};
 use crate::time;
@@ -241,14 +241,26 @@ fn turn_text(view: &ReviewView) -> String {
 pub fn hand_off(handed: &HandOff, actor: Actor) -> String {
     let review = &handed.review;
     let mut out = String::new();
-    if let Some(limit) = handed.limit_reached {
-        let _ = writeln!(
-            out,
-            "The reviewer and implementer have now taken {} without the human (the round limit), \
-             so review {} went to the human instead of the reviewer.",
-            plural(usize::try_from(limit).unwrap_or(usize::MAX), "round"),
-            review.id
-        );
+    match handed.redirected {
+        Some(Redirect::FirstFindings) => {
+            let _ = writeln!(
+                out,
+                "This is the reviewer's first hand-off on review {}, so it went to the human \
+                 instead of the implementer: the human reads the first findings, then hands the \
+                 review on.",
+                review.id
+            );
+        }
+        Some(Redirect::RoundLimit(limit)) => {
+            let _ = writeln!(
+                out,
+                "The reviewer and implementer have now taken {} without the human (the round \
+                 limit), so review {} went to the human instead of the reviewer.",
+                plural(usize::try_from(limit).unwrap_or(usize::MAX), "round"),
+                review.id
+            );
+        }
+        None => {}
     }
     let wait = format!(
         "run `lani wait --review {} --for {}` as a background command; it exits when the review \

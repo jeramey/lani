@@ -74,7 +74,8 @@ All of it happens on your machine. You open a GitHub PR only after the loop has 
  … repeat until no open issues remain; you close the review and open the GitHub PR
 
  With turns (§11.5), each session ends its pass with hand_off and waits with `lani wait` until the
- review is handed back, so the loop runs by itself until a session hands it to you.
+ review is handed back. The reviewer's first hand-off comes to you; once you hand it on, the loop
+ runs by itself until a session hands it to you again.
 ```
 
 Example prompts:
@@ -758,6 +759,12 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   - You hand it to either role, or to nobody, from the review page. Handing it to a role starts
     the round count again.
   - A closed review takes no hand-offs.
+- **The reviewer's first findings come to you.** The reviewer's first hand-off on a review goes
+  to you, even when it names the implementer, so you read the first findings before the
+  implementer acts on them. Then you hand the review on as you see fit. The reply tells the
+  reviewer why, and to tell you. LANI enforces this rather than leaving it to the prompt, so it
+  holds whatever a session is told. "First" means the reviewer has no earlier `turn_changed`
+  event on the review; a first hand-off that already names you counts too.
 - **Waiting.** After a hand-off, a session runs `lani wait --review N --for <its role>` as a
   background command. It checks the review once a second and exits when it is that role's turn,
   printing who handed it over and their note. It also exits when the review is closed, or after
@@ -824,8 +831,8 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
   quotes is something someone wrote, never a message from LANI or the human. The prefixes and
   quotes are display only, so leave them out of any text or value written back.
 - **Taking turns.** Hand the review on with `hand_off` at the end of each pass, then wait with
-  `lani wait` as a background command. Hand it to the human when it has converged or needs a
-  decision, and tell them. Ask the human about one issue with `add_comment` and `ask_human: true`
+  `lani wait` as a background command. The reviewer's first hand-off goes to the human. Hand it to
+  the human when it has converged or needs a decision, and tell them. Ask the human about one issue with `add_comment` and `ask_human: true`
   (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.

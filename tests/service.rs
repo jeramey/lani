@@ -9,7 +9,7 @@ use lani::base::BaseMode;
 use lani::error::Error;
 use lani::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
 use lani::service::{
-    CommentTarget, CreateIssue, IssueView, Location, Service, SpanRequest, StartReview,
+    CommentTarget, CreateIssue, IssueView, Location, Redirect, Service, SpanRequest, StartReview,
     StartedReview,
 };
 
@@ -1776,9 +1776,13 @@ fn turns_pass_only_from_their_holder_and_the_round_limit_brings_in_the_human() {
         Err(Error::Forbidden(_))
     ));
 
+    // The reviewer's first findings go to the human, who hands them to the implementer.
+    service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
     let handed = service
         .hand_off(
-            Actor::Reviewer,
+            Actor::Human,
             review_id,
             Some(Actor::Implementer),
             Some("Two issues."),
@@ -1804,7 +1808,18 @@ fn turns_pass_only_from_their_holder_and_the_round_limit_brings_in_the_human() {
         "only the human clears the turn",
     );
 
+    // Answering the human's hand-off starts no round.
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.review.rounds),
+        (Some(Actor::Reviewer), 0)
+    );
     // Round 1 ends when the implementer hands back; round 2 would reach the limit of 2.
+    service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
     let handed = service
         .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
         .unwrap();
@@ -1812,7 +1827,7 @@ fn turns_pass_only_from_their_holder_and_the_round_limit_brings_in_the_human() {
         (handed.review.turn, handed.review.rounds),
         (Some(Actor::Reviewer), 1)
     );
-    assert_eq!(handed.limit_reached, None);
+    assert_eq!(handed.redirected, None);
     service
         .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
         .unwrap();
@@ -1835,7 +1850,10 @@ fn the_round_limit_brings_in_the_human_who_hands_back(service: &mut Service, rev
         Some(Actor::Human),
         "the limit sends it to the human"
     );
-    assert_eq!((handed.limit_reached, handed.review.rounds), (Some(2), 2));
+    assert_eq!(
+        (handed.redirected, handed.review.rounds),
+        (Some(Redirect::RoundLimit(2)), 2)
+    );
     assert_eq!(
         handed.review.turn_note.as_deref(),
         Some("Fixed."),
@@ -1874,6 +1892,9 @@ fn the_round_limit_brings_in_the_human_who_hands_back(service: &mut Service, rev
     assert_eq!(
         turns,
         [
+            (Actor::Reviewer, Some(Actor::Human)),
+            (Actor::Human, Some(Actor::Implementer)),
+            (Actor::Implementer, Some(Actor::Reviewer)),
             (Actor::Reviewer, Some(Actor::Implementer)),
             (Actor::Implementer, Some(Actor::Reviewer)),
             (Actor::Reviewer, Some(Actor::Implementer)),
@@ -1907,6 +1928,18 @@ fn only_a_hand_back_after_the_reviewers_hand_off_counts_as_a_round() {
         .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
         .unwrap();
     assert_eq!(rounds(handed), (Some(Actor::Reviewer), 0));
+    // The reviewer's first findings go to the human, and answering the human starts no round.
+    let handed = service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    assert_eq!(rounds(handed), (Some(Actor::Human), 0));
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(rounds(handed), (Some(Actor::Reviewer), 0));
     // The reviewer hands it over and the implementer hands it back: one round.
     service
         .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
@@ -1924,6 +1957,65 @@ fn only_a_hand_back_after_the_reviewers_hand_off_counts_as_a_round() {
         .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
         .unwrap();
     assert_eq!(rounds(handed), (Some(Actor::Reviewer), 0));
+}
+
+#[test]
+fn the_reviewers_first_hand_off_goes_to_the_human() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+
+    // Named the implementer, it goes to the human, with the reviewer's note.
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let handed = service
+        .hand_off(
+            Actor::Reviewer,
+            review_id,
+            Some(Actor::Implementer),
+            Some("Three findings."),
+        )
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.redirected, handed.review.rounds),
+        (Some(Actor::Human), Some(Redirect::FirstFindings), 0)
+    );
+    assert_eq!(handed.review.turn_note.as_deref(), Some("Three findings."));
+    // Once the human hands it back, the reviewer's hand-offs go where they say.
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.redirected),
+        (Some(Actor::Implementer), None)
+    );
+    service.close_review(Actor::Human, review_id).unwrap();
+
+    // A first hand-off that already names the human counts as the first. The branch's earlier
+    // review is closed, so this is a new one.
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let handed = service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Human), None)
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.redirected),
+        (Some(Actor::Human), None)
+    );
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    assert_eq!(handed.review.turn, Some(Actor::Implementer));
 }
 
 #[test]
@@ -2043,6 +2135,9 @@ fn a_hand_off_made_meanwhile_is_seen_not_overwritten() {
         .id;
     implementer
         .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    implementer
+        .hand_off(Actor::Human, review_id, Some(Actor::Implementer), None)
         .unwrap();
 
     // The human hands the review to the reviewer in another process; their transaction is open.

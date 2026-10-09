@@ -717,6 +717,16 @@ pub fn change_turn(conn: &Connection, change: &TurnChange<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Whether `actor` has handed the review on before.
+pub fn has_handed_off(conn: &Connection, review_id: i64, actor: Actor) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM event
+                        WHERE review_id = ?1 AND kind = 'turn_changed' AND actor = ?2)",
+        params![review_id, actor],
+        |row| row.get(0),
+    )?)
+}
+
 /// Mark an issue as asked about by `role`, or clear the question with `None`.
 pub fn set_asked(conn: &Connection, issue_id: i64, role: Option<Actor>, now: &str) -> Result<()> {
     conn.execute(

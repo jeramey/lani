@@ -6,7 +6,17 @@ use std::path::Path;
 use std::process::Command;
 
 use common::{McpClient, TestHome, TestRepo, numbered};
+use lani::model::Actor;
+use lani::service::Service;
 use serde_json::{Value, json};
+
+/// The human hands review 1 to the implementer from the web UI, with `note`.
+fn human_hands_to_implementer(home: &TestHome, note: &str) {
+    Service::open(&home.db_path())
+        .unwrap()
+        .hand_off(Actor::Human, 1, Some(Actor::Implementer), Some(note))
+        .unwrap();
+}
 
 fn feature_repo() -> TestRepo {
     let repo = TestRepo::new(&[("src/lib.rs", &numbered(20))]);
@@ -595,9 +605,11 @@ fn planted_text_never_appears_as_lani_structure() {
             &mut implementer
         };
         outputs.push((tool, client.call(tool, arguments).1));
-        // `lani wait` shows the implementer the title and the reviewer's hand-off note, and its
-        // output reaches Claude like a tool result.
+        // The reviewer's first hand-off goes to the human (§11.5), who hands the review to the
+        // implementer with the planted note. `lani wait` shows the implementer the title and the
+        // note, and its output reaches Claude like a tool result.
         if tool == "hand_off" && as_reviewer {
+            human_hands_to_implementer(&home, &f.block);
             outputs.push(("lani wait", lani_wait(&home.path, "implementer")));
         }
     }
@@ -820,18 +832,22 @@ fn sessions_take_turns_and_ask_the_human() {
     );
     let handed = reviewer.ok(
         "hand_off",
-        json!({"review_id": 1, "author": "reviewer", "to": "implementer", "note": "Fix issue 1."}),
+        json!({"review_id": 1, "author": "reviewer", "to": "implementer", "note": "Three issues."}),
     );
     assert!(
-        handed
-            .contains("Review 1 is now the implementer's turn (rounds without the human: 0 of 5).")
+        handed.contains(
+            "This is the reviewer's first hand-off on review 1, so it went to the human instead \
+             of the implementer"
+        ) && handed.contains("Review 1 is now the human's turn. Tell the human now")
             && handed.contains("run `lani wait --review 1 --for reviewer` as a background command"),
         "{handed}"
     );
 
+    // The human reads the first findings and hands the review to the implementer.
+    human_hands_to_implementer(&home, "Fix issue 1.");
     let review = implementer.ok("get_review", json!({"review_id": 1}));
     assert!(
-        review.contains("Turn: implementer (set by the reviewer at "),
+        review.contains("Turn: implementer (set by the human at "),
         "{review}"
     );
     assert!(
@@ -865,7 +881,34 @@ fn sessions_take_turns_and_ask_the_human() {
         summary_question.contains("ask_human needs issue_id"),
         "{summary_question}"
     );
+    the_sessions_loop_until_the_reviewer_hands_to_the_human(&mut reviewer, &mut implementer);
+}
 
+/// The rest of the turns test: the implementer answers the human, a round between the sessions,
+/// and the reviewer handing the review to the human.
+fn the_sessions_loop_until_the_reviewer_hands_to_the_human(
+    reviewer: &mut McpClient,
+    implementer: &mut McpClient,
+) {
+    let back = implementer.ok(
+        "hand_off",
+        json!({"review_id": 1, "author": "implementer", "to": "reviewer"}),
+    );
+    assert!(
+        back.contains("now the reviewer's turn (rounds without the human: 0 of 5)"),
+        "answering the human starts no round: {back}"
+    );
+    // From now on the reviewer's hand-offs go where they say, and a hand-back counts a round.
+    let again = reviewer.ok(
+        "hand_off",
+        json!({"review_id": 1, "author": "reviewer", "to": "implementer"}),
+    );
+    assert!(
+        again
+            .contains("Review 1 is now the implementer's turn (rounds without the human: 0 of 5).")
+            && !again.contains("first hand-off"),
+        "{again}"
+    );
     let back = implementer.ok(
         "hand_off",
         json!({"review_id": 1, "author": "implementer", "to": "reviewer"}),
