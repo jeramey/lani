@@ -1821,6 +1821,76 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
 }
 
 #[tokio::test]
+async fn activity_shows_the_latest_ten_events_with_links_to_more_and_all() {
+    let f = fixture();
+    let review_id = f.review_id;
+    let total = f
+        .state
+        .call(move |service| {
+            while service.list_events(review_id)?.len() < 23 {
+                service.add_comment(Actor::Human, CommentTarget::Summary(review_id), "More.")?;
+            }
+            Ok(service.list_events(review_id)?.len())
+        })
+        .await
+        .unwrap();
+    assert_eq!(total, 23);
+    let activity =
+        |page: &str| page[page.find("<section id=\"activity\"").expect(page)..].to_string();
+    let shown = |section: &str| section.matches("<li><span class=\"when\">").count();
+    let url = format!("/reviews/{review_id}");
+
+    let (_, _, page) = send(&f.app, get(&url)).await;
+    let section = activity(&page);
+    assert_eq!(shown(&section), 10, "{section}");
+    assert!(
+        section.contains("Showing the latest 10 of 23."),
+        "{section}"
+    );
+    assert!(
+        section.contains(&format!(
+            "<a class=\"button secondary\" href=\"{url}?status=open&#38;events=20#activity\" data-in-place>Show 10 more</a>"
+        )) && section.contains(&format!(
+            "href=\"{url}?status=open&#38;events=all#activity\" data-in-place>Show all</a>"
+        )),
+        "{section}"
+    );
+    assert!(
+        !section.contains("started the review"),
+        "the oldest is left out"
+    );
+
+    // Further on, the last step adds only what is left; the issue filter is kept.
+    let (_, _, page) = send(&f.app, get(&format!("{url}?status=all&events=20"))).await;
+    let section = activity(&page);
+    assert_eq!(shown(&section), 20);
+    assert!(
+        section.contains(&format!(
+            "href=\"{url}?status=all&#38;events=23#activity\" data-in-place>Show 3 more</a>"
+        )),
+        "{section}"
+    );
+    assert!(
+        page.contains(&format!(
+            "href=\"{url}?status=resolved&#38;events=20#issues\""
+        )),
+        "the issue filters keep the number of events"
+    );
+
+    let (_, _, page) = send(&f.app, get(&format!("{url}?events=all"))).await;
+    let section = activity(&page);
+    assert_eq!(shown(&section), 23);
+    assert!(section.contains("started the review"), "{section}");
+    assert!(!section.contains("more-activity"), "nothing left to show");
+
+    for bad in ["0", "ten", "+5", "-1"] {
+        let (status, _, body) = send(&f.app, get(&format!("{url}?events={bad}"))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        assert!(body.contains("not a number of events"), "{body}");
+    }
+}
+
+#[tokio::test]
 async fn the_round_limit_is_a_setting() {
     let f = fixture();
     let (_, _, settings) = send(&f.app, get("/settings")).await;

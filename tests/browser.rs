@@ -232,6 +232,7 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     the_hand_off_history_stays_open_while_the_turn_changes(&browser, &mut service, review_id);
     a_failed_refresh_is_reported_until_one_succeeds(&browser, &mut service, review_id);
     a_draft_is_kept_while_the_rest_of_the_page_changes(&browser, &mut service, review_id);
+    more_activity_loads_in_place(&browser, &mut service, review_id);
     a_selection_survives_its_table_being_replaced(&browser, &fixture, &mut service);
     browser.assert_no_problems("live updates");
 
@@ -403,6 +404,41 @@ fn a_draft_is_kept_while_the_rest_of_the_page_changes(
         ),
         "the conversation, once the draft is gone",
     );
+}
+
+fn more_activity_loads_in_place(browser: &WebDriver, service: &mut Service, review_id: i64) {
+    while service.list_events(review_id).unwrap().len() < 25 {
+        service
+            .add_comment(Actor::Reviewer, CommentTarget::Summary(review_id), "Busy.")
+            .unwrap();
+    }
+    let total = service.list_events(review_id).unwrap().len();
+    let shown = "document.querySelectorAll('#activity .timeline li').length";
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {shown} === 10 \
+             && document.querySelector('#activity').textContent.includes('Showing the latest 10 of {total}.');"
+        ),
+        "the latest ten events",
+    );
+    // Showing more loads in place: a draft elsewhere on the page stays.
+    browser.type_text("#new-summary-comment", "Half a thought");
+    browser.click("#activity a[href*='events=20']");
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {shown} === 20 && location.search.includes('events=20') \
+             && document.querySelector('#new-summary-comment').value === 'Half a thought';"
+        ),
+        "ten more events, in place",
+    );
+    browser.click("#activity a[href*='events=all']");
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {shown} === {total} && !document.querySelector('.more-activity');"
+        ),
+        "all the events",
+    );
+    browser.clear("#new-summary-comment");
 }
 
 fn a_selection_survives_its_table_being_replaced(

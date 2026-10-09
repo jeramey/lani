@@ -266,6 +266,20 @@
     }
   }
 
+  // A link marked data-in-place, such as the Activity section's Show more, changes what the page
+  // shows, not where it is. The page takes the link's URL and refreshes its parts in place, as
+  // for a live change, so nothing written elsewhere on it is lost. Without this script it is a
+  // plain link.
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a[data-in-place]");
+    if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    history.replaceState(null, "", link.pathname + link.search + location.hash);
+    refresh();
+  });
+
   // Refreshes run one at a time; a change announced during one starts another after it.
   let refreshing = false;
   let refreshAgain = false;

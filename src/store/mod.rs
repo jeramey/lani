@@ -663,12 +663,27 @@ pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>>
     )?)
 }
 
-pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<Event>> {
+/// A review's events, newest first: the latest `limit`, or all of them for `None`.
+pub fn list_events(conn: &Connection, review_id: i64, limit: Option<u32>) -> Result<Vec<Event>> {
     let mut statement = conn.prepare(&format!(
         "SELECT {EVENT_COLUMNS} FROM event WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2"
     ))?;
+    // A negative LIMIT means no limit.
+    let limit = limit.map_or(-1, i64::from);
     let rows = statement.query_map(params![review_id, limit], event_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// How many events a review has.
+pub fn count_events(conn: &Connection, review_id: i64) -> Result<u64> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM event WHERE review_id = ?1",
+        [review_id],
+        |row| {
+            let count: i64 = row.get(0)?;
+            u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count))
+        },
+    )?)
 }
 
 /// Every change of a review's turn, with its note, newest first.

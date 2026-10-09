@@ -120,9 +120,16 @@
 <section id="activity" class="panel" data-live>
   <h2>Activity</h2>
   <ol class="timeline">
-    {% for event in events %}
+    {% for event in activity.events %}
     <li><span class="when">{{ event.when }}</span> <span class="author {{ event.actor.class }}">{{ event.actor.label }}</span> {% if let Some(link) = event.link %}<a href="{{ link }}">{{ event.text }}</a>{% else %}{{ event.text }}{% endif %}</li>
     {% endfor %}
   </ol>
+  {% if let Some(more) = activity.more %}
+  <div class="more-activity">
+    <span class="muted small">Showing the latest {{ activity.events.len() }} of {{ activity.total }}.</span>
+    <a class="button secondary" href="{{ more.more_url }}" data-in-place>Show {{ more.step }} more</a>
+    <a class="button secondary" href="{{ more.all_url }}" data-in-place>Show all</a>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

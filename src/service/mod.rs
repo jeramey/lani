@@ -31,8 +31,6 @@ use crate::time;
 
 /// Longest accepted review title, in characters.
 const MAX_TITLE_CHARS: usize = 200;
-/// How many recent events the activity timeline shows.
-pub const TIMELINE_EVENTS: u32 = 50;
 
 pub struct Service {
     conn: Connection,
@@ -82,6 +80,13 @@ pub struct SpanRequest<'a> {
     pub end_line: u32,
     /// Required from MCP; `None` only for the web UI, whose lines come from a rendered commit.
     pub start_line_text: Option<&'a str>,
+}
+
+/// Part of a review's activity: the latest events, newest first, out of `total`.
+#[derive(Clone, Debug)]
+pub struct Activity {
+    pub events: Vec<Event>,
+    pub total: u64,
 }
 
 /// The result of handing a review on.
@@ -1150,9 +1155,18 @@ impl Service {
             .collect())
     }
 
-    /// A review's most recent activity, newest first.
+    /// All of a review's events, newest first.
     pub fn list_events(&self, review_id: i64) -> Result<Vec<Event>> {
-        store::list_events(&self.conn, review_id, TIMELINE_EVENTS)
+        store::list_events(&self.conn, review_id, None)
+    }
+
+    /// A review's most recent activity, newest first: the latest `limit` events, or all of them
+    /// for `None`, with how many there are in all.
+    pub fn activity(&self, review_id: i64, limit: Option<u32>) -> Result<Activity> {
+        Ok(Activity {
+            events: store::list_events(&self.conn, review_id, limit)?,
+            total: store::count_events(&self.conn, review_id)?,
+        })
     }
 
     /// The id of the review's latest event. Every change to a review records an event, so the

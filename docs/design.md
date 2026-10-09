@@ -1216,7 +1216,7 @@ server's token protects it from other users of your machine as it does locally.
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; activity timeline. Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
+| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; **activity timeline**, newest first: the latest 10 events, then *Show 10 more* and *Show all* while any are left out (`?events=<n>` or `?events=all`; the issue filter links keep it). Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
@@ -1311,6 +1311,10 @@ work on the review.
   differ are replaced, and a code view's line selection is restored from the URL afterwards. A
   `<details>` with an id that the reader opened, such as the earlier hand-offs, stays open in the
   replacement. If the fetch fails, a notice says so until a later refresh succeeds.
+- **Links that refresh in place.** A link marked `data-in-place`, such as *Show 10 more* in the
+  activity timeline, changes only what the page shows. `lani.js` puts the link's URL in the
+  address bar (`history.replaceState`) and refreshes the page's parts as for a live change, so a
+  draft elsewhere on the page is kept. Without the script, it is a plain link.
 - **Added and removed parts.** Parts are only replaced, never added or removed. If a refresh finds
   that parts were added or removed (a commit changed which files the diff covers), the page asks
   for a reload instead of placing them.
@@ -1401,7 +1405,8 @@ Comments and summaries are rendered with **comrak**:
 - One hand-written CSS file covers light and dark themes.
 - **No Node toolchain.** `cargo build` is the whole build.
 - **Forms work without JavaScript.** Every action is a plain form post that redirects back, and
-  inline editors are `<details>` elements. Only line selection and live updates need `lani.js`.
+  inline editors are `<details>` elements. Only line selection and live updates need `lani.js`;
+  links that refresh in place (§13.5) work as plain links without it.
 
 ---
 
