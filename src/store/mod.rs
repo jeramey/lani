@@ -652,7 +652,6 @@ pub fn insert_event(conn: &Connection, event: &NewEvent<'_>) -> Result<()> {
     Ok(())
 }
 
-/// A review's most recent events, newest first.
 /// The id of the review's latest event; `None` if the review does not exist, since creating a
 /// review records its first event.
 pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>> {
