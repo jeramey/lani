@@ -709,8 +709,9 @@ impl LaniServer {
     }
 
     #[tool(
-        description = "Show a review: refs and commits, issue counts, the summary (with its version) and the \
-                       summary's comments.",
+        description = "Show a review: refs and commits, issue counts, whose turn it is with the hand-off \
+                       note, the earlier hand-offs with their notes, the summary (with its version) \
+                       and the summary's comments.",
         annotations(read_only_hint = true)
     )]
     fn get_review(&self, Parameters(p): Parameters<GetReviewParams>) -> Result<String, ToolError> {
