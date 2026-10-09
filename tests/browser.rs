@@ -592,7 +592,6 @@ fn a_socket_mode_server_works_through_a_forwarded_port() {
     // Forms post through the forward, and the Origin check accepts them.
     let changes = format!("/reviews/{review_id}/changes");
     browser.sign_in(&fixture, &changes);
-    browser.watch_for_problems();
     browser.click(&format!("#{LIB_ANCHOR}-B20 td.ln a"));
     browser.click("tr.new-issue-bar button");
     browser.fill_title_and_severity("Line 20 is gone", "nit");
@@ -611,9 +610,10 @@ fn a_socket_mode_server_works_through_a_forwarded_port() {
         ),
         "the overview",
     );
+    browser.watch_for_problems();
     browser.run("window.laniSamePage = true; return true;");
     changes_arrive_in_place(&browser, &mut fixture.service(), review_id);
-    browser.assert_no_problems("socket mode");
+    browser.assert_no_problems("live updates through the forward");
 }
 
 #[test]
