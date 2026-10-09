@@ -578,3 +578,98 @@ fn ports_browsers_refuse_and_mistakes_in_the_config_file_are_reported() {
         "no server was started"
     );
 }
+
+// ── stopping and starting around the server lock ─────────────────────────────────────────────
+
+/// A stand-in for a server process that dies untidily. It holds the server lock and answers the
+/// health check and the shutdown request as a real server does, then stops listening. It keeps
+/// the lock for `linger`, as a process still shutting down would, and ends without removing
+/// `server.json` or its redirect file.
+fn untidy_server(home: &TestHome, linger: std::time::Duration) -> std::thread::JoinHandle<()> {
+    use lani::daemon::{self, Health, ServerFile, ServerLock};
+    daemon::ensure_dirs(&home.path).unwrap();
+    let lock = ServerLock::try_acquire(&home.path).unwrap().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let file = ServerFile {
+        pid: std::process::id(),
+        port,
+        token: "t".repeat(64),
+        instance_id: "untidy".to_string(),
+        version: daemon::VERSION.to_string(),
+        started_at: "2026-10-09T12:00:00.000Z".to_string(),
+    };
+    file.write(&home.path).unwrap();
+    std::fs::write(home.path.join("run/open-untidy.html"), "token").unwrap();
+    let health = serde_json::to_string(&Health {
+        instance_id: file.instance_id.clone(),
+        version: file.version.clone(),
+        pid: file.pid,
+        port,
+        started_at: file.started_at.clone(),
+        idle_timeout: "3h".to_string(),
+        idle_timeout_source: "saved setting".to_string(),
+        idle_remaining_secs: Some(3600),
+    })
+    .unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap() == 1 {
+                request.push(byte[0]);
+            }
+            let shutdown = request.starts_with(b"POST /api/shutdown ");
+            let body = if shutdown { "{}" } else { health.as_str() };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            if shutdown {
+                break;
+            }
+        }
+        drop(listener);
+        std::thread::sleep(linger);
+        drop(lock);
+    })
+}
+
+#[test]
+fn stop_waits_for_the_server_process_and_clears_what_a_dead_one_left() {
+    let home = TestHome::new();
+    let linger = std::time::Duration::from_millis(800);
+    let server = untidy_server(&home, linger);
+    let started = std::time::Instant::now();
+    let stopped = stdout(&lani(&home, &["stop"]));
+    assert!(stopped.starts_with("Stopped the LANI server"), "{stopped}");
+    assert!(
+        started.elapsed() >= linger,
+        "returned while the server process still held the lock"
+    );
+    assert!(!home.path.join("run/server.json").exists());
+    assert!(!home.path.join("run/open-untidy.html").exists());
+    server.join().unwrap();
+}
+
+#[test]
+fn open_starts_a_server_once_a_stopping_one_lets_go_of_the_lock() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    // A server that has removed server.json but not yet exited still holds the lock, so the
+    // server `lani open` starts finds it held and exits at once.
+    lani::daemon::ensure_dirs(&home.path).unwrap();
+    let lock = lani::daemon::ServerLock::try_acquire(&home.path)
+        .unwrap()
+        .unwrap();
+    let exiting = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        drop(lock);
+    });
+    let url = stdout(&lani(&home, &["open", "--no-browser", "--print-url"]));
+    assert!(url.contains("/login?token="), "{url}");
+    exiting.join().unwrap();
+}

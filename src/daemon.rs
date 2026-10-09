@@ -13,7 +13,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,7 @@ impl ServerFile {
 }
 
 /// An exclusive lock on `run/server.lock`, held by the running server for its whole lifetime.
-/// The OS releases it if the server crashes.
+/// The OS releases it however the server ends, so a free lock means no server process is alive.
 pub struct ServerLock {
     _file: File,
 }
@@ -264,8 +264,7 @@ pub fn start_detached(
         // A new process group, so the server survives the terminal or Claude session that
         // started it; the server also ignores SIGHUP.
         .process_group(0);
-    let child = command.spawn()?;
-    wait_until_running(home, child)
+    wait_until_running(home, &mut command)
 }
 
 /// The `lani` binary to start the server from, given this process's [`std::env::current_exe`].
@@ -294,23 +293,29 @@ fn executable_to_run(current: &Path) -> Result<PathBuf> {
     )))
 }
 
-fn wait_until_running(home: &Path, mut child: Child) -> Result<RunningServer> {
+/// Start the server with `command` and wait for it to answer its health check.
+fn wait_until_running(home: &Path, command: &mut Command) -> Result<RunningServer> {
     let deadline = Instant::now() + START_TIMEOUT;
+    let mut child = command.spawn()?;
     loop {
         if let Some(server) = find_running(home) {
             // Reap the child when it eventually exits, so it never lingers as a zombie.
             std::thread::spawn(move || child.wait());
             return Ok(server);
         }
-        if let Some(status) = child.try_wait()?
-            && !status.success()
-        {
-            return Err(Error::Unavailable(format!(
-                "the LANI server exited during startup ({status}); see {}",
-                log_path(home).display()
-            )));
+        match child.try_wait()? {
+            Some(status) if !status.success() => {
+                return Err(Error::Unavailable(format!(
+                    "the LANI server exited during startup ({status}); see {}",
+                    log_path(home).display()
+                )));
+            }
+            // A successful early exit means another server held the lock. If that server was
+            // stopping, the lock comes free with no server running, so start one again.
+            Some(_) if ServerLock::try_acquire(home)?.is_some() => child = command.spawn()?,
+            // Otherwise keep waiting: for this server, or for the one holding the lock.
+            _ => {}
         }
-        // A successful early exit means another server holds the lock; keep waiting for it.
         if Instant::now() >= deadline {
             return Err(Error::Unavailable(format!(
                 "the LANI server did not start within {}s; see {}",
@@ -340,10 +345,13 @@ pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
             "the LANI server refused to stop (HTTP {status})"
         )));
     }
-    // Wait for server.json to go, not just for the health check to fail: the server stops
-    // listening first and removes server.json last, after the rest of its cleanup.
+    // Wait for the server process to end, cleanup and all: the server lock comes free only then,
+    // or when it dies. The health check fails sooner, as soon as the server stops listening.
     let deadline = Instant::now() + STOP_TIMEOUT;
-    while ServerFile::read(home).is_some_and(|file| file.instance_id == server.file.instance_id) {
+    let _lock = loop {
+        if let Some(lock) = ServerLock::try_acquire(home)? {
+            break lock;
+        }
         if Instant::now() >= deadline {
             return Err(Error::Unavailable(format!(
                 "the LANI server (pid {}) did not stop within {}s",
@@ -352,7 +360,11 @@ pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
             )));
         }
         std::thread::sleep(Duration::from_millis(50));
-    }
+    };
+    // A server that died before its cleanup leaves these behind. While this holds the lock, no
+    // other server can be running to own them.
+    ServerFile::remove_if_ours(home, &server.file.instance_id)?;
+    remove_open_files(home, Duration::ZERO);
     Ok(Some(server))
 }
 

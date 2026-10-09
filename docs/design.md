@@ -1070,10 +1070,25 @@ routine:
 
 **Shutdown.** The server shuts down on `POST /api/shutdown`, SIGTERM, SIGINT or idle timeout. In
 every case it removes the browser-launch redirect files, then `server.json` if the file is still
-its own. `lani stop` calls `/api/shutdown` with the bearer token, so no signal-sending code is
-needed. It then waits up to 5 s for `server.json` to go. That happens last, so when `lani stop`
-returns, the cleanup is done. Waiting only for the health check to fail is not enough, because
-the server stops listening before it cleans up; a test caught `lani stop` returning in between.
+its own.
+
+`lani stop` calls `/api/shutdown` with the bearer token, so no signal-sending code is needed.
+Then it waits up to 5 s for the server process to end, by waiting for the server lock to come
+free. The server holds the lock until it exits, and the OS releases it however the process ends.
+So when `lani stop` returns, the cleanup is done, or the process died without it. In the second
+case `lani stop`, still holding the lock, removes the `server.json` and redirect files the server
+left. Two simpler waits were tried and failed:
+
+- **Waiting for the health check to fail** (M2): the server stops listening before it cleans up,
+  and a test caught `lani stop` returning in between.
+- **Waiting for `server.json` to go:** a server that died before removing it made `lani stop`
+  report a 5 s timeout although nothing was running. It also returned while the old process
+  still held the lock, which made a following `lani open` time out.
+
+**Starting while a server is still exiting.** A server that has removed `server.json` but not
+yet exited still holds the lock. If `lani open` starts a server then, the new server finds the
+lock held and exits at once. `lani open` then keeps waiting, and if the lock comes free with no
+server running, it starts the server again.
 
 **Version mismatch.** If the running server's version differs from the caller's, `open` prints a
 warning suggesting `lani stop && lani open`. The MCP tool includes the same warning in its result.
