@@ -43,9 +43,14 @@ There are two phases. Each is useful on its own.
   - The prompt, prefilled and editable. The reviewer's comes from `docs/reviewer-prompt.md`, and
     the implementer's from a new, matching template. Both have the review number, branch, base
     and head filled in.
-  - The directory the session will run in. It is the worktree where the review's branch is
-    checked out, found with `git worktree list --porcelain`. Both roles need that checkout,
-    because `create_issue` checks the file on disk against the commit.
+  - The directory the session will run in. The two roles need different things:
+    - **Implementer:** it edits and commits, so it runs in the worktree where the review's
+      branch is checked out, found with `git worktree list --porcelain`.
+    - **Reviewer:** it only needs a worktree of the repository to run git in, not the branch.
+      With `worktree_path: null`, `create_issue` checks spans against the committed file
+      (`git show <commit>:<path>`). The service's own error already tells a session to do that
+      when the file isn't on disk. The branch's worktree is still the best choice when there is
+      one, because the reviewer can then read the files directly.
 - **Starting.** The server runs this in that directory:
 
   ```
@@ -127,10 +132,11 @@ cookie reaching other loopback ports) serious. Before shipping, then:
 1. **Phases.** Phase A first, then B? Or both together?
 2. **Roles.** Buttons for both roles, or only the reviewer? The implementer edits the checkout of
    the branch, which may be the one you are working in.
-3. **No checkout of the branch.** If the branch isn't checked out anywhere, should LANI refuse,
-   or let Claude Code create a worktree with `-w`? It's not yet checked which branch a `-w`
-   worktree uses. If it makes a new one, the implementer's commits would need to reach the
-   review's branch somehow.
+3. **No checkout of the branch.** This only matters for the implementer; the reviewer can run in
+   any worktree of the repository. If the branch isn't checked out anywhere, should LANI refuse
+   to start an implementer, or let Claude Code create a worktree with `-w`? It's not yet checked
+   which branch a `-w` worktree uses. If it makes a new one, the implementer's commits would need
+   to reach the review's branch somehow.
 4. **Permission mode.** Claude Code's default, where prompts wait until you attach? Or
    `acceptEdits` for the implementer, so it can edit files without asking but still asks before
    running commands?
