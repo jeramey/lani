@@ -368,9 +368,20 @@ fn status(print_url: bool) -> anyhow::Result<()> {
 
 fn stop() -> anyhow::Result<()> {
     let home = home()?;
-    match daemon::stop(&home)? {
-        Some(server) => println!("Stopped the LANI server (pid {}).", server.health.pid),
-        None => println!("No LANI server is running."),
+    let Some(stopped) = daemon::stop(&home)? else {
+        println!("No LANI server is running.");
+        return Ok(());
+    };
+    println!(
+        "Stopped the LANI server (pid {}).",
+        stopped.server.health.pid
+    );
+    if let Some(successor) = stopped.successor {
+        println!(
+            "Meanwhile another command started a new LANI server (pid {}, port {}); it is still \
+             running.",
+            successor.health.pid, successor.health.port
+        );
     }
     Ok(())
 }

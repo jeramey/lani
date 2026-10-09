@@ -327,9 +327,18 @@ fn wait_until_running(home: &Path, command: &mut Command) -> Result<RunningServe
     }
 }
 
+/// What `stop` stopped.
+#[derive(Clone, Debug)]
+pub struct Stopped {
+    pub server: RunningServer,
+    /// A server that another command, such as `lani open`, started as this one ended. It took
+    /// the lock first, and it is left running.
+    pub successor: Option<RunningServer>,
+}
+
 /// Ask the running server to stop and wait for it to go away.
-/// Returns the server that was stopped, or `None` if none was running.
-pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
+/// Returns what was stopped, or `None` if no server was running.
+pub fn stop(home: &Path) -> Result<Option<Stopped>> {
     let Some(server) = find_running(home) else {
         return Ok(None);
     };
@@ -352,6 +361,16 @@ pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
         if let Some(lock) = ServerLock::try_acquire(home)? {
             break lock;
         }
+        // Another server answering means it holds the lock, so this one has ended, and its
+        // cleanup is done: the successor took over server.json.
+        if let Some(successor) = find_running(home)
+            && successor.file.instance_id != server.file.instance_id
+        {
+            return Ok(Some(Stopped {
+                server,
+                successor: Some(successor),
+            }));
+        }
         if Instant::now() >= deadline {
             return Err(Error::Unavailable(format!(
                 "the LANI server (pid {}) did not stop within {}s",
@@ -365,7 +384,10 @@ pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
     // other server can be running to own them.
     ServerFile::remove_if_ours(home, &server.file.instance_id)?;
     remove_open_files(home, Duration::ZERO);
-    Ok(Some(server))
+    Ok(Some(Stopped {
+        server,
+        successor: None,
+    }))
 }
 
 /// Open `next` in the browser. The login URL is written to a private redirect file and the

@@ -1089,7 +1089,9 @@ Then it waits up to 5 s for the server process to end, by waiting for the server
 free. The server holds the lock until it exits, and the OS releases it however the process ends.
 So when `lani stop` returns, the cleanup is done, or the process died without it. In the second
 case `lani stop`, still holding the lock, removes the `server.json` and redirect files the server
-left. Two simpler waits were tried and failed:
+left. A server that another command started meanwhile, such as `lani open` or `open_web_ui`, may
+take the lock first. `lani stop` then sees a different instance answering in `server.json`, which
+proves the old process has ended. It reports the new server and leaves it running. Two simpler waits were tried and failed:
 
 - **Waiting for the health check to fail** (M2): the server stops listening before it cleans up,
   and a test caught `lani stop` returning in between.
