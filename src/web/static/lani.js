@@ -266,19 +266,40 @@
     }
   }
 
-  // A link marked data-in-place, such as the Activity section's Show more, changes what the page
-  // shows, not where it is. The page takes the link's URL and refreshes its parts in place, as
-  // for a live change, so nothing written elsewhere on it is lost. Without this script it is a
-  // plain link.
+  // The data-in-place link to focus once the refresh is done: its key, and the part it was in.
+  let refocus = null;
+
+  // A link marked data-in-place, such as the Activity section's Next, changes what the page
+  // shows, not where it is. The page takes the link's path and query, keeps its own hash, and
+  // refreshes its parts in place, as for a live change, so nothing written elsewhere on it is
+  // lost. Without this script it is a plain link.
   document.addEventListener("click", (event) => {
     const link = event.target.closest("a[data-in-place]");
     if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
     event.preventDefault();
+    // A link used from the keyboard has the focus, and the refresh replaces it; its counterpart
+    // gets the focus back. A mouse click doesn't focus a link in Safari, so it is left alone.
+    const part = link.closest("[data-live][id]");
+    refocus = document.activeElement === link && part ? { key: link.dataset.inPlace, part: part.id } : null;
     history.replaceState(null, "", link.pathname + link.search + location.hash);
     refresh();
   });
+
+  function restoreFocus() {
+    if (!refocus) {
+      return;
+    }
+    const part = document.getElementById(refocus.part);
+    const links = part ? Array.from(part.querySelectorAll("a[data-in-place]")) : [];
+    // The same link if it is still there, such as Next; otherwise the part's first one.
+    const target = links.find((link) => link.dataset.inPlace === refocus.key) || links[0];
+    refocus = null;
+    if (target) {
+      target.focus();
+    }
+  }
 
   // Refreshes run one at a time; a change announced during one starts another after it.
   let refreshing = false;
@@ -309,6 +330,7 @@
         update(latest);
         clearNotice("refresh");
       } while (refreshAgain);
+      restoreFocus();
     } catch (error) {
       showNotice(
         "refresh",

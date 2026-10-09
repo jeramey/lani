@@ -279,7 +279,9 @@ figure.code tr.hl { background: var(--highlight); }
 
 .timeline li { padding: 3px 0; font-size: 14px; }
 .timeline .when { color: var(--muted); font-size: 13px; margin-right: 6px; }
-.more-activity { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.activity-pages { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.activity-pages .per-page { margin-left: auto; }
+.new-events { margin: 0 0 8px; }
 
 .message { max-width: 720px; }
 .message-text { white-space: pre-wrap; }

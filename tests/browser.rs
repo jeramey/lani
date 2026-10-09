@@ -232,7 +232,7 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     the_hand_off_history_stays_open_while_the_turn_changes(&browser, &mut service, review_id);
     a_failed_refresh_is_reported_until_one_succeeds(&browser, &mut service, review_id);
     a_draft_is_kept_while_the_rest_of_the_page_changes(&browser, &mut service, review_id);
-    more_activity_loads_in_place(&browser, &mut service, review_id);
+    activity_pages_in_place(&browser, &mut service, review_id);
     a_selection_survives_its_table_being_replaced(&browser, &fixture, &mut service);
     browser.assert_no_problems("live updates");
 
@@ -406,35 +406,63 @@ fn a_draft_is_kept_while_the_rest_of_the_page_changes(
     );
 }
 
-fn more_activity_loads_in_place(browser: &WebDriver, service: &mut Service, review_id: i64) {
-    while service.list_events(review_id).unwrap().len() < 25 {
-        service
-            .add_comment(Actor::Reviewer, CommentTarget::Summary(review_id), "Busy.")
-            .unwrap();
-    }
-    let total = service.list_events(review_id).unwrap().len();
+fn activity_pages_in_place(browser: &WebDriver, service: &mut Service, review_id: i64) {
+    let comment_until = |service: &mut Service, count: usize| {
+        while service.list_events(review_id).unwrap().len() < count {
+            service
+                .add_comment(Actor::Reviewer, CommentTarget::Summary(review_id), "Busy.")
+                .unwrap();
+        }
+    };
+    comment_until(service, 25);
     let shown = "document.querySelectorAll('#activity .timeline li').length";
+    let activity = "document.querySelector('#activity').textContent";
     browser.wait_for(
         &format!(
-            "return {IN_PLACE} && {shown} === 10 \
-             && document.querySelector('#activity').textContent.includes('Showing the latest 10 of {total}.');"
+            "return {IN_PLACE} && {shown} === 10 && {activity}.includes('Events 1–10 of 25');"
         ),
         "the latest ten events",
     );
-    // Showing more loads in place: a draft elsewhere on the page stays.
+
+    // Next, from the keyboard: the page changes in place, a draft elsewhere stays, and the focus
+    // moves to the new Next.
     browser.type_text("#new-summary-comment", "Half a thought");
-    browser.click("#activity a[href*='events=20']");
-    browser.wait_for(
-        &format!(
-            "return {IN_PLACE} && {shown} === 20 && location.search.includes('events=20') \
-             && document.querySelector('#new-summary-comment').value === 'Half a thought';"
-        ),
-        "ten more events, in place",
+    browser.run(
+        "const next = document.querySelector('#activity a[data-in-place=\"next\"]'); \
+         next.focus(); next.click(); return true;",
     );
-    browser.click("#activity a[href*='events=all']");
     browser.wait_for(
         &format!(
-            "return {IN_PLACE} && {shown} === {total} && !document.querySelector('.more-activity');"
+            "return {IN_PLACE} && {shown} === 10 && location.search.includes('page=2') \
+             && {activity}.includes('Events 11–20 of 25') \
+             && document.querySelector('#new-summary-comment').value === 'Half a thought' \
+             && document.activeElement.dataset.inPlace === 'next';"
+        ),
+        "page 2, in place, with the focus on Next",
+    );
+
+    // New events don't move the page; a notice says they arrived.
+    comment_until(service, 27);
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {activity}.includes('2 new events since you paged back.') \
+             && {activity}.includes('Events 11–20 of 25');"
+        ),
+        "the new-events notice on an unmoved page",
+    );
+    browser.click("#activity a[data-in-place='new-events']");
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && !location.search.includes('page=') && {shown} === 10 \
+             && {activity}.includes('Events 1–10 of 27') && !document.querySelector('.new-events');"
+        ),
+        "the latest events again",
+    );
+    browser.click("#activity a[data-in-place='per-page-All']");
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && {shown} === 27 \
+             && !document.querySelector('#activity a[data-in-place=\"next\"]');"
         ),
         "all the events",
     );

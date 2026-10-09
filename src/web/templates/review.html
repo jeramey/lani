@@ -119,16 +119,20 @@
 
 <section id="activity" class="panel" data-live>
   <h2>Activity</h2>
+  {% if let Some(notice) = activity.new_events %}
+  <p class="notice new-events">{{ notice }} <a href="{{ activity.latest_url }}" data-in-place="new-events">Show the latest</a></p>
+  {% endif %}
   <ol class="timeline">
     {% for event in activity.events %}
     <li><span class="when">{{ event.when }}</span> <span class="author {{ event.actor.class }}">{{ event.actor.label }}</span> {% if let Some(link) = event.link %}<a href="{{ link }}">{{ event.text }}</a>{% else %}{{ event.text }}{% endif %}</li>
     {% endfor %}
   </ol>
-  {% if let Some(more) = activity.more %}
-  <div class="more-activity">
-    <span class="muted small">Showing the latest {{ activity.events.len() }} of {{ activity.total }}.</span>
-    <a class="button secondary" href="{{ more.more_url }}" data-in-place>Show {{ more.step }} more</a>
-    <a class="button secondary" href="{{ more.all_url }}" data-in-place>Show all</a>
+  {% if let Some(position) = activity.position %}
+  <div class="activity-pages">
+    <span class="muted small">{{ position }}</span>
+    {% for link in activity.links %}<a class="button secondary" href="{{ link.url }}" data-in-place="{{ link.key }}">{{ link.label }}</a>
+    {% endfor %}
+    <span class="per-page muted small">Per page:{% for size in activity.sizes %} {% if let Some(url) = size.url %}<a href="{{ url }}" data-in-place="per-page-{{ size.label }}">{{ size.label }}</a>{% else %}<strong>{{ size.label }}</strong>{% endif %}{% endfor %}</span>
   </div>
   {% endif %}
 </section>

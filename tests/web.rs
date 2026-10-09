@@ -1820,73 +1820,142 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     assert!(!page.contains("Waiting for:"), "{page}");
 }
 
-#[tokio::test]
-async fn activity_shows_the_latest_ten_events_with_links_to_more_and_all() {
-    let f = fixture();
+/// Add summary comments as the human until review `review_id` has `count` events; returns the
+/// latest event's id.
+async fn grow_activity(f: &Fixture, count: usize) -> i64 {
     let review_id = f.review_id;
-    let total = f
-        .state
+    f.state
         .call(move |service| {
-            while service.list_events(review_id)?.len() < 23 {
+            while service.list_events(review_id)?.len() < count {
                 service.add_comment(Actor::Human, CommentTarget::Summary(review_id), "More.")?;
             }
-            Ok(service.list_events(review_id)?.len())
+            service.latest_event_id(review_id)
         })
         .await
-        .unwrap();
-    assert_eq!(total, 23);
+        .unwrap()
+}
+
+#[tokio::test]
+async fn activity_pages_through_events_and_stays_put_while_new_ones_arrive() {
+    let f = fixture();
+    let latest = grow_activity(&f, 23).await;
+    let url = format!("/reviews/{}", f.review_id);
     let activity =
         |page: &str| page[page.find("<section id=\"activity\"").expect(page)..].to_string();
     let shown = |section: &str| section.matches("<li><span class=\"when\">").count();
-    let url = format!("/reviews/{review_id}");
+    let link = |key: &str, query: &str, label: &str| {
+        format!("href=\"{url}?status=open{query}#activity\" data-in-place=\"{key}\">{label}</a>")
+    };
 
+    // The latest page.
     let (_, _, page) = send(&f.app, get(&url)).await;
     let section = activity(&page);
-    assert_eq!(shown(&section), 10, "{section}");
+    assert_eq!(shown(&section), 10);
     assert!(
-        section.contains("Showing the latest 10 of 23."),
+        section.contains("Events 1–10 of 23 · page 1 of 3"),
+        "{section}"
+    );
+    let next = link(
+        "next",
+        &format!("&#38;page=2&#38;latest={latest}"),
+        "Next 10",
+    );
+    assert!(section.contains(&next), "paging back anchors: {section}");
+    assert!(!section.contains("Previous") && !section.contains(">Latest<"));
+    assert!(
+        section.contains("<strong>10</strong>")
+            && section.contains(&format!(
+                "href=\"{url}?status=open&#38;events=25#activity\""
+            ))
+            && section.contains(&format!(
+                "href=\"{url}?status=open&#38;events=all#activity\""
+            )),
+        "{section}"
+    );
+
+    // Page 2 is anchored: two new events don't move it, and a notice says they arrived.
+    let page_2 = format!("{url}?page=2&latest={latest}");
+    let (_, _, before) = send(&f.app, get(&page_2)).await;
+    grow_activity(&f, 25).await;
+    let (_, _, page) = send(&f.app, get(&page_2)).await;
+    let section = activity(&page);
+    assert_eq!(shown(&section), 10);
+    let events = |section: &str| {
+        let list = &section[section.find("<ol class=\"timeline\">").unwrap()..];
+        list[..list.find("</ol>").unwrap()].to_string()
+    };
+    assert_eq!(
+        events(&activity(&before)),
+        events(&section),
+        "the same events as before they arrived"
+    );
+    assert!(
+        section.contains("Events 11–20 of 23 · page 2 of 3"),
         "{section}"
     );
     assert!(
         section.contains(&format!(
-            "<a class=\"button secondary\" href=\"{url}?status=open&#38;events=20#activity\" data-in-place>Show 10 more</a>"
-        )) && section.contains(&format!(
-            "href=\"{url}?status=open&#38;events=all#activity\" data-in-place>Show all</a>"
+            "2 new events since you paged back. <a href=\"{url}?status=open#activity\""
         )),
         "{section}"
     );
     assert!(
-        !section.contains("started the review"),
-        "the oldest is left out"
+        section.contains(&link("previous", "", "Previous 10")),
+        "{section}"
     );
-
-    // Further on, the last step adds only what is left; the issue filter is kept.
-    let (_, _, page) = send(&f.app, get(&format!("{url}?status=all&events=20"))).await;
-    let section = activity(&page);
-    assert_eq!(shown(&section), 20);
     assert!(
-        section.contains(&format!(
-            "href=\"{url}?status=all&#38;events=23#activity\" data-in-place>Show 3 more</a>"
+        section.contains(&link(
+            "next",
+            &format!("&#38;page=3&#38;latest={latest}"),
+            "Next 3"
         )),
         "{section}"
     );
     assert!(
         page.contains(&format!(
-            "href=\"{url}?status=resolved&#38;events=20#issues\""
+            "href=\"{url}?status=resolved&#38;page=2&#38;latest={latest}#issues\""
         )),
-        "the issue filters keep the number of events"
+        "the issue filters keep the page"
     );
 
+    // The last page; a bigger page size keeps the anchor and shows the first event shown now.
+    let (_, _, page) = send(&f.app, get(&format!("{url}?page=3&latest={latest}"))).await;
+    let section = activity(&page);
+    assert_eq!(shown(&section), 3);
+    assert!(section.contains("started the review") && !section.contains("Next"));
+    assert!(section.contains(&link("latest", "", "Latest")), "{section}");
+    assert!(
+        section.contains(&format!(
+            "href=\"{url}?status=open&#38;events=25&#38;latest={latest}#activity\""
+        )),
+        "{section}"
+    );
+
+    // All, without an anchor, shows every event, the new ones too.
     let (_, _, page) = send(&f.app, get(&format!("{url}?events=all"))).await;
     let section = activity(&page);
-    assert_eq!(shown(&section), 23);
-    assert!(section.contains("started the review"), "{section}");
-    assert!(!section.contains("more-activity"), "nothing left to show");
+    assert_eq!(shown(&section), 25);
+    assert!(!section.contains("Next") && section.contains("<strong>All</strong>"));
+}
 
-    for bad in ["0", "ten", "+5", "-1"] {
-        let (status, _, body) = send(&f.app, get(&format!("{url}?events={bad}"))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
-        assert!(body.contains("not a number of events"), "{body}");
+#[tokio::test]
+async fn activity_page_values_are_checked() {
+    let f = fixture();
+    let latest = grow_activity(&f, 23).await;
+    let url = format!("/reviews/{}", f.review_id);
+    let (status, _, _) = send(&f.app, get(&format!("{url}?events="))).await;
+    assert_eq!(status, StatusCode::OK, "an empty value means the default");
+    for bad in [
+        "events=7",
+        "events=ten",
+        "page=0",
+        "page=%2B2",
+        "latest=abc",
+        "events=all&page=2",
+        &format!("page=4&latest={latest}"),
+    ] {
+        let (status, _, body) = send(&f.app, get(&format!("{url}?{bad}"))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
     }
 }
 

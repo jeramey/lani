@@ -5,6 +5,7 @@
 //! the new-issue form to the code views, and keeps review pages up to date (§13.5).
 
 mod actions;
+mod activity;
 mod auth;
 mod code;
 mod live;

@@ -1216,7 +1216,7 @@ server's token protects it from other users of your machine as it does locally.
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; **activity timeline**, newest first: the latest 10 events, then *Show 10 more* and *Show all* while any are left out (`?events=<n>` or `?events=all`; the issue filter links keep it). Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
+| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
@@ -1239,6 +1239,23 @@ back to the page (303 See Other); live updates then refresh other open pages (§
 - Update settings: the idle timeout, and the round limit (`POST /settings/round-limit`).
 - Render a Markdown preview (`POST /preview`, which returns an HTML fragment for an editor's
   *Preview* tab).
+
+**The activity timeline** (overview) shows a review's events in pages, newest first.
+
+- **Pages.** There are 10 events per page by default, and the page size can be set to 25, 50,
+  100 or all. Links lead to the *Previous* and *Next* pages, and to the *Latest*. A line says
+  which events the page shows, as in "Events 11–20 of 57 · page 2 of 6".
+- **The latest page moves.** Page 1 always shows the newest events: new ones push the oldest
+  shown onto page 2.
+- **Paged-back pages stay put.** Paging back anchors the pages at the review's latest event at
+  that moment, so they don't move while new events arrive. A notice then says how many arrived,
+  with a link to the latest. *Previous* from page 2 leads back to the latest, without an anchor.
+- **In the URL.** The page is in the overview's query: `events` (10, 25, 50, 100 or `all`), `page`
+  (from 1) and `latest` (the anchor event). Defaults are left out. The links work without
+  JavaScript, a reload or a live update keeps the page, and the issue filter links keep it too.
+  Other values get a 400 page, as does a page past the last.
+- **Consistency.** The events and their counts are read in one read transaction, so they agree
+  while sessions write.
 
 ### 13.4 Interactions
 
@@ -1311,10 +1328,16 @@ work on the review.
   differ are replaced, and a code view's line selection is restored from the URL afterwards. A
   `<details>` with an id that the reader opened, such as the earlier hand-offs, stays open in the
   replacement. If the fetch fails, a notice says so until a later refresh succeeds.
-- **Links that refresh in place.** A link marked `data-in-place`, such as *Show 10 more* in the
-  activity timeline, changes only what the page shows. `lani.js` puts the link's URL in the
-  address bar (`history.replaceState`) and refreshes the page's parts as for a live change, so a
-  draft elsewhere on the page is kept. Without the script, it is a plain link.
+- **Links that refresh in place.** A link marked `data-in-place`, such as *Next* in the activity
+  timeline (§13.3), changes only what the page shows.
+  - `lani.js` puts the link's path and query in the address bar with `history.replaceState`. It
+    keeps the page's own hash and scroll position.
+  - It then refreshes the page's parts as for a live change, so a draft elsewhere on the page is
+    kept.
+  - A link activated from the keyboard has the focus, and the refresh replaces it. Focus then
+    moves to the link with the same `data-in-place` key in the new page, or to the part's first
+    such link.
+  - Without the script, it is a plain link to the URL, hash and all.
 - **Added and removed parts.** Parts are only replaced, never added or removed. If a refresh finds
   that parts were added or removed (a commit changed which files the diff covers), the page asks
   for a reload instead of placing them.
@@ -1709,7 +1732,12 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     - A line selection survives its table being replaced.
     - The page shows the stop notice. A page whose server is killed says it cannot be reached.
     - The Changes view asks for a reload when a commit adds a file to the diff.
-    - Turning off editor protection, or the selection restore, fails the test.
+    - The activity timeline pages in place. *Next*, activated from the keyboard, keeps a draft
+      elsewhere on the page, and the focus moves to the new *Next*. New events leave a paged-back
+      page put and show the new-events notice, whose link goes back to the latest. *All* shows
+      every event.
+    - Turning off editor protection, the selection restore, the in-place links or the focus
+      restore fails the test.
 - **Process:** the built binary.
   - `open --no-browser --print-url` starts a server, and a second call reuses it.
   - `stop` shuts it down.

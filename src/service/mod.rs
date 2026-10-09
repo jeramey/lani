@@ -82,11 +82,32 @@ pub struct SpanRequest<'a> {
     pub start_line_text: Option<&'a str>,
 }
 
-/// Part of a review's activity: the latest events, newest first, out of `total`.
+/// Which page of a review's activity to show (§13.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActivityRequest {
+    /// Events per page; `None` for all on one page.
+    pub per_page: Option<u32>,
+    /// The page, from 1, the newest.
+    pub page: u32,
+    /// The review's latest event when the reader paged back. Pages count back from it, so they
+    /// stay put while new events arrive; `None` counts from the latest event, so page 1 always
+    /// shows the newest.
+    pub anchor: Option<i64>,
+}
+
+/// A page of a review's activity, newest first.
 #[derive(Clone, Debug)]
-pub struct Activity {
+pub struct ActivityPage {
     pub events: Vec<Event>,
+    /// How many newer events the pages before this one hold.
+    pub offset: u64,
+    /// How many events the pages cover: those up to the anchor, or all of them.
     pub total: u64,
+    /// Events after the anchor, which no page shows until the reader returns to the latest; 0
+    /// without an anchor.
+    pub newer: u64,
+    /// The review's latest event, the anchor for paging back from a page without one.
+    pub latest_id: i64,
 }
 
 /// The result of handing a review on.
@@ -1157,15 +1178,58 @@ impl Service {
 
     /// All of a review's events, newest first.
     pub fn list_events(&self, review_id: i64) -> Result<Vec<Event>> {
-        store::list_events(&self.conn, review_id, None)
+        store::list_events(
+            &self.conn,
+            review_id,
+            store::EventPage {
+                upto: None,
+                offset: 0,
+                limit: None,
+            },
+        )
     }
 
-    /// A review's most recent activity, newest first: the latest `limit` events, or all of them
-    /// for `None`, with how many there are in all.
-    pub fn activity(&self, review_id: i64, limit: Option<u32>) -> Result<Activity> {
-        Ok(Activity {
-            events: store::list_events(&self.conn, review_id, limit)?,
-            total: store::count_events(&self.conn, review_id)?,
+    /// A page of a review's activity. Fails with `Invalid` for a page past the last.
+    pub fn activity(&self, review_id: i64, request: ActivityRequest) -> Result<ActivityPage> {
+        // One read transaction, so the events and the counts agree although other processes
+        // write meanwhile.
+        let tx = self.conn.unchecked_transaction()?;
+        let latest_id = store::latest_event_id(&tx, review_id)?
+            .ok_or_else(|| Error::NotFound(format!("review {review_id} does not exist")))?;
+        let upto = request.anchor.unwrap_or(latest_id);
+        let total = store::count_events(&tx, review_id, upto, false)?;
+        let newer = match request.anchor {
+            Some(anchor) => store::count_events(&tx, review_id, anchor, true)?,
+            None => 0,
+        };
+        let pages = request
+            .per_page
+            .map_or(1, |per_page| total.div_ceil(u64::from(per_page)).max(1));
+        if u64::from(request.page) > pages {
+            return Err(Error::Invalid(format!(
+                "page {} is past the last page of events ({pages})",
+                request.page
+            )));
+        }
+        let offset = request.per_page.map_or(0, |per_page| {
+            u64::from(request.page.saturating_sub(1)) * u64::from(per_page)
+        });
+        let events = store::list_events(
+            &tx,
+            review_id,
+            store::EventPage {
+                upto: Some(upto),
+                offset,
+                limit: request.per_page,
+            },
+        )?;
+        tx.commit()?;
+        Ok(ActivityPage {
+            events,
+            offset,
+            total,
+            newer,
+            latest_id,
         })
     }
 

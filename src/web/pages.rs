@@ -10,8 +10,9 @@ use axum::response::{Html, IntoResponse, Redirect};
 use serde::Deserialize;
 
 use super::AppState;
+use super::activity::{self, ActivityView};
 use super::views::{
-    self, AuthorView, CommentView, EventView, FilterLink, IssueRow, Live, PageError, ReviewHeader,
+    self, AuthorView, CommentView, FilterLink, IssueRow, Live, PageError, ReviewHeader,
     SeverityOption, SeverityView, SpanView, author, review_url,
 };
 use crate::daemon::{self, Health};
@@ -25,16 +26,17 @@ pub struct StatusQuery {
     status: Option<String>,
 }
 
-/// The overview's query: the issue filter, and how many events the Activity section shows.
+/// The overview's query: the issue filter, and the page of the Activity section (§13.3).
 #[derive(Deserialize)]
 pub struct ReviewQuery {
     status: Option<String>,
-    /// A whole number, or `all`; [`ACTIVITY_SHOWN`] when absent (§13.3).
+    /// Events per page: 10, 25, 50, 100 or `all`.
     events: Option<String>,
+    /// The page of events, from 1, the newest.
+    page: Option<String>,
+    /// The event the pages are anchored at.
+    latest: Option<String>,
 }
-
-/// How many events the Activity section shows at first, and how many more each *Show more* adds.
-const ACTIVITY_SHOWN: u32 = 10;
 
 // ── review list ──────────────────────────────────────────────────────────────────────────────
 
@@ -170,28 +172,17 @@ struct ReviewPage {
     activity: ActivityView,
 }
 
-/// The overview's Activity section: the latest events, and links that show more when some are
-/// left out.
-struct ActivityView {
-    events: Vec<EventView>,
-    total: u64,
-    more: Option<MoreActivity>,
-}
-
-struct MoreActivity {
-    /// How many events *Show more* adds: [`ACTIVITY_SHOWN`], or fewer at the end.
-    step: u64,
-    more_url: String,
-    all_url: String,
-}
-
 /// `GET /reviews/{id}`: summary, conversation, issues and activity.
 pub async fn review(
     State(state): State<AppState>,
     Path(review_id): Path<i64>,
     Query(query): Query<ReviewQuery>,
 ) -> Result<Html<String>, PageError> {
-    let shown = activity_limit(query.events.as_deref())?;
+    let request = activity::request(
+        query.events.as_deref(),
+        query.page.as_deref(),
+        query.latest.as_deref(),
+    )?;
     let (status, active, issues_empty) = match query.status.as_deref() {
         None | Some("open") => (Some(IssueStatus::Open), "open", "No open issues."),
         Some("resolved") => (
@@ -207,7 +198,7 @@ pub async fn review(
             let events_after = service.latest_event_id(review_id)?;
             let detail = service.get_review(review_id, None)?;
             let issues = service.list_issues(review_id, status, None, false)?;
-            let activity = service.activity(review_id, shown)?;
+            let activity = service.activity(review_id, request)?;
             let candidates = if detail.view.review.status == ReviewStatus::Open
                 && detail.view.repo_unavailable.is_none()
             {
@@ -229,7 +220,7 @@ pub async fn review(
     .into_iter()
     .map(|(label, value)| FilterLink {
         label,
-        url: overview_url(review_id, value, shown, "issues"),
+        url: activity::overview_url(review_id, value, request, "issues"),
         active: value == active,
     })
     .collect();
@@ -266,63 +257,9 @@ pub async fn review(
         },
         issues_empty,
         base_options,
-        activity: activity_view(review_id, active, &activity),
+        activity: activity::view(review_id, active, request, &activity),
     };
     Ok(Html(page.render()?))
-}
-
-/// The `events` query value: how many of the latest events to show, or `None` for all.
-fn activity_limit(events: Option<&str>) -> Result<Option<u32>, PageError> {
-    let Some(events) = events else {
-        return Ok(Some(ACTIVITY_SHOWN));
-    };
-    if events == "all" {
-        return Ok(None);
-    }
-    match events.parse::<u32>() {
-        Ok(count) if count > 0 && events.bytes().all(|byte| byte.is_ascii_digit()) => {
-            Ok(Some(count))
-        }
-        _ => Err(PageError::new(
-            StatusCode::BAD_REQUEST,
-            "Unknown number of events",
-            &format!("{events:?} is not a number of events to show; use a whole number or all."),
-        )),
-    }
-}
-
-/// The overview's URL with an issue filter and a number of events (`None` for all), at `anchor`.
-/// The number is left out when it is the default.
-fn overview_url(review_id: i64, status: &str, events: Option<u32>, anchor: &str) -> String {
-    let events = match events {
-        Some(ACTIVITY_SHOWN) => String::new(),
-        Some(count) => format!("&events={count}"),
-        None => "&events=all".to_string(),
-    };
-    format!("{}?status={status}{events}#{anchor}", review_url(review_id))
-}
-
-fn activity_view(
-    review_id: i64,
-    status: &str,
-    activity: &crate::service::Activity,
-) -> ActivityView {
-    let shown = u64::try_from(activity.events.len()).unwrap_or(u64::MAX);
-    let left_out = activity.total.saturating_sub(shown);
-    let more = (left_out > 0).then(|| {
-        let step = left_out.min(u64::from(ACTIVITY_SHOWN));
-        let next = u32::try_from(shown + step).unwrap_or(u32::MAX);
-        MoreActivity {
-            step,
-            more_url: overview_url(review_id, status, Some(next), "activity"),
-            all_url: overview_url(review_id, status, None, "activity"),
-        }
-    });
-    ActivityView {
-        events: activity.events.iter().map(views::event).collect(),
-        total: activity.total,
-        more,
-    }
 }
 
 // ── issue ────────────────────────────────────────────────────────────────────────────────────

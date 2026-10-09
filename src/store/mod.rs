@@ -663,21 +663,37 @@ pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>>
 }
 
 /// A review's events, newest first: the latest `limit`, or all of them for `None`.
-pub fn list_events(conn: &Connection, review_id: i64, limit: Option<u32>) -> Result<Vec<Event>> {
+/// Which of a review's events to list, newest first.
+#[derive(Clone, Copy, Debug)]
+pub struct EventPage {
+    /// Only events up to this id; `None` for all.
+    pub upto: Option<i64>,
+    /// Skip this many of the newest of those.
+    pub offset: u64,
+    /// At most this many; `None` for all.
+    pub limit: Option<u32>,
+}
+
+/// A review's events, newest first, as `page` selects them.
+pub fn list_events(conn: &Connection, review_id: i64, page: EventPage) -> Result<Vec<Event>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT {EVENT_COLUMNS} FROM event WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2"
+        "SELECT {EVENT_COLUMNS} FROM event WHERE review_id = ?1 AND id <= ?2
+         ORDER BY id DESC LIMIT ?3 OFFSET ?4"
     ))?;
+    let upto = page.upto.unwrap_or(i64::MAX);
     // A negative LIMIT means no limit.
-    let limit = limit.map_or(-1, i64::from);
-    let rows = statement.query_map(params![review_id, limit], event_from_row)?;
+    let limit = page.limit.map_or(-1, i64::from);
+    let offset = i64::try_from(page.offset).unwrap_or(i64::MAX);
+    let rows = statement.query_map(params![review_id, upto, limit, offset], event_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// How many events a review has.
-pub fn count_events(conn: &Connection, review_id: i64) -> Result<u64> {
+/// How many of a review's events have ids up to `upto`, or after `upto` when `after` is true.
+pub fn count_events(conn: &Connection, review_id: i64, upto: i64, after: bool) -> Result<u64> {
+    let comparison = if after { ">" } else { "<=" };
     Ok(conn.query_row(
-        "SELECT count(*) FROM event WHERE review_id = ?1",
-        [review_id],
+        &format!("SELECT count(*) FROM event WHERE review_id = ?1 AND id {comparison} ?2"),
+        params![review_id, upto],
         |row| {
             let count: i64 = row.get(0)?;
             u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count))
