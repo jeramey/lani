@@ -466,7 +466,9 @@ pub struct IssueRow {
     pub outdated: Option<&'static str>,
     pub title: String,
     pub severity: SeverityView,
-    pub comments: String,
+    /// "No replies", "1 reply" or "N replies".
+    pub replies: String,
+    /// Who wrote the last reply, if there is one.
     pub last_author: Option<AuthorView>,
     /// Whether a question about this issue is waiting for the human.
     pub needs_you: bool,
@@ -486,6 +488,8 @@ pub struct RoleLight {
 #[must_use]
 pub fn issue_row(view: &IssueView) -> IssueRow {
     let issue = &view.issue;
+    // The first comment is the issue's description, written by its creator; the rest are replies.
+    let replies = view.comments.get(1..).unwrap_or_default();
     let mut location = view
         .spans()
         .next()
@@ -534,23 +538,22 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
         title: issue.title.clone(),
         severity: severity(issue.severity),
         needs_you: issue.asked_by.is_some(),
-        comments: match view.comments.len() {
-            1 => "1 comment".to_string(),
-            count => format!("{count} comments"),
+        replies: match replies.len() {
+            0 => "No replies".to_string(),
+            1 => "1 reply".to_string(),
+            count => format!("{count} replies"),
         },
-        last_author: view.comments.last().map(|comment| author(comment.author)),
-        lights: role_lights(view),
+        last_author: replies.last().map(|comment| author(comment.author)),
+        lights: role_lights(issue.author, replies),
     }
 }
 
-fn role_lights(view: &IssueView) -> [RoleLight; 3] {
+/// The lights for an issue opened by `creator`, with `replies` after its description.
+fn role_lights(creator: Actor, replies: &[Comment]) -> [RoleLight; 3] {
     [Actor::Reviewer, Actor::Human, Actor::Implementer].map(|role| {
-        let created = view.issue.author == role;
-        // The first comment is the issue's description, written by its creator.
-        let comments = view
-            .comments
+        let created = creator == role;
+        let comments = replies
             .iter()
-            .skip(1)
             .filter(|comment| comment.author == role)
             .count();
         let status = match (created, comments) {

@@ -2106,10 +2106,15 @@ fn role_lights(page: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
+async fn issue_rows_count_replies_and_light_up_for_each_role_that_created_or_commented() {
     let f = fixture();
     let url = format!("/reviews/{}", f.review_id);
     let (_, _, overview) = send(&f.app, get(&url)).await;
+    // The description is not a reply.
+    assert!(
+        overview.contains("<p class=\"meta\">No replies</p>"),
+        "{overview}"
+    );
     assert_eq!(
         role_lights(&overview),
         [
@@ -2136,6 +2141,13 @@ async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
         .await
         .unwrap();
     let (_, _, overview) = send(&f.app, get(&url)).await;
+    assert!(
+        overview.contains(
+            "<p class=\"meta\">4 replies · last by \
+             <span class=\"author author-reviewer\">Claude · reviewer</span></p>"
+        ),
+        "{overview}"
+    );
     assert_eq!(
         role_lights(&overview),
         [
