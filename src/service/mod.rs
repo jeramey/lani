@@ -173,6 +173,8 @@ pub struct ReviewDetail {
     pub view: ReviewView,
     pub summary_comments: Vec<Comment>,
     pub worktree: Option<WorktreeReport>,
+    /// Every change of turn, with its note, newest first. The newest is the current turn.
+    pub hand_offs: Vec<Event>,
 }
 
 #[derive(Clone, Debug)]
@@ -402,6 +404,7 @@ impl Service {
         };
         Ok(ReviewDetail {
             summary_comments: store::summary_comments(&self.conn, review_id)?,
+            hand_offs: store::list_hand_offs(&self.conn, review_id)?,
             view,
             worktree,
         })

@@ -1806,6 +1806,13 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     assert_eq!(location(&headers), review_url);
     let (_, _, page) = send(&f.app, get(&review_url)).await;
     assert!(page.contains("author-reviewer\">Claude · reviewer</span> <span class=\"muted small\">· handed over by you"), "{page}");
+    // The reviewer's note stays readable, compactly, under the new one.
+    let history = &page[page.find("<details class=\"hand-offs\"").expect(&page)..];
+    assert!(
+        history.contains("<summary>Earlier hand-offs (1)</summary>")
+            && history.contains("Please <strong>fix</strong> issue 1."),
+        "{history}"
+    );
     let (status, _, _) = send(&f.app, post(&turn, "to=human")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     send(&f.app, post(&turn, "to=nobody")).await;

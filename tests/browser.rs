@@ -229,6 +229,7 @@ fn live_updates_refresh_the_page_but_never_an_open_editor() {
     browser.run("window.laniSamePage = true; return true;");
     let mut service = fixture.service();
     changes_arrive_in_place(&browser, &mut service, review_id);
+    the_hand_off_history_stays_open_while_the_turn_changes(&browser, &mut service, review_id);
     a_failed_refresh_is_reported_until_one_succeeds(&browser, &mut service, review_id);
     a_draft_is_kept_while_the_rest_of_the_page_changes(&browser, &mut service, review_id);
     a_selection_survives_its_table_being_replaced(&browser, &fixture, &mut service);
@@ -266,6 +267,47 @@ fn changes_arrive_in_place(browser: &WebDriver, service: &mut Service, review_id
              && document.querySelector('#review-head .turn').textContent.includes('Claude · reviewer');"
         ),
         "the comment and the turn, in place",
+    );
+}
+
+fn the_hand_off_history_stays_open_while_the_turn_changes(
+    browser: &WebDriver,
+    service: &mut Service,
+    review_id: i64,
+) {
+    // The reviewer's first hand-off comes to you; the one before it moves into the history.
+    service
+        .hand_off(
+            Actor::Reviewer,
+            review_id,
+            Some(Actor::Implementer),
+            Some("First findings."),
+        )
+        .unwrap();
+    browser.wait_for(
+        &format!(
+            "return {IN_PLACE} && !!document.querySelector('#hand-offs') \
+             && document.querySelector('#review-head .turn').textContent.includes('First findings.');"
+        ),
+        "the history under the new turn",
+    );
+    browser.click("#hand-offs summary");
+    // You hand it on elsewhere: the header is replaced, and the history you opened stays open.
+    service
+        .hand_off(
+            Actor::Human,
+            review_id,
+            Some(Actor::Implementer),
+            Some("Over to you."),
+        )
+        .unwrap();
+    browser.wait_for(
+        &format!(
+            "const history = document.querySelector('#hand-offs'); \
+             return {IN_PLACE} && history.querySelector('summary').textContent === 'Earlier hand-offs (2)' \
+             && history.open && history.textContent.includes('First findings.');"
+        ),
+        "the open history, updated in place",
     );
 }
 

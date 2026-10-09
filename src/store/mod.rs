@@ -22,6 +22,7 @@ use crate::model::{
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0002_baseline.sql"),
     include_str!("migrations/0003_turns.sql"),
+    include_str!("migrations/0004_hand_off_notes.sql"),
 ];
 
 /// The schema version the baseline migration creates. Databases at an earlier version come from
@@ -663,23 +664,38 @@ pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>>
 }
 
 pub fn list_events(conn: &Connection, review_id: i64, limit: u32) -> Result<Vec<Event>> {
-    let mut statement = conn.prepare(
-        "SELECT id, review_id, issue_id, comment_id, kind, actor, turn_to, created_at FROM event
-         WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2",
-    )?;
-    let rows = statement.query_map(params![review_id, limit], |row| {
-        Ok(Event {
-            id: row.get(0)?,
-            review_id: row.get(1)?,
-            issue_id: row.get(2)?,
-            comment_id: row.get(3)?,
-            kind: row.get(4)?,
-            actor: row.get(5)?,
-            turn_to: row.get(6)?,
-            created_at: row.get(7)?,
-        })
-    })?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT {EVENT_COLUMNS} FROM event WHERE review_id = ?1 ORDER BY id DESC LIMIT ?2"
+    ))?;
+    let rows = statement.query_map(params![review_id, limit], event_from_row)?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Every change of a review's turn, with its note, newest first.
+pub fn list_hand_offs(conn: &Connection, review_id: i64) -> Result<Vec<Event>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {EVENT_COLUMNS} FROM event WHERE review_id = ?1 AND kind = 'turn_changed'
+         ORDER BY id DESC"
+    ))?;
+    let rows = statement.query_map([review_id], event_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+const EVENT_COLUMNS: &str =
+    "id, review_id, issue_id, comment_id, kind, actor, turn_to, note, created_at";
+
+fn event_from_row(row: &Row<'_>) -> rusqlite::Result<Event> {
+    Ok(Event {
+        id: row.get(0)?,
+        review_id: row.get(1)?,
+        issue_id: row.get(2)?,
+        comment_id: row.get(3)?,
+        kind: row.get(4)?,
+        actor: row.get(5)?,
+        turn_to: row.get(6)?,
+        note: row.get(7)?,
+        created_at: row.get(8)?,
+    })
 }
 
 // ── turns and questions for the human (§11.5) ─────────────────────────────────────────────────
@@ -710,9 +726,15 @@ pub fn change_turn(conn: &Connection, change: &TurnChange<'_>) -> Result<()> {
         ],
     )?;
     conn.execute(
-        "INSERT INTO event (review_id, issue_id, comment_id, kind, actor, turn_to, created_at)
-         VALUES (?1, NULL, NULL, 'turn_changed', ?2, ?3, ?4)",
-        params![change.review_id, change.by, change.turn, change.now],
+        "INSERT INTO event (review_id, issue_id, comment_id, kind, actor, turn_to, note, created_at)
+         VALUES (?1, NULL, NULL, 'turn_changed', ?2, ?3, ?4, ?5)",
+        params![
+            change.review_id,
+            change.by,
+            change.turn,
+            change.note,
+            change.now
+        ],
     )?;
     Ok(())
 }

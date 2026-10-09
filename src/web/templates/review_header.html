@@ -18,6 +18,19 @@
   {% if let Some(html) = turn.note_html %}<div class="markdown turn-note">{{ html|safe }}</div>{% endif %}
 </div>
 {% endif %}
+{% if !review.hand_offs.is_empty() %}
+<details class="hand-offs" id="hand-offs">
+  <summary>{% if review.turn.is_some() %}Earlier hand-offs{% else %}Hand-offs{% endif %} ({{ review.hand_offs.len() }})</summary>
+  <ol>
+    {% for hand_off in review.hand_offs %}
+    <li>
+      <p class="muted small">{{ hand_off.when }} · <span class="author {{ hand_off.by.class }}">{{ hand_off.by.label }}</span> → {% if let Some(to) = hand_off.to %}<span class="author {{ to.class }}">{{ to.label }}</span>{% else %}nobody{% endif %}{% if hand_off.note_html.is_none() %} · no note{% endif %}</p>
+      {% if let Some(html) = hand_off.note_html %}<div class="markdown turn-note">{{ html|safe }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</details>
+{% endif %}
 {% if !review.questions.is_empty() %}
 <div class="questions">
   <p><strong>Questions for you</strong> <span class="muted small">— reply, resolve or reopen an issue to answer</span></p>

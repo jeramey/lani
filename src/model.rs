@@ -212,6 +212,8 @@ pub struct Event {
     pub actor: Actor,
     /// For `TurnChanged`: who has the turn now; `None` for nobody.
     pub turn_to: Option<Actor>,
+    /// For `TurnChanged`: the note given with the hand-off, if any.
+    pub note: Option<String>,
     pub created_at: String,
 }
 

@@ -341,6 +341,7 @@ CREATE TABLE event (
   actor      TEXT NOT NULL CHECK (actor IN ('human', 'reviewer', 'implementer')),
   turn_to    TEXT CHECK (turn_to IN ('reviewer', 'implementer', 'human')),  -- NULL: nobody
   created_at TEXT NOT NULL,
+  note       TEXT CHECK (kind = 'turn_changed' OR note IS NULL),  -- the hand-off note (migration 4)
   CHECK (kind = 'turn_changed' OR turn_to IS NULL)
 ) STRICT;
 CREATE INDEX event_by_review ON event(review_id, id);
@@ -384,6 +385,10 @@ existing tables need a default or NULL for the rows already there, which is the 
 "no column defaults"; the service still writes every column. The event table gains new kinds,
 and SQLite cannot alter a CHECK constraint in place, so the migration rebuilds that table, keeping
 every row and id.
+
+Migration 4 (`0004_hand_off_notes.sql`) adds `event.note`, so every hand-off keeps its note
+(§11.5). Until then only the latest note was kept, in `review.turn_note`, so the migration gives
+it to each review's latest `turn_changed` event; earlier hand-offs have no note.
 
 A binary that finds `user_version` higher than it knows refuses to open the database and asks you
 to upgrade. A process that is already running, such as the web server or a session's `lani mcp`,
@@ -756,6 +761,11 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   an optional note. The reviewer hands to the implementer after filing or answering issues; the
   implementer hands back after fixing and replying. Turns change only by an explicit hand-off,
   never as a side effect of a comment, because a session is often mid-pass.
+  - **Every note is kept.** Each hand-off records its note on its `turn_changed` event, so a
+    later hand-off doesn't erase it. This matters most for the reviewer's first findings: they
+    come to you, and your hand-off to the implementer carries your own note, but the reviewer's
+    stays readable. Every role can read the history: `get_review` lists the earlier hand-offs
+    with their notes, newest first, after the current one.
   - The reviewer and the implementer hand on a review only when it is their turn or nobody's, and
     only to the other role or to you.
   - You hand it to either role, or to nobody, from the review page. Handing it to a role starts
@@ -789,6 +799,8 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   - the review list marks reviews that need you;
   - every review page shows the turn, with the note, and lists the questions as links to their
     issues;
+  - the overview has a collapsed *Earlier hand-offs (N)* line under the turn, which opens to the
+    earlier hand-offs, newest first, each with its note;
   - issue rows, issue pages and inline threads mark issues that need you, and the overview lists
     them first.
 
@@ -849,7 +861,7 @@ role (§11.3).
 | ----------------------- | ---------- | ------- |
 | `start_review`          | `repo_path`, `title`, `author`, `base_mode` (`auto`\|`none`\|`ref`), `base_ref?`, `summary?`, `head_ref?` | Create a review (§9.2). `base_ref` is required if and only if `base_mode` is `ref`. `head_ref` defaults to the branch checked out at `repo_path`; detached HEAD is an error. If the branch already has an open review, that review is returned unchanged, marked *existing, not created*, and the response says the given title, base and summary were not applied. Closed reviews of the branch don't block a new one. The response always includes the resolved base and how it was chosen, the head commit, and the worktree state of `repo_path`. |
 | `list_reviews`          | `status` (`open`\|`closed`\|`all`), `repo_path?` | List reviews. With `repo_path`, only that repo's, with the review for the branch checked out there marked. |
-| `get_review`            | `review_id`, `worktree_path?` | Title, head and base (with `base_source`), head and merge-base SHAs, issue counts, the summary with its version, and all summary comments. With `worktree_path`, that worktree's state. |
+| `get_review`            | `review_id`, `worktree_path?` | Title, head and base (with `base_source`), head and merge-base SHAs, issue counts, the turn with its note, the earlier hand-offs with theirs (§11.5), the summary with its version, and all summary comments. With `worktree_path`, that worktree's state. |
 | `update_review_summary` | `review_id`, `author`, `summary`, `expected_version` | Replace the summary. Rejected if it changed after `expected_version`. |
 | `list_issues`           | `review_id`, `status` (`open`\|`resolved`\|`all`), `detail` (`summary`\|`full`), `path?` | **R5.** `summary` gives one line per issue. `full` gives the anchor, current or original code, and the whole comment chain. `path` keeps the issues in that file: the file an issue was opened on, or the file its lines are in now after a rename. The header's "not shown" count of issues left out by `status` covers the same file, or the whole review without `path`. |
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
@@ -1293,8 +1305,9 @@ work on the review.
 - **Refresh.** On `changed`, `lani.js` fetches the page again and compares each part marked
   `data-live` with the HTML the server last sent for it. It does not compare with the page as
   shown, which the script and the reader change (a line selection, an opened thread). Parts that
-  differ are replaced, and a code view's line selection is restored from the URL afterwards. If
-  the fetch fails, a notice says so until a later refresh succeeds.
+  differ are replaced, and a code view's line selection is restored from the URL afterwards. A
+  `<details>` with an id that the reader opened, such as the earlier hand-offs, stays open in the
+  replacement. If the fetch fails, a notice says so until a later refresh succeeds.
 - **Added and removed parts.** Parts are only replaced, never added or removed. If a refresh finds
   that parts were added or removed (a commit changed which files the diff covers), the page asks
   for a reload instead of placing them.

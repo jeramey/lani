@@ -219,8 +219,10 @@ pub async fn review(
         events_after,
         outdated: state.outdated(),
     };
+    let mut header = views::review_header(&detail.view, &live);
+    header.hand_offs = views::hand_off_history(review, &detail.hand_offs);
     let page = ReviewPage {
-        review: views::review_header(&detail.view, &live),
+        review: header,
         editable: review.status == ReviewStatus::Open,
         summary_html: (!review.summary.trim().is_empty())
             .then(|| crate::markdown::render(&review.summary)),

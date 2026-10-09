@@ -458,6 +458,11 @@ form.new-issue .preview {
 .turn.yours { border-left-color: #c4314b; background: var(--notice-bg); }
 .turn p { margin: 0; }
 .turn-note { margin-top: 6px; font-size: 14px; }
+.hand-offs { margin: 6px 0 0; font-size: 14px; }
+.hand-offs summary { cursor: pointer; color: var(--muted); }
+.hand-offs ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--border); }
+.hand-offs li { margin: 0 0 8px; }
+.hand-offs .turn-note { margin-top: 2px; }
 .questions {
   margin: 12px 0 0;
   padding: 8px 12px;

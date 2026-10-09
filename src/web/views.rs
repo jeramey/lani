@@ -259,6 +259,9 @@ pub struct ReviewHeader {
     pub tab: &'static str,
     /// Whose turn the review is; `None` for a closed review or when it is nobody's (§11.5).
     pub turn: Option<TurnView>,
+    /// The hand-offs before the one `turn` shows, newest first, or all of them when there is no
+    /// `turn`. Only the overview fills it in.
+    pub hand_offs: Vec<HandOffView>,
     /// Issues with a question for you, as links.
     pub questions: Vec<QuestionLink>,
     /// The review's live-update stream, and the latest event the page reflects (§13.5).
@@ -288,6 +291,32 @@ pub struct TurnView {
     pub detail: Option<String>,
     /// The hand-off note, rendered.
     pub note_html: Option<String>,
+}
+
+/// A past change of turn, compactly.
+pub struct HandOffView {
+    pub when: String,
+    pub by: AuthorView,
+    /// `None` when the turn was cleared.
+    pub to: Option<AuthorView>,
+    pub note_html: Option<String>,
+}
+
+/// The hand-off history the overview shows under the turn: every change of turn except the
+/// newest when the turn box shows that one already. `hand_offs` is newest first.
+#[must_use]
+pub fn hand_off_history(review: &crate::model::Review, hand_offs: &[Event]) -> Vec<HandOffView> {
+    let shown = usize::from(turn(review).is_some());
+    hand_offs
+        .iter()
+        .skip(shown)
+        .map(|event| HandOffView {
+            when: time::to_local(&event.created_at),
+            by: author(event.actor),
+            to: event.turn_to.map(author),
+            note_html: event.note.as_deref().map(markdown::render),
+        })
+        .collect()
 }
 
 /// An issue with a question for the human.
@@ -412,6 +441,7 @@ pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
         changes_url: review.base_ref.is_some().then(|| changes_url(review.id)),
         tab: "overview",
         turn: turn(review),
+        hand_offs: Vec::new(),
         questions: if review.status == ReviewStatus::Open {
             question_links(view)
         } else {

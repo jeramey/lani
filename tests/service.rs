@@ -1103,7 +1103,10 @@ fn reopening_the_database_keeps_the_schema() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3, "the baseline schema and the turns migration");
+    assert_eq!(
+        version, 4,
+        "the baseline schema, the turns migration and hand-off notes"
+    );
     let timeout: String = conn
         .query_row(
             "SELECT value FROM setting WHERE key = 'idle_timeout'",
@@ -1313,7 +1316,7 @@ fn a_running_lani_stops_once_a_newer_lani_upgrades_the_database() {
     let outdated = |error: Error| match error {
         Error::Outdated(message) => {
             assert!(
-                message.contains("schema version 99") && message.contains("up to 3"),
+                message.contains("schema version 99") && message.contains("up to 4"),
                 "{message}"
             );
         }
@@ -2122,6 +2125,100 @@ fn migrating_a_version_2_database_keeps_its_data_and_event_ids() {
         [3, 2, 1],
         "old events kept, new ones numbered after them"
     );
+}
+
+#[test]
+fn every_hand_off_keeps_its_note() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Reviewer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    // The reviewer's first findings go to the human, who hands them on with a note of their own.
+    service
+        .hand_off(
+            Actor::Reviewer,
+            review_id,
+            Some(Actor::Implementer),
+            Some("Three findings."),
+        )
+        .unwrap();
+    service
+        .hand_off(
+            Actor::Human,
+            review_id,
+            Some(Actor::Implementer),
+            Some("Fix 1 and 3."),
+        )
+        .unwrap();
+    service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+
+    let detail = service.get_review(review_id, None).unwrap();
+    let history: Vec<_> = detail
+        .hand_offs
+        .iter()
+        .map(|event| (event.actor, event.turn_to, event.note.as_deref()))
+        .collect();
+    assert_eq!(
+        history,
+        [
+            (Actor::Implementer, Some(Actor::Reviewer), None),
+            (Actor::Human, Some(Actor::Implementer), Some("Fix 1 and 3.")),
+            (Actor::Reviewer, Some(Actor::Human), Some("Three findings.")),
+        ],
+        "newest first, the reviewer's note kept"
+    );
+    assert_eq!(detail.view.review.turn_note, None, "the current note");
+}
+
+#[test]
+fn migrating_a_version_3_database_gives_each_reviews_latest_hand_off_its_note() {
+    let home = TestHome::new();
+    let path = home.db_path();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../src/store/migrations/0002_baseline.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../src/store/migrations/0003_turns.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO repo (git_dir, name, created_at) VALUES ('/r/.git', 'r', 't');
+             INSERT INTO review (repo_id, title, head_ref, base_ref, base_source, status,
+                                 created_by, created_at, closed_at, summary, summary_updated_by,
+                                 summary_updated_at, summary_version, turn, turn_by, turn_at,
+                                 turn_note, rounds)
+               VALUES (1, 'A', 'refs/heads/a', NULL, 'explicit', 'open', 'reviewer', 't', NULL,
+                       '', NULL, NULL, 1, 'implementer', 'reviewer', 't', 'Latest note.', 0),
+                      (1, 'B', 'refs/heads/b', NULL, 'explicit', 'open', 'reviewer', 't', NULL,
+                       '', NULL, NULL, 1, NULL, NULL, NULL, NULL, 0);
+             INSERT INTO event (review_id, issue_id, comment_id, kind, actor, turn_to, created_at)
+               VALUES (1, NULL, NULL, 'turn_changed', 'implementer', 'reviewer', 't'),
+                      (1, NULL, NULL, 'review_retitled', 'human', NULL, 't'),
+                      (1, NULL, NULL, 'turn_changed', 'reviewer', 'implementer', 't'),
+                      (2, NULL, NULL, 'review_created', 'reviewer', NULL, 't');
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    }
+    let service = Service::open(&path).unwrap();
+    let notes = |review_id| -> Vec<Option<String>> {
+        service
+            .list_events(review_id)
+            .unwrap()
+            .into_iter()
+            .map(|event| event.note)
+            .collect()
+    };
+    assert_eq!(
+        notes(1),
+        [Some("Latest note.".to_string()), None, None],
+        "only the latest hand-off had its note kept"
+    );
+    assert_eq!(notes(2), [None]);
 }
 
 #[test]

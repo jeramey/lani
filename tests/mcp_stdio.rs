@@ -843,11 +843,17 @@ fn sessions_take_turns_and_ask_the_human() {
         "{handed}"
     );
 
-    // The human reads the first findings and hands the review to the implementer.
+    // The human reads the first findings and hands the review to the implementer. The
+    // reviewer's note stays readable, in the hand-off history.
     human_hands_to_implementer(&home, "Fix issue 1.");
     let review = implementer.ok("get_review", json!({"review_id": 1}));
     assert!(
         review.contains("Turn: implementer (set by the human at "),
+        "{review}"
+    );
+    assert!(
+        review.contains("Earlier hand-offs, newest first:\n- reviewer → human at ")
+            && review.contains(", note:\n│ Three issues.\n"),
         "{review}"
     );
     assert!(

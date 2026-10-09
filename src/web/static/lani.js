@@ -318,7 +318,12 @@
       }
       served.set(part.id, replacement.outerHTML);
       // A copy: the fetched page stays whole, to be applied again (retryStale).
-      part.replaceWith(document.importNode(replacement, true));
+      const copy = document.importNode(replacement, true);
+      // What the reader opened stays open, such as the earlier hand-offs.
+      for (const details of part.querySelectorAll("details[id][open]")) {
+        copy.querySelector("#" + CSS.escape(details.id))?.setAttribute("open", "");
+      }
+      part.replaceWith(copy);
     }
     // Parts are replaced, never added or removed: a file that a new commit brings into the
     // Changes view, or takes out of it, would land in the wrong place. The page says so instead.

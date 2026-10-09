@@ -151,6 +151,7 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     let _ = writeln!(out, "{} · {}", head_text(view), base_text(view));
     let _ = writeln!(out, "{}", counts_text(view));
     out.push_str(&turn_text(view));
+    out.push_str(&hand_offs_text(detail));
     if let Some(reason) = &view.repo_unavailable {
         let _ = writeln!(out, "Repository not available: {reason}");
     }
@@ -189,6 +190,34 @@ pub fn review_detail(detail: &ReviewDetail) -> String {
     }
     for comment in &detail.summary_comments {
         out.push_str(&comment_text(comment));
+    }
+    out
+}
+
+/// The hand-offs before the current one, with their notes, newest first (§11.5). For a closed
+/// review, whose turn [`turn_text`] leaves out, all of them.
+fn hand_offs_text(detail: &ReviewDetail) -> String {
+    let shown = usize::from(detail.view.review.status == ReviewStatus::Open);
+    let earlier = detail.hand_offs.iter().skip(shown);
+    let mut out = String::new();
+    for (index, event) in earlier.enumerate() {
+        if index == 0 {
+            out.push_str("Earlier hand-offs, newest first:\n");
+        }
+        let _ = write!(
+            out,
+            "- {} → {} at {}",
+            event.actor.as_str(),
+            event.turn_to.map_or("nobody", Actor::as_str),
+            time::to_minutes(&event.created_at)
+        );
+        match &event.note {
+            Some(note) => {
+                out.push_str(", note:\n");
+                out.push_str(&text::quote_body(note));
+            }
+            None => out.push_str(", no note\n"),
+        }
     }
     out
 }
