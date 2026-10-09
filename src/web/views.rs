@@ -476,10 +476,10 @@ pub struct IssueRow {
 
 /// One light in an issue row: whether a role has created or commented on the issue.
 pub struct RoleLight {
-    /// The role, as a CSS class giving the light its colour.
+    /// The role's author class, giving the light its colour.
     pub class: &'static str,
     pub lit: bool,
-    /// E.g. "Reviewer: created this issue and added 2 comments".
+    /// E.g. "Claude · reviewer: created this issue and added 2 comments".
     pub tooltip: String,
 }
 
@@ -544,12 +544,7 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
 }
 
 fn role_lights(view: &IssueView) -> [RoleLight; 3] {
-    [
-        (Actor::Reviewer, "Reviewer", "reviewer"),
-        (Actor::Human, "You", "human"),
-        (Actor::Implementer, "Implementer", "implementer"),
-    ]
-    .map(|(role, name, class)| {
+    [Actor::Reviewer, Actor::Human, Actor::Implementer].map(|role| {
         let created = view.issue.author == role;
         // The first comment is the issue's description, written by its creator.
         let comments = view
@@ -568,10 +563,11 @@ fn role_lights(view: &IssueView) -> [RoleLight; 3] {
             (false, 0) => "no comments yet".to_string(),
             (false, _) => added,
         };
+        let who = author(role);
         RoleLight {
-            class,
+            class: who.class,
             lit: created || comments > 0,
-            tooltip: format!("{name}: {status}"),
+            tooltip: format!("{}: {status}", who.label),
         }
     })
 }

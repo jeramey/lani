@@ -2104,9 +2104,9 @@ async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
     assert_eq!(
         role_lights(&overview),
         [
-            "reviewer lit | Reviewer: created this issue",
-            "human | You: no comments yet",
-            "implementer | Implementer: no comments yet",
+            "author-reviewer lit | Claude · reviewer: created this issue",
+            "author-human | You: no comments yet",
+            "author-implementer | Claude · implementer: no comments yet",
         ],
         "{overview}"
     );
@@ -2130,9 +2130,9 @@ async fn issue_rows_light_up_for_each_role_that_created_or_commented() {
     assert_eq!(
         role_lights(&overview),
         [
-            "reviewer lit | Reviewer: created this issue and added 2 comments",
-            "human lit | You: added 1 comment",
-            "implementer lit | Implementer: added 1 comment",
+            "author-reviewer lit | Claude · reviewer: created this issue and added 2 comments",
+            "author-human lit | You: added 1 comment",
+            "author-implementer lit | Claude · implementer: added 1 comment",
         ],
         "{overview}"
     );

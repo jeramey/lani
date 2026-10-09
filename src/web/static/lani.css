@@ -191,9 +191,9 @@ h2 { font-size: 17px; margin: 0 0 12px; }
   opacity: 0.5;
 }
 .light.lit { background: var(--role); opacity: 1; }
-.light.reviewer { --role: var(--reviewer); }
-.light.human { --role: var(--human); }
-.light.implementer { --role: var(--implementer); }
+.light.author-reviewer { --role: var(--reviewer); }
+.light.author-human { --role: var(--human); }
+.light.author-implementer { --role: var(--implementer); }
 
 .toolbar { display: flex; gap: 8px 20px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; }
 .toolbar details[open] { flex-basis: 100%; order: 1; }
