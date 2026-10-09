@@ -12,6 +12,7 @@ pub use code::{
 };
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -89,9 +90,9 @@ pub struct SpanRequest<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActivityRequest {
     /// Events per page; `None` for all on one page.
-    pub per_page: Option<u32>,
+    pub per_page: Option<NonZeroU32>,
     /// The page, from 1, the newest.
-    pub page: u32,
+    pub page: NonZeroU32,
     /// The review's latest event when the reader paged back. Pages count back from it, so they
     /// stay put while new events arrive; `None` counts from the latest event, so page 1 always
     /// shows the newest.
@@ -1225,17 +1226,17 @@ impl Service {
             Some(anchor) => store::count_events_after(&tx, review_id, anchor)?,
             None => 0,
         };
-        let pages = request
-            .per_page
-            .map_or(1, |per_page| total.div_ceil(u64::from(per_page)).max(1));
-        if u64::from(request.page) > pages {
+        let pages = request.per_page.map_or(1, |per_page| {
+            total.div_ceil(u64::from(per_page.get())).max(1)
+        });
+        if u64::from(request.page.get()) > pages {
             return Err(Error::Invalid(format!(
                 "page {} is past the last page of events ({pages})",
                 request.page
             )));
         }
         let offset = request.per_page.map_or(0, |per_page| {
-            u64::from(request.page.saturating_sub(1)) * u64::from(per_page)
+            u64::from(request.page.get() - 1) * u64::from(per_page.get())
         });
         let events = store::list_events(
             &tx,
@@ -1243,7 +1244,7 @@ impl Service {
             store::EventPage {
                 upto: Some(upto),
                 offset,
-                limit: request.per_page,
+                limit: request.per_page.map(NonZeroU32::get),
             },
         )?;
         tx.commit()?;

@@ -3,6 +3,7 @@
 //! stay put while new events arrive; a notice then says how many arrived.
 
 use std::fmt::Write as _;
+use std::num::NonZeroU32;
 
 use axum::http::StatusCode;
 
@@ -10,9 +11,16 @@ use super::views::{self, EventView, PageError, review_url};
 use crate::service::{ActivityPage, ActivityRequest};
 
 /// The page sizes offered, in order; `None` is all events on one page.
-const PAGE_SIZES: [Option<u32>; 5] = [Some(10), Some(25), Some(50), Some(100), None];
+const PAGE_SIZES: [Option<NonZeroU32>; 5] = [
+    Some(DEFAULT_PER_PAGE),
+    NonZeroU32::new(25),
+    NonZeroU32::new(50),
+    NonZeroU32::new(100),
+    None,
+];
 /// The page size when the URL names none.
-const DEFAULT_PER_PAGE: u32 = 10;
+const DEFAULT_PER_PAGE: NonZeroU32 = NonZeroU32::new(10).unwrap();
+const FIRST_PAGE: NonZeroU32 = NonZeroU32::MIN;
 
 /// The activity page an overview URL asks for: its `events` (page size), `page` and `latest`
 /// (anchor) query values. Absent or empty values mean the defaults: 10 per page, page 1, and no
@@ -37,9 +45,10 @@ pub fn request(
             })?,
     };
     let page = match present(page) {
-        None => 1,
+        None => FIRST_PAGE,
         Some(value) => positive(value)
             .and_then(|page| u32::try_from(page).ok())
+            .and_then(NonZeroU32::new)
             .ok_or_else(|| bad(&format!("{value:?} is not a page number.")))?,
     };
     let anchor = match present(latest) {
@@ -50,7 +59,7 @@ pub fn request(
                 .ok_or_else(|| bad(&format!("{value:?} is not an event number.")))?,
         ),
     };
-    if per_page.is_none() && page > 1 {
+    if per_page.is_none() && page > FIRST_PAGE {
         return Err(bad("All events are on page 1."));
     }
     Ok(ActivityRequest {
@@ -93,7 +102,7 @@ pub fn overview_url(
         }
         None => url.push_str("&events=all"),
     }
-    if request.page > 1 {
+    if request.page > FIRST_PAGE {
         let _ = write!(url, "&page={}", request.page);
     }
     if let Some(anchor) = request.anchor {
@@ -141,50 +150,53 @@ pub fn view(
 ) -> ActivityView {
     let url = |request: ActivityRequest| overview_url(review_id, status, request, "activity");
     let latest = ActivityRequest {
-        page: 1,
+        page: FIRST_PAGE,
         anchor: None,
         ..request
     };
+    let page_number = request.page.get();
     let shown = u64::try_from(page.events.len()).unwrap_or(u64::MAX);
     let (first, last) = (page.offset + 1, page.offset + shown);
     let anchored = request.anchor.is_some();
 
     let mut links = Vec::new();
     // On page 2, *Previous* already leads to the latest.
-    if anchored && request.page != 2 {
+    if anchored && page_number != 2 {
         links.push(PageLink {
             key: "latest",
             label: "Latest".to_string(),
             url: url(latest),
         });
     }
-    if request.page > 1 {
+    if let Some(previous_page) = NonZeroU32::new(page_number - 1) {
         // Back to page 1 means back to the latest events, without an anchor.
-        let previous = if request.page == 2 {
+        let previous = if previous_page == FIRST_PAGE {
             latest
         } else {
             ActivityRequest {
-                page: request.page - 1,
+                page: previous_page,
                 ..request
             }
         };
-        let size = request.per_page.map_or(0, u64::from);
+        let size = request.per_page.map_or(0, NonZeroU32::get);
         links.push(PageLink {
             key: "previous",
             label: format!("Previous {size}"),
             url: url(previous),
         });
     }
-    if last < page.total {
+    if let Some(next_page) = request.page.checked_add(1)
+        && last < page.total
+    {
         let left = page.total - last;
         let count = request
             .per_page
-            .map_or(left, |per_page| left.min(u64::from(per_page)));
+            .map_or(left, |per_page| left.min(u64::from(per_page.get())));
         links.push(PageLink {
             key: "next",
             label: format!("Next {count}"),
             url: url(ActivityRequest {
-                page: request.page + 1,
+                page: next_page,
                 // Paging back anchors the pages at the latest event, so they stay put.
                 anchor: request.anchor.or(Some(page.latest_id)),
                 ..request
@@ -192,35 +204,16 @@ pub fn view(
         });
     }
 
-    let pageable = anchored || page.total > u64::from(DEFAULT_PER_PAGE);
+    let pageable = anchored || page.total > u64::from(DEFAULT_PER_PAGE.get());
     let sizes = if pageable {
-        PAGE_SIZES
-            .into_iter()
-            .map(|per_page| SizeLink {
-                label: per_page.map_or_else(|| "All".to_string(), |size| size.to_string()),
-                url: (per_page != request.per_page).then(|| {
-                    // The page that holds the first event shown now.
-                    let page_number = per_page.map_or(1, |size| {
-                        u32::try_from((first - 1) / u64::from(size) + 1).unwrap_or(u32::MAX)
-                    });
-                    let anchor = request
-                        .anchor
-                        .or((page_number > 1).then_some(page.latest_id));
-                    url(ActivityRequest {
-                        per_page,
-                        page: page_number,
-                        anchor,
-                    })
-                }),
-            })
-            .collect()
+        size_links(request, first, page.latest_id, &url)
     } else {
         Vec::new()
     };
     let position = pageable.then(|| {
         let mut position = format!("Events {first}–{last} of {}", page.total);
         if let Some(per_page) = request.per_page {
-            let pages = page.total.div_ceil(u64::from(per_page)).max(1);
+            let pages = page.total.div_ceil(u64::from(per_page.get())).max(1);
             if pages > 1 {
                 let _ = write!(position, " · page {} of {pages}", request.page);
             }
@@ -239,4 +232,37 @@ pub fn view(
         links,
         sizes,
     }
+}
+
+/// The page sizes, each showing the page that holds `first`, the first event shown now.
+fn size_links(
+    request: ActivityRequest,
+    first: u64,
+    latest_id: i64,
+    url: &impl Fn(ActivityRequest) -> String,
+) -> Vec<SizeLink> {
+    PAGE_SIZES
+        .into_iter()
+        .map(|per_page| SizeLink {
+            label: per_page.map_or_else(|| "All".to_string(), |size| size.to_string()),
+            url: (per_page != request.per_page).then(|| {
+                let holding = per_page.map_or(FIRST_PAGE, |size| {
+                    let number = (first - 1) / u64::from(size.get()) + 1;
+                    u32::try_from(number)
+                        .ok()
+                        .and_then(NonZeroU32::new)
+                        .unwrap_or(NonZeroU32::MAX)
+                });
+                // A page past the first needs an anchor, so it stays put.
+                let anchor = request
+                    .anchor
+                    .or((holding > FIRST_PAGE).then_some(latest_id));
+                url(ActivityRequest {
+                    per_page,
+                    page: holding,
+                    anchor,
+                })
+            }),
+        })
+        .collect()
 }
