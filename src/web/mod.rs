@@ -366,8 +366,9 @@ async fn run(
             }
         })
         .await;
-    ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
+    // server.json goes last: `lani stop` waits for it, so once it is gone the cleanup is done.
     daemon::remove_open_files(&options.home, Duration::ZERO);
+    ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
     eprintln!("LANI server stopped");
     served.map_err(Error::Io)
 }

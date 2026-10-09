@@ -340,8 +340,10 @@ pub fn stop(home: &Path) -> Result<Option<RunningServer>> {
             "the LANI server refused to stop (HTTP {status})"
         )));
     }
+    // Wait for server.json to go, not just for the health check to fail: the server stops
+    // listening first and removes server.json last, after the rest of its cleanup.
     let deadline = Instant::now() + STOP_TIMEOUT;
-    while find_running(home).is_some() {
+    while ServerFile::read(home).is_some_and(|file| file.instance_id == server.file.instance_id) {
         if Instant::now() >= deadline {
             return Err(Error::Unavailable(format!(
                 "the LANI server (pid {}) did not stop within {}s",

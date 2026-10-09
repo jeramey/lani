@@ -1069,8 +1069,11 @@ routine:
 - Write `server.json` atomically (temp file + rename, mode 0600), then serve.
 
 **Shutdown.** The server shuts down on `POST /api/shutdown`, SIGTERM, SIGINT or idle timeout. In
-every case it removes `server.json` if the file is still its own. `lani stop` calls `/api/shutdown`
-with the bearer token, so no signal-sending code is needed.
+every case it removes the browser-launch redirect files, then `server.json` if the file is still
+its own. `lani stop` calls `/api/shutdown` with the bearer token, so no signal-sending code is
+needed. It then waits up to 5 s for `server.json` to go. That happens last, so when `lani stop`
+returns, the cleanup is done. Waiting only for the health check to fail is not enough, because
+the server stops listening before it cleans up; a test caught `lani stop` returning in between.
 
 **Version mismatch.** If the running server's version differs from the caller's, `open` prints a
 warning suggesting `lani stop && lani open`. The MCP tool includes the same warning in its result.
