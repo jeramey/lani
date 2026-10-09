@@ -397,7 +397,7 @@ async fn listen(choice: PortChoice) -> Result<tokio::net::TcpListener> {
         "ports {} to {} on 127.0.0.1 are all in use; set another port in {}, or pass --port",
         first.copied().unwrap_or_default(),
         last.copied().unwrap_or_default(),
-        crate::paths::config_path()?.display()
+        crate::paths::shown_config_path()
     )))
 }
 

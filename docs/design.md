@@ -1422,8 +1422,10 @@ lani version
   number, which opens selected; any other colon is part of the path.
 - **The configuration file** is `$XDG_CONFIG_HOME/lani/config.toml`, else
   `~/.config/lani/config.toml`, in TOML. Every key is optional, and a missing file means the
-  defaults. Unknown keys and invalid values are errors that name the file, never silently
-  ignored. The only key so far:
+  defaults. So does an environment with neither variable set to an absolute path: a relative
+  `XDG_CONFIG_HOME` is ignored, as the XDG base directory specification says, and trimmed
+  environments that set only `LANI_HOME` keep working. Unknown keys and invalid values are errors
+  that name the file, never silently ignored. The only key so far:
 
   ```toml
   port = 5264   # the web server's base port (§13.1); 0 for any free port

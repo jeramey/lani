@@ -15,9 +15,11 @@ pub struct Config {
 }
 
 impl Config {
-    /// Read the configuration file, or the defaults if there is none.
+    /// Read the configuration file, or the defaults if there is none or it cannot be located.
     pub fn load() -> Result<Self> {
-        let path = paths::config_path()?;
+        let Some(path) = paths::config_path() else {
+            return Ok(Self::default());
+        };
         match std::fs::read_to_string(&path) {
             Ok(text) => Self::parse(&text).map_err(|message| {
                 Error::Invalid(format!("error in {}: {message}", path.display()))

@@ -59,10 +59,9 @@ impl PortChoice {
             None => Ok(Self::From(DEFAULT_PORT)),
             Some(None) => Ok(Self::Any),
             Some(Some(port)) => {
-                let path = paths::config_path()?;
                 refuse_blocked(
                     port.get(),
-                    &format!("set another port in {}", path.display()),
+                    &format!("set another port in {}", paths::shown_config_path()),
                 )?;
                 Ok(Self::From(port))
             }

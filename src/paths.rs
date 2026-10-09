@@ -25,22 +25,30 @@ pub fn lani_home() -> Result<PathBuf> {
 }
 
 /// Resolve the configuration file: `$XDG_CONFIG_HOME/lani/config.toml`, else
-/// `~/.config/lani/config.toml`. Every candidate must be an absolute path.
-pub fn config_path() -> Result<PathBuf> {
-    if let Some(xdg) = non_empty_env("XDG_CONFIG_HOME") {
-        return require_absolute(
-            "XDG_CONFIG_HOME",
-            PathBuf::from(xdg).join("lani/config.toml"),
-        );
-    }
-    match non_empty_env("HOME") {
-        Some(home) => {
-            require_absolute("HOME", PathBuf::from(home).join(".config/lani/config.toml"))
-        }
-        None => Err(Error::Invalid(
-            "cannot locate the LANI configuration file: set XDG_CONFIG_HOME or HOME".to_string(),
-        )),
-    }
+/// `~/.config/lani/config.toml`. `None` when neither variable is an absolute path: then there is
+/// no configuration file, and the defaults apply. A relative path is ignored, as the XDG base
+/// directory specification says.
+#[must_use]
+pub fn config_path() -> Option<PathBuf> {
+    config_path_from(non_empty_env("XDG_CONFIG_HOME"), non_empty_env("HOME"))
+}
+
+fn config_path_from(xdg_config_home: Option<String>, home: Option<String>) -> Option<PathBuf> {
+    let absolute =
+        |value: Option<String>| value.map(PathBuf::from).filter(|path| path.is_absolute());
+    absolute(xdg_config_home)
+        .map(|xdg| xdg.join("lani/config.toml"))
+        .or_else(|| absolute(home).map(|home| home.join(".config/lani/config.toml")))
+}
+
+/// The configuration file's path as messages show it, which tell the human where to change
+/// something.
+#[must_use]
+pub fn shown_config_path() -> String {
+    config_path().map_or_else(
+        || "the configuration file (set HOME or XDG_CONFIG_HOME to use one)".to_string(),
+        |path| path.display().to_string(),
+    )
 }
 
 /// Create the data directory with mode 0700 if it does not exist.
@@ -78,5 +86,32 @@ fn require_absolute(variable: &str, path: PathBuf) -> Result<PathBuf> {
             "{variable} must be an absolute path, got {}",
             path.display()
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_configuration_file_follows_xdg_and_ignores_relative_paths() {
+        let path = |xdg: Option<&str>, home: Option<&str>| {
+            config_path_from(xdg.map(str::to_string), home.map(str::to_string))
+        };
+        assert_eq!(
+            path(Some("/x"), Some("/h")),
+            Some(PathBuf::from("/x/lani/config.toml"))
+        );
+        assert_eq!(
+            path(None, Some("/h")),
+            Some(PathBuf::from("/h/.config/lani/config.toml"))
+        );
+        assert_eq!(
+            path(Some("relative"), Some("/h")),
+            Some(PathBuf::from("/h/.config/lani/config.toml")),
+            "a relative XDG_CONFIG_HOME is ignored"
+        );
+        assert_eq!(path(None, None), None);
+        assert_eq!(path(Some("relative"), Some("also-relative")), None);
     }
 }
