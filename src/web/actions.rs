@@ -20,18 +20,31 @@ use crate::settings::IdleTimeout;
 #[derive(Deserialize)]
 pub struct TitleForm {
     title: String,
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct BaseForm {
     /// A full ref name, or empty for a whole-tree review.
     base: String,
+    #[serde(default)]
+    back: Option<String>,
+}
+
+/// A form with nothing but the page to return to.
+#[derive(Deserialize)]
+pub struct BackForm {
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct SummaryForm {
     summary: String,
     version: i64,
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +106,8 @@ pub struct TurnForm {
     to: String,
     #[serde(default)]
     note: String,
+    #[serde(default)]
+    back: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -161,7 +176,7 @@ pub async fn retitle(
                 &form.title,
             )
         })?;
-    Ok(redirect(&review_url(review_id)))
+    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
 pub async fn change_base(
@@ -178,7 +193,7 @@ pub async fn change_base(
         .call(move |service| service.change_base(Actor::Human, review_id, &base))
         .await
         .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
-    Ok(redirect(&review_url(review_id)))
+    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
 pub async fn edit_summary(
@@ -192,7 +207,11 @@ pub async fn edit_summary(
         .call(move |service| service.update_summary(review_id, Actor::Human, &summary, version))
         .await;
     match result {
-        Ok(_) => Ok(redirect(&format!("{}#summary", review_url(review_id)))),
+        Ok(_) => Ok(redirect(&overview(
+            review_id,
+            form.back.as_deref(),
+            "#summary",
+        ))),
         Err(Error::Conflict(_)) => {
             let current = state
                 .call(move |service| service.get_review(review_id, None))
@@ -238,29 +257,43 @@ pub async fn comment_on_summary(
                 &form.body,
             )
         })?;
-    Ok(redirect(&comment_url(&comment)))
+    Ok(redirect(&overview(
+        review_id,
+        form.back.as_deref(),
+        &format!("#c{}", comment.id),
+    )))
 }
 
 pub async fn close_review(
     State(state): State<AppState>,
     Path(review_id): Path<i64>,
+    Form(form): Form<BackForm>,
 ) -> Result<Response, PageError> {
     state
         .call(move |service| service.close_review(Actor::Human, review_id))
         .await
         .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
-    Ok(redirect(&review_url(review_id)))
+    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
 pub async fn reopen_review(
     State(state): State<AppState>,
     Path(review_id): Path<i64>,
+    Form(form): Form<BackForm>,
 ) -> Result<Response, PageError> {
     state
         .call(move |service| service.reopen_review(Actor::Human, review_id))
         .await
         .map_err(|error| failed(error, review_url(review_id), "Back to the review", ""))?;
-    Ok(redirect(&review_url(review_id)))
+    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
+}
+
+/// Where an overview form returns to: the overview as it was shown, with its issue filter and
+/// activity page, which `lani.js` sends as `back` (§13.4), else the plain overview; then
+/// `fragment`.
+fn overview(review_id: i64, back: Option<&str>, fragment: &str) -> String {
+    let page = back_page(back).unwrap_or_else(|| review_url(review_id));
+    format!("{page}{fragment}")
 }
 
 /// The page a form asked to return to, without its fragment, if it is a local LANI path. Code
@@ -527,7 +560,7 @@ pub async fn hand_off(
         })
         .await
         .map_err(|error| failed(error, back.clone(), "Back to the review", &form.note))?;
-    Ok(redirect(&back))
+    Ok(redirect(&overview(review_id, form.back.as_deref(), "")))
 }
 
 /// `POST /settings/round-limit`: how many rounds Claude takes before the review comes to you.

@@ -466,7 +466,18 @@ fn activity_pages_in_place(browser: &WebDriver, service: &mut Service, review_id
         ),
         "all the events",
     );
-    browser.clear("#new-summary-comment");
+    browser.assert_no_problems("paging the activity");
+
+    // Posting the draft returns to the view it was posted from, which in-place links changed
+    // after the form was rendered.
+    browser.click("#conversation form.new-comment button[type=submit]");
+    browser.wait_for(
+        &format!(
+            "return !({IN_PLACE}) && location.search.includes('events=all') \
+             && document.querySelector('#conversation').textContent.includes('Half a thought');"
+        ),
+        "the posted comment, in the same view",
+    );
 }
 
 fn a_selection_survives_its_table_being_replaced(

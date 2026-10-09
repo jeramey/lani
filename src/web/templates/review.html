@@ -9,7 +9,7 @@
   {% if editable %}
   <details class="inline-edit">
     <summary>Rename</summary>
-    <form method="post" action="{{ review.url }}/title">
+    <form method="post" action="{{ review.url }}/title"><input type="hidden" name="back" data-current-page>
       <label for="title">Title</label>
       <input id="title" type="text" name="title" value="{{ review.title }}" maxlength="200" required>
       <div class="form-actions"><button type="submit">Save title</button></div>
@@ -17,7 +17,7 @@
   </details>
   <details class="inline-edit">
     <summary>Change base</summary>
-    <form method="post" action="{{ review.url }}/base">
+    <form method="post" action="{{ review.url }}/base"><input type="hidden" name="back" data-current-page>
       <label for="base">Base</label>
       <select id="base" name="base">
         <option value=""{% if review.whole_tree %} selected{% endif %}>None — review the whole tree</option>
@@ -31,7 +31,7 @@
   </details>
   <details class="inline-edit">
     <summary>Hand on</summary>
-    <form method="post" action="{{ review.url }}/turn">
+    <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
         <option value="reviewer">Claude · reviewer</option>
@@ -44,11 +44,11 @@
       <div class="form-actions"><button type="submit">Hand on</button></div>
     </form>
   </details>
-  <form method="post" action="{{ review.url }}/close" class="inline">
+  <form method="post" action="{{ review.url }}/close" class="inline"><input type="hidden" name="back" data-current-page>
     <button type="submit" class="secondary">Close review</button>
   </form>
   {% else %}
-  <form method="post" action="{{ review.url }}/reopen" class="inline">
+  <form method="post" action="{{ review.url }}/reopen" class="inline"><input type="hidden" name="back" data-current-page>
     <button type="submit">Reopen review</button>
   </form>
   {% endif %}
@@ -65,7 +65,7 @@
   {% if editable %}
   <details class="inline-edit">
     <summary>Edit summary</summary>
-    <form method="post" action="{{ review.url }}/summary">
+    <form method="post" action="{{ review.url }}/summary"><input type="hidden" name="back" data-current-page>
       <input type="hidden" name="version" value="{{ summary_version }}">
       {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
       <textarea name="summary" rows="10" aria-label="Summary">
@@ -109,7 +109,7 @@
   {% if summary_comments.is_empty() %}<p class="empty">No comments on the summary yet.</p>{% endif %}
   {% for comment in summary_comments %}{% include "comment.html" %}{% endfor %}
   {% if editable %}
-  <form method="post" action="{{ review.url }}/comments" class="new-comment">
+  <form method="post" action="{{ review.url }}/comments" class="new-comment"><input type="hidden" name="back" data-current-page>
     <label for="new-summary-comment">Add a comment</label>
     <textarea id="new-summary-comment" name="body" rows="5" required placeholder="Markdown is supported"></textarea>
     <div class="form-actions"><button type="submit">Comment</button></div>

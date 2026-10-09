@@ -266,6 +266,16 @@
     }
   }
 
+  // A form that posts from a page whose query says what it shows, such as the overview's issue
+  // filter and activity page, returns to that view. In-place links change the query without
+  // rendering the forms again, so the `back` field gets the current path and query on submit.
+  document.addEventListener("submit", (event) => {
+    const back = event.target.querySelector("input[name=back][data-current-page]");
+    if (back) {
+      back.value = location.pathname + location.search;
+    }
+  });
+
   // The data-in-place link to focus once the refresh is done: its key, and the part it was in.
   let refocus = null;
 

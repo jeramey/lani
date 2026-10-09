@@ -1280,6 +1280,12 @@ back to the page (303 See Other); live updates then refresh other open pages (§
   be edited in place. Issues have *Resolve* / *Reopen* buttons. Threads shown in a code view
   send the view's address with each form, so a reply, edit or status change returns there. Only
   a local LANI path is accepted as that address; anything else is ignored.
+- **Overview forms return to the view.** A comment, an edit, a hand-off, a rename, a base change,
+  or closing or reopening the review, returns to the overview as it was shown, with its issue
+  filter and activity page (§13.3). In-place links change the page's query without rendering
+  its forms again, so the forms carry an empty `back` field that `lani.js` fills with the
+  current path and query on submit. Without the script it stays empty, and the action returns
+  to the plain overview.
 - **Edit conflicts.** As described in §11.4, nothing is silently lost.
 - **Issue placement.** In the file and diff views, a thread renders below the (relocated) end line
   of a span. An issue appears only once per page, however many spans it has.

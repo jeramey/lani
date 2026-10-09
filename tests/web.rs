@@ -1960,6 +1960,42 @@ async fn activity_page_values_are_checked() {
 }
 
 #[tokio::test]
+async fn overview_forms_return_to_the_view_they_were_posted_from() {
+    let f = fixture();
+    let url = format!("/reviews/{}", f.review_id);
+    let view = format!("{url}?status=all&page=2&latest=5");
+    let back = format!("back={}", encode(&view));
+
+    let (status, headers, _) = send(
+        &f.app,
+        post(&format!("{url}/comments"), &format!("body=Hi&{back}")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let to = location(&headers);
+    assert!(to.starts_with(&format!("{view}#c")), "{to}");
+    for (action, form) in [
+        ("title", format!("title=Renamed&{back}")),
+        ("turn", format!("to=reviewer&note=&{back}")),
+        ("close", back.clone()),
+        ("reopen", back.clone()),
+    ] {
+        let (status, headers, _) = send(&f.app, post(&format!("{url}/{action}"), &form)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}");
+        assert_eq!(location(&headers), view, "{action}");
+    }
+    // Without the script the field is empty; a foreign page is not returned to.
+    for back in ["back=", "back=%2F%2Fevil.example"] {
+        let (_, headers, _) = send(
+            &f.app,
+            post(&format!("{url}/title"), &format!("title=Again&{back}")),
+        )
+        .await;
+        assert_eq!(location(&headers), url, "{back}");
+    }
+}
+
+#[tokio::test]
 async fn the_round_limit_is_a_setting() {
     let f = fixture();
     let (_, _, settings) = send(&f.app, get("/settings")).await;
