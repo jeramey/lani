@@ -127,26 +127,54 @@ impl TestRepo {
     }
 }
 
-/// A private LANI data directory.
+/// A private LANI data directory, with its own configuration file.
 pub struct TestHome {
     _dir: TempDir,
     pub path: PathBuf,
 }
 
 impl TestHome {
-    /// A data directory with mode 0700, as LANI requires.
+    /// A data directory with mode 0700, as LANI requires. Its configuration file sets `port = 0`,
+    /// so test servers take any free port instead of competing for the default port.
     pub fn new() -> Self {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("create temp dir");
         let path = std::fs::canonicalize(dir.path()).expect("canonicalize temp dir");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
             .expect("make temp dir private");
-        Self { _dir: dir, path }
+        let home = Self { _dir: dir, path };
+        home.write_config("port = 0\n");
+        home
     }
 
     pub fn db_path(&self) -> PathBuf {
         self.path.join("lani.db")
     }
+
+    /// The configuration file that `lani` processes started with [`lani_env`] read.
+    pub fn config_path(&self) -> PathBuf {
+        config_home(&self.path).join("lani/config.toml")
+    }
+
+    pub fn write_config(&self, text: &str) {
+        let path = self.config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create config dir");
+        std::fs::write(path, text).expect("write config");
+    }
+}
+
+/// `XDG_CONFIG_HOME` for `lani` processes using the LANI home `home`.
+fn config_home(home: &Path) -> PathBuf {
+    home.join("config")
+}
+
+/// The environment for a `lani` process: the LANI home `home`, and that home's configuration file
+/// instead of yours.
+pub fn lani_env(home: &Path) -> [(&'static str, PathBuf); 2] {
+    [
+        ("LANI_HOME", home.to_path_buf()),
+        ("XDG_CONFIG_HOME", config_home(home)),
+    ]
 }
 
 /// Lines `1`..=`count` of the form "line N", newline-terminated.
@@ -196,7 +224,7 @@ impl McpClient {
             Command::new(program)
                 .arg("mcp")
                 .current_dir(cwd)
-                .env("LANI_HOME", home)
+                .envs(lani_env(home))
                 .envs(env.iter().copied())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

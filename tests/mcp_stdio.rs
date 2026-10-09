@@ -241,7 +241,7 @@ fn open_web_ui_starts_the_server_and_opens_the_browser() {
     let stop = common::output(
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .arg("stop")
-            .env("LANI_HOME", &home.path),
+            .envs(common::lani_env(&home.path)),
     );
     assert!(opened.starts_with("Opened http://127.0.0.1:"), "{opened}");
     assert!(
@@ -583,7 +583,7 @@ fn lani_wait(home: &Path, role: &str) -> String {
     let output = common::output(
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .args(["wait", "--review", "1", "--for", role, "--timeout", "10s"])
-            .env("LANI_HOME", home),
+            .envs(common::lani_env(home)),
     );
     let stdout = String::from_utf8(output.stdout).expect("utf-8");
     assert_eq!(output.status.code(), Some(0), "{stdout}");

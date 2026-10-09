@@ -1,4 +1,5 @@
-//! Location of LANI's data directory (`$LANI_HOME`) and the files inside it.
+//! Location of LANI's data directory (`$LANI_HOME`) and the files inside it, and of the
+//! configuration file.
 
 use std::fs::DirBuilder;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -19,6 +20,25 @@ pub fn lani_home() -> Result<PathBuf> {
         Some(home) => require_absolute("HOME", PathBuf::from(home).join(".local/share/lani")),
         None => Err(Error::Invalid(
             "cannot locate the LANI data directory: set LANI_HOME or HOME".to_string(),
+        )),
+    }
+}
+
+/// Resolve the configuration file: `$XDG_CONFIG_HOME/lani/config.toml`, else
+/// `~/.config/lani/config.toml`. Every candidate must be an absolute path.
+pub fn config_path() -> Result<PathBuf> {
+    if let Some(xdg) = non_empty_env("XDG_CONFIG_HOME") {
+        return require_absolute(
+            "XDG_CONFIG_HOME",
+            PathBuf::from(xdg).join("lani/config.toml"),
+        );
+    }
+    match non_empty_env("HOME") {
+        Some(home) => {
+            require_absolute("HOME", PathBuf::from(home).join(".config/lani/config.toml"))
+        }
+        None => Err(Error::Invalid(
+            "cannot locate the LANI configuration file: set XDG_CONFIG_HOME or HOME".to_string(),
         )),
     }
 }

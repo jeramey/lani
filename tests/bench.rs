@@ -378,7 +378,7 @@ fn lani(home: &Path, args: &[&str]) -> std::process::Output {
     common::output(
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .args(args)
-            .env("LANI_HOME", home),
+            .envs(common::lani_env(home)),
     )
 }
 

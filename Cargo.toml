@@ -26,6 +26,7 @@ subtle = "2.6.1"
 syntect = { version = "5.3.0", default-features = false, features = ["html", "regex-onig"] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["rt", "rt-multi-thread", "macros", "io-std", "net", "signal", "time", "sync"] }
+toml = { version = "1.1.7", default-features = false, features = ["std", "parse", "serde"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 two-face = "0.5.2"

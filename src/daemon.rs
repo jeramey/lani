@@ -222,6 +222,11 @@ pub fn start_detached(
     idle_timeout: Option<&str>,
 ) -> Result<RunningServer> {
     ensure_dirs(home)?;
+    // The server reads the configuration file itself. Reading it here too reports a mistake in it
+    // to whoever is starting the server, instead of only in the server's log.
+    if port.is_none() {
+        crate::port::PortChoice::from_config_file()?;
+    }
     let log = OpenOptions::new()
         .create(true)
         .write(true)

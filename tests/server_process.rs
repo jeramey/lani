@@ -12,7 +12,7 @@ fn lani(home: &TestHome, args: &[&str]) -> Output {
     common::output(
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .args(args)
-            .env("LANI_HOME", &home.path),
+            .envs(common::lani_env(&home.path)),
     )
 }
 
@@ -166,7 +166,7 @@ fn concurrent_opens_start_exactly_one_server() {
             common::spawn(
                 Command::new(env!("CARGO_BIN_EXE_lani"))
                     .args(["open", "--no-browser", "--print-url"])
-                    .env("LANI_HOME", &home.path)
+                    .envs(common::lani_env(&home.path))
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped()),
@@ -301,7 +301,7 @@ fn the_server_does_not_depend_on_the_directory_it_was_started_from() {
         Command::new(env!("CARGO_BIN_EXE_lani"))
             .args(["open", "--no-browser", "--print-url"])
             .current_dir(&cwd)
-            .env("LANI_HOME", &home.path),
+            .envs(common::lani_env(&home.path)),
     );
     let port = port_of(&stdout(&opened));
     std::fs::remove_dir(&cwd).unwrap();
@@ -349,7 +349,7 @@ fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() 
         command
             .args(["wait", "--review", "1", "--for", role])
             .args(extra)
-            .env("LANI_HOME", &home.path)
+            .envs(common::lani_env(&home.path))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -394,4 +394,111 @@ fn wait_exits_when_it_is_the_roles_turn_or_the_review_closes_or_time_runs_out() 
         .wait_with_output()
         .unwrap();
     assert_eq!(bad.status.code(), Some(1), "an error, not a timeout");
+}
+
+// ── ports (§13.1) ────────────────────────────────────────────────────────────────────────────
+
+/// A port in use for as long as the listener lives, low enough to have ports above it.
+fn taken_port() -> std::net::TcpListener {
+    loop {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        if listener.local_addr().unwrap().port() < 65_000 {
+            return listener;
+        }
+    }
+}
+
+/// The stderr of a `lani` command that is expected to fail with exit code 1.
+fn error_of(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    stderr
+}
+
+#[test]
+fn the_server_counts_up_from_the_configured_port_past_ports_in_use() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let taken = taken_port();
+    let base = taken.local_addr().unwrap().port();
+    home.write_config(&format!("port = {base}\n"));
+
+    let port = port_of(&stdout(&lani(
+        &home,
+        &["open", "--no-browser", "--print-url"],
+    )));
+    assert!(
+        port > base && usize::from(port - base) < lani::port::PORT_TRIES,
+        "{port} from {base}"
+    );
+    let log = std::fs::read_to_string(home.path.join("logs/server.log")).unwrap();
+    assert!(
+        log.contains(&format!("127.0.0.1:{port} (pid "))
+            && log.contains(&format!("; port {base} was in use")),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_port_given_with_the_flag_must_be_free() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let taken = taken_port();
+    let port = taken.local_addr().unwrap().port().to_string();
+    let mut serve = common::spawn(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .args(["serve", "--port", &port])
+            .envs(common::lani_env(&home.path))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped()),
+    );
+    // If it wrongly starts, it serves until stopped; give it ten seconds to fail.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while serve.try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "lani serve --port {port} started on a port in use"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let stderr = error_of(&serve.wait_with_output().unwrap());
+    assert!(
+        stderr.contains(&format!(
+            "port {port} on 127.0.0.1 is already in use; pass another --port"
+        )),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn ports_browsers_refuse_and_mistakes_in_the_config_file_are_reported() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let config = home.config_path().display().to_string();
+
+    let flag = error_of(&lani(&home, &["serve", "--port", "6667"]));
+    assert!(
+        flag.contains("browsers refuse to connect to port 6667"),
+        "{flag}"
+    );
+    home.write_config("port = 6668\n");
+    for command in [&["open", "--no-browser"][..], &["serve", "--detach"]] {
+        let configured = error_of(&lani(&home, command));
+        assert!(
+            configured.contains("browsers refuse to connect to port 6668")
+                && configured.contains(&format!("set another port in {config}")),
+            "{command:?}: {configured}"
+        );
+    }
+    home.write_config("prot = 7000\n");
+    let typo = error_of(&lani(&home, &["open", "--no-browser"]));
+    assert!(
+        typo.contains(&format!("error in {config}")) && typo.contains("unknown field `prot`"),
+        "{typo}"
+    );
+    assert!(
+        !home.path.join("run/server.json").exists(),
+        "no server was started"
+    );
 }

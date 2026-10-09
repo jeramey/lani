@@ -102,7 +102,7 @@ lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --
           [--print-url] [--no-browser]
                                  open the web UI, starting the server if needed
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
-                                 run the web server
+                                 run the web server; --port N uses exactly port N
 lani status                      whether the server is running, and its idle timeout
 lani stop                        stop the server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
@@ -123,6 +123,18 @@ to you (mode 700), and LANI refuses to use one that other users can access. The 
 The environment variables are `LANI_HOME`, `BROWSER` (the command that opens LANI in your browser,
 instead of `open` on macOS or `xdg-open` on Linux) and `LANI_LOG` (a `tracing` filter for logging
 to stderr, such as `debug`).
+
+## Configuration
+
+The web server listens on port 5264 on 127.0.0.1, or the first free port above it. To use another
+base port, put it in `~/.config/lani/config.toml` (`$XDG_CONFIG_HOME/lani/config.toml`):
+
+```toml
+port = 7300   # 0 lets the OS pick any free port
+```
+
+`lani serve --port N` overrides it for one run and uses exactly port N. Browsers refuse a few ports,
+including the IRC ports 6665–6669, so LANI refuses them too and skips them when counting up.
 
 ## Upgrading
 

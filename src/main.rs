@@ -9,6 +9,7 @@ use lani::mcp::LaniServer;
 use lani::mcp::render;
 use lani::model::Actor;
 use lani::paths;
+use lani::port::PortChoice;
 use lani::service::{Service, WaitOutcome};
 use lani::settings::{self, IdleTimeout};
 use lani::web::{self, ServeOptions, View};
@@ -48,7 +49,8 @@ enum Command {
     },
     /// Run the web server (in the foreground unless --detach is given).
     Serve {
-        /// Port to listen on, on 127.0.0.1 (default: any free port).
+        /// Listen on exactly this port, on 127.0.0.1; 0 picks any free port. Without it, the
+        /// server takes the first free port from the configured one (default 5264).
         #[arg(long)]
         port: Option<u16>,
         /// Stop after this long without activity: e.g. 30m, 3h, 2d, or never.
@@ -284,6 +286,10 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
 fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow::Result<()> {
     let home = home()?;
     let idle_timeout = idle_timeout.map(IdleTimeout::parse).transpose()?;
+    let choice = match port {
+        Some(port) => PortChoice::flag(port)?,
+        None => PortChoice::from_config_file()?,
+    };
     if detach {
         if let Some(server) = daemon::find_running(&home) {
             eprintln!(
@@ -303,7 +309,7 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
     init_logging();
     web::serve(&ServeOptions {
         home,
-        port,
+        port: choice,
         idle_timeout,
     })?;
     Ok(())

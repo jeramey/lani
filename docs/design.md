@@ -222,6 +222,8 @@ $LANI_HOME/                      0700   default: $XDG_DATA_HOME/lani, else ~/.lo
 ```
 
 - The XDG path is used on macOS too, so both platforms behave the same. `$LANI_HOME` overrides it.
+- The configuration file is elsewhere: `$XDG_CONFIG_HOME/lani/config.toml`, else
+  `~/.config/lani/config.toml`, again on macOS too (§14).
 - `$LANI_HOME` must be on a local filesystem, because SQLite WAL mode does not work over network
   filesystems.
 - There is one global database for all repos.
@@ -1046,7 +1048,23 @@ routine:
 
 - Take an exclusive `File::try_lock` on `run/server.lock`. If another server holds it, exit 0. This
   makes concurrent `open` calls race-free, and the OS releases the lock if the server crashes.
-- Bind `127.0.0.1:0` (an ephemeral port), or `--port N`.
+- Bind a port on 127.0.0.1, so the address stays the same from one run to the next, as Jupyter's
+  does. That makes SSH port forwarding easy to set up once (§13.2).
+  - **Base port.** The server tries the base port first, then the ports above it, one at a time,
+    up to 50 ports, as Jupyter does. The base port is `port` in the configuration file (§14), or
+    **5264** ("LANI" on a phone keypad). IANA assigns 5264 to a defunct 3Com service, and no
+    common development server uses it by default.
+  - **Ports browsers refuse.** Browsers refuse to connect to the Fetch Standard's "bad ports",
+    which include the IRC ports 6665–6669, 6679 and 6697. Counting up skips them, and a base port
+    or `--port` that is one of them is rejected with an explanation. (6667 was the first choice
+    for the default, until Safari was found not to load it.)
+  - **`--port N`** uses exactly that port and fails if it is taken. A port given explicitly is
+    an override, so silently moving to another would be surprising.
+  - **Any free port.** `--port 0` or `port = 0` lets the OS pick a port; the tests use this.
+  - The port actually used is in `server.json` and in the startup line of the log. `lani open`
+    and the MCP server read `server.json`, so they find the server wherever it landed.
+  - `lani open` and the `open_web_ui` tool read the configuration file before starting a
+    server, so a mistake in it is reported to them rather than only in the server's log.
 - Generate a 256-bit token and a 128-bit `instance_id` from the OS RNG.
 - Write `server.json` atomically (temp file + rename, mode 0600), then serve.
 
@@ -1337,7 +1355,8 @@ lani mcp                                    MCP server on stdio (spawned by Clau
 lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --issue ID]
           [--print-url] [--no-browser]      open the web UI, starting the server if needed
 lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
-                                            run the web server (foreground unless --detach)
+                                            run the web server (foreground unless --detach);
+                                            --port N uses exactly N (§13.1)
 lani status                                 server pid, port, version, uptime, idle timeout and time left
 lani stop                                   stop the running server
 lani wait --review ID --for reviewer|implementer [--timeout DURATION]
@@ -1352,9 +1371,20 @@ lani version
   uses 3 and 4 for its other outcomes, so a mistyped command never looks like a timeout.
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line
   number, which opens selected; any other colon is part of the path.
-- There is no config file. The environment variables are `LANI_HOME`, `BROWSER`, and `LANI_LOG`
-  (a `tracing` filter for stderr logging, e.g. `debug`; default `warn`). The persisted settings
-  are the idle timeout (§13.1) and the round limit (§11.5), both set on the Settings page.
+- **The configuration file** is `$XDG_CONFIG_HOME/lani/config.toml`, else
+  `~/.config/lani/config.toml`, in TOML. Every key is optional, and a missing file means the
+  defaults. Unknown keys and invalid values are errors that name the file, never silently
+  ignored. The only key so far:
+
+  ```toml
+  port = 5264   # the web server's base port (§13.1); 0 for any free port
+  ```
+
+  It holds settings that are fixed for a machine. The ones you change while working, the idle
+  timeout (§13.1) and the round limit (§11.5), are set on the Settings page and saved in the
+  database.
+- The environment variables are `LANI_HOME`, `XDG_CONFIG_HOME`, `BROWSER`, and `LANI_LOG` (a
+  `tracing` filter for stderr logging, e.g. `debug`; default `warn`).
 - An existing `$LANI_HOME` that other users can access is refused with a `chmod 700` hint rather
   than silently changed.
 
@@ -1444,7 +1474,9 @@ Cargo.toml
 src/
   main.rs            CLI (clap) → dispatch
   lib.rs
-  paths.rs           $LANI_HOME resolution, directory and file permissions
+  paths.rs           $LANI_HOME and configuration file resolution, directory and file permissions
+  config.rs          the configuration file (§14)
+  port.rs            choosing the web server's port, and the ports browsers refuse (§13.1)
   store/             rusqlite: connection setup, migrations/*.sql, typed queries
   git.rs             git subprocess wrapper; unified-diff, name-status and for-each-ref parsers
   base.rs            default-branch and parent-branch detection (§9)
@@ -1490,6 +1522,7 @@ clippy.toml          words doc comments may use without backticks, such as WebDr
 | Constant-time eq   | `subtle` |
 | LRU cache          | `lru` |
 | Serialization      | `serde`, `serde_json` |
+| Configuration file | `toml` (parsing and serde only) |
 
 Linting and safety rules:
 

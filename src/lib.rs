@@ -5,6 +5,7 @@
 
 pub mod anchor;
 pub mod base;
+pub mod config;
 pub mod daemon;
 pub mod error;
 pub mod executable;
@@ -14,6 +15,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod model;
 pub mod paths;
+pub mod port;
 pub mod service;
 pub mod settings;
 pub mod store;

@@ -22,6 +22,7 @@ use tokio::sync::watch;
 use crate::daemon::{self, ServerFile};
 use crate::error::{Error, Result};
 use crate::executable::Executable;
+use crate::port::PortChoice;
 use crate::service::Service;
 use crate::settings::IdleTimeout;
 
@@ -284,7 +285,7 @@ pub fn router(state: AppState) -> Router {
 /// Options for `lani serve`.
 pub struct ServeOptions {
     pub home: PathBuf,
-    pub port: Option<u16>,
+    pub port: PortChoice,
     /// Overrides the saved idle timeout for this run.
     pub idle_timeout: Option<IdleTimeout>,
 }
@@ -320,7 +321,7 @@ async fn run(
     executable: Option<Executable>,
     (timeout, source): (IdleTimeout, TimeoutSource),
 ) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port.unwrap_or(0))).await?;
+    let listener = listen(options.port).await?;
     let port = listener.local_addr()?.port();
     let instance = Instance {
         token: daemon::random_hex(32)?,
@@ -340,8 +341,14 @@ async fn run(
     };
     let state = AppState::new(service, instance, executable, (timeout, source));
     server_file.write(&options.home)?;
+    let taken = match options.port {
+        PortChoice::From(base) if base.get() != port => {
+            format!("; port {base} was in use")
+        }
+        _ => String::new(),
+    };
     eprintln!(
-        "LANI server listening on 127.0.0.1:{port} (pid {})",
+        "LANI server listening on 127.0.0.1:{port} (pid {}){taken}",
         server_file.pid
     );
 
@@ -360,6 +367,33 @@ async fn run(
     daemon::remove_open_files(&options.home, Duration::ZERO);
     eprintln!("LANI server stopped");
     served.map_err(Error::Io)
+}
+
+/// Listen on 127.0.0.1 at the chosen port. A port in use is skipped only when counting up from a
+/// base port; a port given with `--port` must be free.
+async fn listen(choice: PortChoice) -> Result<tokio::net::TcpListener> {
+    let candidates = choice.candidates();
+    for &port in &candidates {
+        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                if let PortChoice::Exact(_) = choice {
+                    return Err(Error::Unavailable(format!(
+                        "port {port} on 127.0.0.1 is already in use; pass another --port, or \
+                         leave --port out to use the first free port from the configured one"
+                    )));
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let (first, last) = (candidates.first(), candidates.last());
+    Err(Error::Unavailable(format!(
+        "ports {} to {} on 127.0.0.1 are all in use; set another port in {}, or pass --port",
+        first.copied().unwrap_or_default(),
+        last.copied().unwrap_or_default(),
+        crate::paths::config_path()?.display()
+    )))
 }
 
 /// Stop when idle, and delete expired browser-launch redirect files.
