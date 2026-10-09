@@ -1905,8 +1905,13 @@ async fn activity_pages_through_events_and_stays_put_while_new_ones_arrive() {
         )),
         "{section}"
     );
+    // Paging links keep the anchor; only Latest goes back to the live page.
     assert!(
-        section.contains(&link("previous", "", "Previous 10")),
+        section.contains(&link(
+            "previous",
+            &format!("&#38;latest={latest}"),
+            "Previous 10"
+        )) && section.contains(&link("latest", "", "Latest")),
         "{section}"
     );
     assert!(

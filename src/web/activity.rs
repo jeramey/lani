@@ -160,8 +160,8 @@ pub fn view(
     let anchored = request.anchor.is_some();
 
     let mut links = Vec::new();
-    // On page 2, *Previous* already leads to the latest.
-    if anchored && page_number != 2 {
+    // Paging links keep the anchor; only *Latest* goes back to the live latest page.
+    if anchored {
         links.push(PageLink {
             key: "latest",
             label: "Latest".to_string(),
@@ -169,20 +169,14 @@ pub fn view(
         });
     }
     if let Some(previous_page) = NonZeroU32::new(page_number - 1) {
-        // Back to page 1 means back to the latest events, without an anchor.
-        let previous = if previous_page == FIRST_PAGE {
-            latest
-        } else {
-            ActivityRequest {
-                page: previous_page,
-                ..request
-            }
-        };
         let size = request.per_page.map_or(0, NonZeroU32::get);
         links.push(PageLink {
             key: "previous",
             label: format!("Previous {size}"),
-            url: url(previous),
+            url: url(ActivityRequest {
+                page: previous_page,
+                ..request
+            }),
         });
     }
     if let Some(next_page) = request.page.checked_add(1)

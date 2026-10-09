@@ -1255,7 +1255,9 @@ back to the page (303 See Other); live updates then refresh other open pages (§
   shown onto page 2.
 - **Paged-back pages stay put.** Paging back anchors the pages at the review's latest event at
   that moment, so they don't move while new events arrive. A notice then says how many arrived,
-  with a link to the latest. *Previous* from page 2 leads back to the latest, without an anchor.
+  with a link to the latest. Paging links keep the anchor, *Previous* from page 2 too, so it
+  shows the events just before the page; only *Latest* and the notice's link return to the live
+  page 1.
 - **In the URL.** The page is in the overview's query: `events` (10, 25, 50, 100 or `all`), `page`
   (from 1) and `latest` (the anchor event). Defaults are left out. The links work without
   JavaScript, a reload or a live update keeps the page, and the issue filter links keep it too.
