@@ -1700,6 +1700,10 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 4. **M4 — Live updates and polish.**
    - Scope: SSE, editor protection, the web server's update banner, benchmarks against §16,
      README.
+5. **M5 — Claude Code sessions from the web UI (proposed).**
+   - Starting a reviewer or implementer session from a review page, and working with it in a
+     browser tab. The proposal and its open questions are in
+     [`claude-sessions.md`](claude-sessions.md); nothing is built yet.
 
 ---
 
