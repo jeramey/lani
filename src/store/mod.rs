@@ -662,7 +662,6 @@ pub fn latest_event_id(conn: &Connection, review_id: i64) -> Result<Option<i64>>
     )?)
 }
 
-/// A review's events, newest first: the latest `limit`, or all of them for `None`.
 /// Which of a review's events to list, newest first.
 #[derive(Clone, Copy, Debug)]
 pub struct EventPage {
