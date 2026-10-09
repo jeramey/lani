@@ -471,7 +471,7 @@ pub struct IssueRow {
     /// Whether a question about this issue is waiting for the human.
     pub needs_you: bool,
     /// Which roles have created or commented on the issue: reviewer, human, implementer.
-    pub lights: Vec<RoleLight>,
+    pub lights: [RoleLight; 3],
 }
 
 /// One light in an issue row: whether a role has created or commented on the issue.
@@ -543,13 +543,12 @@ pub fn issue_row(view: &IssueView) -> IssueRow {
     }
 }
 
-fn role_lights(view: &IssueView) -> Vec<RoleLight> {
+fn role_lights(view: &IssueView) -> [RoleLight; 3] {
     [
         (Actor::Reviewer, "Reviewer", "reviewer"),
         (Actor::Human, "You", "human"),
         (Actor::Implementer, "Implementer", "implementer"),
     ]
-    .into_iter()
     .map(|(role, name, class)| {
         let created = view.issue.author == role;
         // The first comment is the issue's description, written by its creator.
@@ -575,7 +574,6 @@ fn role_lights(view: &IssueView) -> Vec<RoleLight> {
             tooltip: format!("{name}: {status}"),
         }
     })
-    .collect()
 }
 
 /// How a severity is shown: its name, and a CSS class for its badge colour.
