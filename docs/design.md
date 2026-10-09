@@ -1259,7 +1259,8 @@ back to the page (303 See Other); live updates then refresh other open pages (§
 - **In the URL.** The page is in the overview's query: `events` (10, 25, 50, 100 or `all`), `page`
   (from 1) and `latest` (the anchor event). Defaults are left out. The links work without
   JavaScript, a reload or a live update keeps the page, and the issue filter links keep it too.
-  Other values get a 400 page, as does a page past the last.
+  Other values get a 400 page, as do a page past the last and an anchor before the review's first
+  event (event ids are shared by all reviews).
 - **Consistency.** The events and their counts are read in one read transaction, so they agree
   while sessions write.
 

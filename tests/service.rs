@@ -2024,6 +2024,30 @@ fn the_reviewers_first_hand_off_goes_to_the_human() {
 }
 
 #[test]
+fn an_activity_anchor_before_the_reviews_first_event_is_refused() {
+    use lani::service::ActivityRequest;
+    use std::num::NonZeroU32;
+    let home = TestHome::new();
+    let (first_repo, second_repo) = (feature_repo(), feature_repo());
+    let mut service = service(&home);
+    let first = start(&mut service, &first_repo, Actor::Reviewer, BaseMode::Auto);
+    let second = start(&mut service, &second_repo, Actor::Reviewer, BaseMode::Auto);
+    // Event ids are shared, so the first review's events come before the second's.
+    let anchor = service.latest_event_id(first.view.review.id).unwrap();
+    let request = ActivityRequest {
+        per_page: NonZeroU32::new(10),
+        page: NonZeroU32::MIN,
+        anchor: Some(anchor),
+    };
+    expect_invalid(
+        service.activity(second.view.review.id, request),
+        "has no events up to event",
+    );
+    let own = service.activity(first.view.review.id, request).unwrap();
+    assert_eq!((own.total, own.newer), (1, 0));
+}
+
+#[test]
 fn an_issue_can_ask_the_human_as_it_is_filed() {
     let home = TestHome::new();
     let repo = feature_repo();

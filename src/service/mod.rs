@@ -1213,7 +1213,8 @@ impl Service {
         )
     }
 
-    /// A page of a review's activity. Fails with `Invalid` for a page past the last.
+    /// A page of a review's activity. Fails with `Invalid` for a page past the last, or an anchor
+    /// before the review's first event.
     pub fn activity(&self, review_id: i64, request: ActivityRequest) -> Result<ActivityPage> {
         // One read transaction, so the events and the counts agree although other processes
         // write meanwhile.
@@ -1222,6 +1223,12 @@ impl Service {
             .ok_or_else(|| Error::NotFound(format!("review {review_id} does not exist")))?;
         let upto = request.anchor.unwrap_or(latest_id);
         let total = store::count_events_upto(&tx, review_id, upto)?;
+        // Event ids are shared by all reviews, so an anchor can come before this review's first.
+        if total == 0 {
+            return Err(Error::Invalid(format!(
+                "review {review_id} has no events up to event {upto}"
+            )));
+        }
         let newer = match request.anchor {
             Some(anchor) => store::count_events_after(&tx, review_id, anchor)?,
             None => 0,
