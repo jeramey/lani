@@ -276,6 +276,11 @@ fn serve_prints_the_sign_in_link_but_never_logs_it() {
     assert_eq!(token.len(), 64, "{link}");
     let again = stdout(&lani(&home, &["serve", "--detach"]));
     assert_eq!(again, printed, "the running server's link, again");
+    let foreground = stdout(&lani(&home, &["serve"]));
+    assert_eq!(
+        foreground, printed,
+        "in the foreground too, beside the running server"
+    );
     let log = std::fs::read_to_string(home.path.join("logs/server.log")).unwrap();
     assert!(log.contains("LANI server listening on"), "{log}");
     assert!(

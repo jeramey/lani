@@ -300,7 +300,18 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         .ok();
     daemon::ensure_dirs(&options.home)?;
     let Some(_lock) = daemon::ServerLock::try_acquire(&options.home)? else {
-        eprintln!("A LANI server is already running; use `lani open` to reach it.");
+        match daemon::find_running(&options.home) {
+            Some(server) => {
+                eprintln!(
+                    "A LANI server is already running (pid {}, port {}); this one was not \
+                     started.",
+                    server.health.pid, server.health.port
+                );
+                print!("{}", server.file.sign_in_text());
+            }
+            // Still starting, or stopping: it holds the lock but doesn't answer yet, or anymore.
+            None => eprintln!("A LANI server is already running; use `lani open` to reach it."),
+        }
         return Ok(());
     };
     let service = Service::open(&crate::paths::db_path(&options.home))?;
