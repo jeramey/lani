@@ -877,7 +877,7 @@ role (§11.3).
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
-| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. |
+| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. In socket mode (§13.2) it opens no browser, and returns directions to pass on to the human: the `ssh -L` command, the page's address, and that `lani open … --print-url` command to run on the remote machine for a sign-in link. |
 
 ### 12.4 Output format
 
@@ -897,8 +897,8 @@ forged `[c99 v1] human · …` comment header, or a title that closes its quotes
 2. **Single values inside LANI's lines** are double-quoted with backslash escapes (Rust's `{:?}`
    format), so a value can neither end early nor contain a line break. This covers titles, file
    paths, branch and repository names, worktree paths, issue previews, and the text of git errors.
-   Values from the user's own environment (`LANI_HOME`, `PATH`, `BROWSER`, the git version) are
-   not quoted.
+   Values from the user's own environment (`LANI_HOME` and the socket path in it, `PATH`,
+   `BROWSER`, the host name, the git version) are not quoted.
 3. **Code excerpts** sit behind a line-number gutter, inside a fence longer than any run of
    backticks in the code.
 4. **Final pass.** Every tool result and error gets one more pass that turns any line break other
@@ -1049,8 +1049,9 @@ itself. A self-restart was considered and rejected:
 **Finding or starting the server.** `lani open [target]` and the `open_web_ui` tool share one
 routine:
 
-1. Read `run/server.json`. If it exists, call `GET http://127.0.0.1:<port>/api/health` with
-   `Authorization: Bearer <token>` and a 500 ms timeout. The response must carry the same
+1. Read `run/server.json`. If it exists, call `GET http://127.0.0.1:<port>/api/health`, or the
+   same through the socket in socket mode (§13.2), with `Authorization: Bearer <token>` and a
+   500 ms timeout. The response must carry the same
    `instance_id`, which guards against another process reusing the port. On success, go to step 4.
 2. Otherwise, start the server: re-exec `current_exe()` as `lani serve --detach` in a new process
    group, with stdin from `/dev/null` and stdout and stderr going to `logs/server.log`. The server
@@ -1083,22 +1084,43 @@ routine:
     and the MCP server read `server.json`, so they find the server wherever it landed.
   - `lani open` and the `open_web_ui` tool read the configuration file before starting a
     server, so a mistake in it is reported to them rather than only in the server's log.
+- **Socket mode** (§13.2) listens on the Unix socket `run/web.sock` instead of a port.
+  - **Permissions.** The socket has mode 0600, like `server.json`, in the 0700 run directory.
+  - **Not in `$XDG_RUNTIME_DIR`.** systemd removes `/run/user/<uid>` when your last session ends,
+    which the server outlives on purpose, and macOS has no such directory.
+  - **A leftover socket.** The server takes the server lock before binding, which proves that no
+    other server is alive. So a socket already at the path was left by one that died, for
+    example of SIGKILL, and it is replaced. Anything else at the path is reported by name and
+    left alone.
+  - **Path length.** A socket path must be shorter than 104 bytes on macOS and 108 on Linux. The
+    default is about 45 bytes for a typical home directory, and the test suite's temporary homes
+    on macOS come to about 81. A longer path is refused before binding, with the suggestion to
+    set a shorter `LANI_HOME`.
+  - **`port` is not bound.** It is the local port that the printed command and links suggest you
+    forward from, so nothing counts up, and 0 is refused.
 - Generate a 256-bit token and a 128-bit `instance_id` from the OS RNG.
 - Write `server.json` atomically (temp file + rename, mode 0600), then serve.
+  - **Its fields in socket mode.** The file has `socket`, `browser_port` (the suggested local
+    port) and `ssh_host` (§13.2) in place of `port`.
+  - **Older binaries.** Leaving `port` out is deliberate: older `lani` binaries require it, so they
+    can't read the file, and they never send the token to a TCP port that someone else may hold.
+  - **`listen` in the configuration file** stops an older binary at once, since unknown keys are
+    errors (§14). That includes a Claude session's `lani mcp` still running one; `/mcp reconnect
+    lani` fixes it.
 
 **Shutdown.** The server shuts down on `POST /api/shutdown`, SIGTERM, SIGINT or idle timeout. In
-every case it removes the browser-launch redirect files, then `server.json` if the file is still
-its own.
+every case it removes the browser-launch redirect files and, in socket mode, its socket, then
+`server.json` if the file is still its own.
 
 `lani stop` calls `/api/shutdown` with the bearer token, so no signal-sending code is needed.
 Then it waits up to 5 s for the server process to end, by waiting for the server lock to come
 free. The server holds the lock until it exits, and the OS releases it however the process ends.
 So when `lani stop` returns, the cleanup is done, or the process died without it. In the second
-case `lani stop`, still holding the lock, removes the `server.json` and redirect files the server
-left. A server that another command started meanwhile, such as `lani open` or `open_web_ui`, may
-take the lock first. `lani stop` then sees a different instance answering in `server.json`, which
-proves the old process has ended. It reports the new server and leaves it running. Two simpler
-waits were tried and failed:
+case `lani stop`, still holding the lock, removes the `server.json`, redirect files and socket the
+server left. A server that another command started meanwhile, such as `lani open` or
+`open_web_ui`, may take the lock first. `lani stop` then sees a different instance answering in
+`server.json`, which proves the old process has ended. It reports the new server and leaves it
+running. Two simpler waits were tried and failed:
 
 - **Waiting for the health check to fail** (M2): the server stops listening before it cleans up,
   and a test caught `lani stop` returning in between.
@@ -1202,20 +1224,76 @@ local server and a remote one forwarded to another local port may listen on the 
 stderr goes to its log, and its stdout to `/dev/null`, so the link never reaches the log.
 
 **Remote use over SSH.** LANI can run on another machine, where the repository and the Claude
-Code sessions are, with your local browser reaching it through SSH port forwarding:
+Code sessions are, with your local browser reaching it through SSH port forwarding. There are two
+ways to forward. On a machine that other people also use, socket mode is the one to use.
+
+**Socket mode** is set with `listen = "socket"` in the configuration file, or `lani serve --listen
+socket`. The server listens on a Unix socket in your private run directory (§13.1), and you
+forward a local port to it:
+
+```
+ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
+```
+
+- **Why.** On a TCP port, every user of the remote machine can connect to LANI, and only the token
+  keeps them out. Nothing checks the other direction: which server your tunnel reaches.
+  - Another user can bind 5264 before LANI does, or after LANI's idle stop frees it.
+  - LANI then counts up to 5265 and says so. But a forward set up for 5264 now reaches their
+    server, and signing in through it gives them the token.
+  - Only you can create a file in your run directory, and only you can connect to a socket there.
+    So in socket mode, nobody else can take the forward's target or reach the server.
+- **Your own machine is unchanged.** Your browser still talks to `127.0.0.1:5264` there. ssh's
+  listener there is open to other users of that machine and to the cookie exposure in §15. So the
+  token, the cookie, the `Host` and `Origin` checks and the CSP all stay as they are.
+- **A forward set up once.** The socket's path never changes, so the forward can go in
+  `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
+  - The printed path is absolute, because ssh expands anything else on your machine, not the
+    remote one.
+  - ssh expands tokens in that file, so write any `%` in the path as `%%`.
+- **The printed command** uses `port` as the local port.
+  - **The host name** is this machine's name as `uname -n` prints it, the same as `hostname`. The
+    server records it as `ssh_host` in `server.json`.
+  - **Usually right.** It is usually the name you ssh to. Cloud machines named after private
+    addresses, ssh aliases, jump hosts and containers are the exceptions, so the line says whose
+    name it is.
+  - **No name.** If there is none, or it has anything but letters, digits, `.`, `-` and `_`, the
+    command shows `<host>`.
+  - **Why `uname -n`.** POSIX requires it, and calling `gethostname` would need unsafe code, which
+    the crate forbids.
+- **No browser on the remote machine.** A browser there could not reach a Unix socket, so
+  `lani open` and `open_web_ui` never open one in socket mode.
+  - They give directions instead: the forward command, the page's address without the token, and
+    the `lani open … --print-url` command to run on the remote machine for a sign-in link.
+  - The token stays out of Claude's output, which is stored on disk and sent to the API.
+  - `lani serve` prints the forward command and the sign-in link. `lani status` prints the
+    forward command, and `lani status --print-url` the link.
+- **Pages.** The *Not signed in* and *Link expired* pages say to run `lani open --print-url` on
+  the remote machine, by name.
+- **Restarts.** The forward keeps working across server restarts, since the path stays the same.
+  Only signing in again is needed, because each start has a new token.
+- **What ssh needs.** OpenSSH 6.7 or later at both ends, and sshd allowing Unix-socket forwarding.
+  - `AllowStreamLocalForwarding` controls it and is on by default; `DisableForwarding yes` also
+    turns it off.
+  - Where it is off, TCP forwarding remains, with the exposure above.
+- **Only over SSH.** On the machine you sit at, the browser needs a TCP port.
+
+**TCP forwarding**, the default mode, forwards to the server's port:
 
 ```
 ssh -L 5264:127.0.0.1:5264 remote-host
 remote$ lani serve --detach        # prints the sign-in link
 ```
 
-The fixed base port (§13.1) makes the forward the same every time. `lani serve` prints the
-sign-in link, in the foreground or with `--detach`. `lani status --print-url` prints it again
-later, and `lani open --print-url --no-browser` prints it too. If the server took a port above
-5264, forward that one. If 5264 is taken on your own machine, for example by a local LANI,
-forward another local port (`-L 5300:127.0.0.1:5264`) and change the link's port to match; the
-`Host` and `Origin` checks and the cookie name follow the port the browser addressed. The remote
-server's token protects it from other users of your machine as it does locally.
+- **The same forward every time.** The fixed base port (§13.1) makes it so. If the server took a
+  port above 5264, forward that one.
+- **5264 taken on your own machine,** for example by a local LANI: forward another local port
+  (`-L 5300:127.0.0.1:5264`) and change the link's port to match. The `Host` and `Origin` checks
+  and the cookie name follow the port the browser addressed.
+- **Other users of your machine.** The remote server's token protects it from them as it does
+  locally.
+
+In either mode, `lani serve` prints the sign-in link, in the foreground or with `--detach`.
+`lani status --print-url` prints it again later, and so does `lani open --print-url --no-browser`.
 
 ### 13.3 Pages and URLs
 
@@ -1455,9 +1533,10 @@ Comments and summaries are rendered with **comrak**:
 lani mcp                                    MCP server on stdio (spawned by Claude Code)
 lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --issue ID]
           [--print-url] [--no-browser]      open the web UI, starting the server if needed
-lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
+lani serve [--port N] [--listen tcp|socket] [--idle-timeout DURATION|never] [--detach]
                                             run the web server (foreground unless --detach);
-                                            --port N uses exactly N (§13.1)
+                                            --port N uses exactly N (§13.1); --listen socket
+                                            listens on a Unix socket for use over SSH (§13.2)
 lani status [--print-url]                   server pid, port, version, uptime, idle timeout and
                                             time left; --print-url prints only the running
                                             server's sign-in URL
@@ -1476,6 +1555,7 @@ lani version
     is running, so a scrolled-off link can be shown again.
   - `lani serve` introduces its link with a line about keeping it private, so `lani open` and
     `lani status` are the ones to parse.
+- In socket mode, `lani open` never opens a browser; it prints directions to stderr (§13.2).
 - Every command exits 1 on an error and 2 on a usage error (from clap). `lani wait` therefore
   uses 3 and 4 for its other outcomes, so a mistyped command never looks like a timeout.
 - `--file` opens the Files view unless `--view changes` is given. A trailing `:<digits>` is a line
@@ -1485,11 +1565,16 @@ lani version
   defaults. So does an environment with neither variable set to an absolute path: a relative
   `XDG_CONFIG_HOME` is ignored, as the XDG base directory specification says, and trimmed
   environments that set only `LANI_HOME` keep working. Unknown keys and invalid values are errors
-  that name the file, never silently ignored. The only key so far:
+  that name the file, never silently ignored. The keys:
 
   ```toml
-  port = 5264   # the web server's base port (§13.1); 0 for any free port
+  port = 5264        # the web server's base port (§13.1); 0 for any free port. In socket mode,
+                     # the local port the printed links suggest you forward from (§13.2)
+  listen = "socket"  # "tcp" (the default) or "socket" (§13.2)
   ```
+
+  `--port` and `--listen` override them for one run. The file is read only for what the flags
+  leave open.
 
   It holds settings that are fixed for a machine. The ones you change while working, the idle
   timeout (§13.1) and the round limit (§11.5), are set on the Settings page and saved in the
@@ -1506,6 +1591,7 @@ lani version
 | Threat                                                   | Mitigation |
 | -------------------------------------------------------- | ---------- |
 | Another local user connects to the web port              | Token required on every request; 256-bit random value with constant-time comparison. |
+| Another user of a remote machine takes the port your SSH forward points at, or connects to LANI there | Socket mode (§13.2): a Unix socket in your 0700 run directory, which only you can create or connect to. |
 | Token read from another process's arguments (`ps`)       | The token never appears on a command line; the browser opens a 0600 redirect file instead. |
 | Token read from disk                                     | `server.json` is mode 0600 inside the 0700 `$LANI_HOME`; the DB is also 0600. |
 | DNS rebinding from a malicious website                   | `Host` header allowlist; the server binds 127.0.0.1 only. |
@@ -1588,6 +1674,7 @@ src/
   paths.rs           $LANI_HOME and configuration file resolution, directory and file permissions
   config.rs          the configuration file (§14)
   port.rs            choosing the web server's port, and the ports browsers refuse (§13.1)
+  listen.rs          a TCP port or a Unix socket: the `listen` setting and the socket path (§13.2)
   store/             rusqlite: connection setup, migrations/*.sql, typed queries
   git.rs             git subprocess wrapper; unified-diff, name-status and for-each-ref parsers
   base.rs            default-branch and parent-branch detection (§9)
@@ -1622,7 +1709,7 @@ clippy.toml          words doc comments may use without backticks, such as WebDr
 | MCP                | `rmcp` (official SDK; stdio transport, tool macros) + `schemars` |
 | Async runtime      | `tokio`: current-thread runtime for `mcp`, multi-thread for `serve` |
 | HTTP server        | `axum`, with LANI's own middleware for auth and security headers |
-| HTTP client        | A small blocking HTTP/1.1 client over `std::net::TcpStream` (`daemon.rs`), used only for LANI's own fixed-length health and shutdown responses |
+| HTTP client        | A small blocking HTTP/1.1 client over `std::net::TcpStream` or, in socket mode, `UnixStream` (`daemon.rs`), used only for LANI's own fixed-length health and shutdown responses |
 | Templates          | `askama` |
 | Highlighting       | `syntect` + `two-face` |
 | Markdown           | `comrak` |
@@ -1725,6 +1812,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - It needs a browser, so it is opt-in: `cargo test --test browser -- --ignored`. Enable Safari's
     automation once: Settings → Advanced → "Show features for web developers", Develop → "Allow
     Remote Automation", then `safaridriver --enable`.
+  - A socket-mode server works through a forwarded port: creating an issue, replying and
+    resolving, and live updates.
   - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
     toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline
     script injected); both breaks fail the test.
@@ -1759,9 +1848,22 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - `stop` shuts it down.
   - Concurrent `open` calls produce exactly one server.
   - A crashed server (lock released, stale `server.json`) is replaced.
+  - **Socket mode (§13.2):**
+    - The socket's mode, and `server.json` without `port`.
+    - Signing in through a forwarded port. A second forward on another port gets a cookie of its
+      own.
+    - `status` and `stop` over the socket, and the server removing its socket on SIGTERM.
+    - `open` and `open_web_ui` giving directions without the token. A `BROWSER` that records
+      being run shows that neither starts a browser.
+    - A killed server's socket is replaced, and anything else at the path is left alone.
+    - A path too long for the OS is refused.
 - **Concurrency:** two processes writing simultaneously, with no `SQLITE_BUSY` surfacing.
 - **Benchmarks:** `tests/bench.rs` measures the §16 budget against the release binary, and fails
   if a target is missed. It is opt-in, and needs `--release`.
+- **SSH forwarding:** `common::Forward` stands in for `ssh -L <port>:<socket>`. It is a TCP
+  listener on any chosen port that relays each connection to a Unix socket, so the tests need
+  neither ssh nor socat. Real ssh is not tested: such tests are fiddly and prone to break, and a
+  forward only relays bytes.
 - **Test harness:** every process spawn in a test binary goes through one mutex. On macOS a pipe
   created by one thread can leak into a child forked concurrently by another thread; a
   long-lived LANI server inheriting such a pipe makes the first thread wait for EOF forever.

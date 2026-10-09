@@ -145,14 +145,25 @@ mod tests {
         );
         assert!(!blocked_by_browsers(DEFAULT_PORT.get()));
         assert_eq!(
-            PortChoice::configured(&Config { port: Some(0) }).unwrap(),
+            PortChoice::configured(&Config {
+                port: Some(0),
+                listen: None
+            })
+            .unwrap(),
             PortChoice::Any
         );
         assert_eq!(
-            PortChoice::configured(&Config { port: Some(7000) }).unwrap(),
+            PortChoice::configured(&Config {
+                port: Some(7000),
+                listen: None
+            })
+            .unwrap(),
             PortChoice::From(port(7000))
         );
-        match PortChoice::configured(&Config { port: Some(6667) }) {
+        match PortChoice::configured(&Config {
+            port: Some(6667),
+            listen: None,
+        }) {
             Err(Error::Invalid(message)) => assert!(
                 message.contains("browsers refuse to connect to port 6667")
                     && message.contains("set another port in /")

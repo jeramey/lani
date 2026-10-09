@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use rmcp::ServiceExt as _;
 
 use lani::daemon::{self, RunningServer};
+use lani::listen::Listen;
 use lani::mcp::LaniServer;
 use lani::mcp::render;
 use lani::model::Actor;
@@ -43,16 +44,21 @@ enum Command {
         /// Print the sign-in URL to stdout. It contains the access token, so keep it private.
         #[arg(long)]
         print_url: bool,
-        /// Do not open a browser.
+        /// Do not open a browser. A server listening on a Unix socket never opens one.
         #[arg(long)]
         no_browser: bool,
     },
     /// Run the web server (in the foreground unless --detach is given).
     Serve {
         /// Listen on exactly this port, on 127.0.0.1; 0 picks any free port. Without it, the
-        /// server takes the first free port from the configured one (default 5264).
+        /// server takes the first free port from the configured one (default 5264). With
+        /// --listen socket, the local port the printed links suggest you forward from.
         #[arg(long)]
         port: Option<u16>,
+        /// Listen on a TCP port, or on a Unix socket for use over SSH, which you reach by
+        /// forwarding a local port to it. Overrides `listen` in the configuration file.
+        #[arg(long, value_enum)]
+        listen: Option<ListenArg>,
         /// Stop after this long without activity: e.g. 30m, 3h, 2d, or never.
         /// Overrides the saved setting for this run only.
         #[arg(long, value_name = "DURATION")]
@@ -90,6 +96,22 @@ enum Command {
     Version,
 }
 
+/// The values `lani serve --listen` accepts.
+#[derive(Clone, Copy, ValueEnum)]
+enum ListenArg {
+    Tcp,
+    Socket,
+}
+
+impl ListenArg {
+    fn listen(self) -> Listen {
+        match self {
+            Self::Tcp => Listen::Tcp,
+            Self::Socket => Listen::Socket,
+        }
+    }
+}
+
 /// The roles that wait for their turn.
 #[derive(Clone, Copy, ValueEnum)]
 enum RoleArg {
@@ -118,9 +140,15 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Serve {
             port,
+            listen,
             idle_timeout,
             detach,
-        } => serve(port, idle_timeout.as_deref(), detach),
+        } => serve(
+            port,
+            listen.map(ListenArg::listen),
+            idle_timeout.as_deref(),
+            detach,
+        ),
         Command::Status { print_url } => status(print_url),
         Command::Stop => stop(),
         Command::Wait {
@@ -280,6 +308,19 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
     if print_url {
         println!("{}", server.file.login_url(&path));
     }
+    // A browser on this machine can't reach a Unix socket; the one that can is on your own
+    // machine, at the end of an SSH forward (§13.2).
+    if let Some(directions) = server.file.endpoint.forward_directions() {
+        eprint!("LANI listens on a Unix socket, so no browser was opened. {directions}");
+        if !print_url {
+            eprintln!("Then open {}", server.file.public_url(&path));
+            eprintln!(
+                "If your browser isn't signed in to this server yet, run this command again with \
+                 --print-url and open the link it prints instead."
+            );
+        }
+        return Ok(());
+    }
     if !no_browser {
         daemon::open_in_browser(&home, &server.file, &path).with_context(|| {
             "could not open a browser; run `lani open --print-url` and open the printed URL yourself"
@@ -289,7 +330,12 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow::Result<()> {
+fn serve(
+    port: Option<u16>,
+    listen: Option<Listen>,
+    idle_timeout: Option<&str>,
+    detach: bool,
+) -> anyhow::Result<()> {
     let home = home()?;
     let idle_timeout = idle_timeout.map(IdleTimeout::parse).transpose()?;
     // The flag is checked at once. The configuration file is read only when a server is started,
@@ -299,16 +345,18 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
     if detach {
         let server = if let Some(server) = daemon::find_running(&home) {
             eprintln!(
-                "A LANI server is already running (pid {}, port {}); its settings were not changed.",
-                server.health.pid, server.health.port
+                "A LANI server is already running (pid {}, {}); its settings were not changed.",
+                server.health.pid,
+                server.health.endpoint.describe()
             );
             server
         } else {
             let timeout_text = idle_timeout.map(|timeout| timeout.to_string());
-            let server = daemon::start_detached(&home, port, timeout_text.as_deref())?;
+            let server = daemon::start_detached(&home, port, listen, timeout_text.as_deref())?;
             eprintln!(
-                "LANI server running on 127.0.0.1:{} (pid {}).",
-                server.health.port, server.health.pid
+                "LANI server running on {} (pid {}).",
+                server.health.endpoint.describe(),
+                server.health.pid
             );
             server
         };
@@ -319,6 +367,7 @@ fn serve(port: Option<u16>, idle_timeout: Option<&str>, detach: bool) -> anyhow:
     web::serve(&ServeOptions {
         home,
         port: flag,
+        listen,
         idle_timeout,
     })?;
     Ok(())
@@ -343,9 +392,9 @@ fn status(print_url: bool) -> anyhow::Result<()> {
     }
     let health = &server.health;
     println!(
-        "LANI server running: pid {}, port {}, version {}, started {}",
+        "LANI server running: pid {}, {}, version {}, started {}",
         health.pid,
-        health.port,
+        health.endpoint.describe(),
         health.version,
         lani::time::to_local(&health.started_at)
     );
@@ -362,6 +411,9 @@ fn status(print_url: bool) -> anyhow::Result<()> {
         "Idle timeout {} ({}); {remaining}.",
         health.idle_timeout, health.idle_timeout_source
     );
+    if let Some(directions) = server.file.endpoint.forward_directions() {
+        print!("{directions}");
+    }
     warn_on_version_mismatch(&server);
     Ok(())
 }
@@ -378,9 +430,10 @@ fn stop() -> anyhow::Result<()> {
     );
     if let Some(successor) = stopped.successor {
         println!(
-            "Meanwhile another command started a new LANI server (pid {}, port {}); it is still \
+            "Meanwhile another command started a new LANI server (pid {}, {}); it is still \
              running.",
-            successor.health.pid, successor.health.port
+            successor.health.pid,
+            successor.health.endpoint.describe()
         );
     }
     Ok(())

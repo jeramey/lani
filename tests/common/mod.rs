@@ -1,4 +1,5 @@
-//! Shared helpers for integration tests: throwaway git repositories and LANI homes.
+//! Shared helpers for integration tests: throwaway git repositories and LANI homes, an MCP
+//! client, and a stand-in for an SSH port forward.
 
 #![allow(
     dead_code,
@@ -6,10 +7,13 @@
 )]
 
 use std::io::{BufRead, BufReader, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -330,4 +334,97 @@ impl Drop for McpClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+// ── SSH port forwarding ──────────────────────────────────────────────────────────────────────
+
+/// Forwards connections to a TCP port on 127.0.0.1 to a Unix socket, as `ssh -L <port>:<socket>`
+/// does for a LANI on another machine (docs/design.md §13.2). The tests use it in place of ssh.
+pub struct Forward {
+    pub port: u16,
+    stop: Arc<AtomicBool>,
+}
+
+impl Forward {
+    /// Listen on `port` (0 for any free port) and forward each connection to `socket`. Like ssh,
+    /// it connects to the socket only when a connection arrives.
+    pub fn new(port: u16, socket: &Path) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", port)).expect("listen on the local port");
+        let port = listener.local_addr().unwrap().port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let socket = socket.to_path_buf();
+        std::thread::spawn(move || {
+            for client in listener.incoming() {
+                if stopping.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Ok(client) = client {
+                    let socket = socket.clone();
+                    std::thread::spawn(move || relay(client, &socket));
+                }
+            }
+        });
+        Self { port, stop }
+    }
+}
+
+impl Drop for Forward {
+    /// Stop listening. Connections already forwarded carry on until either end closes.
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake the accepting thread, so that it sees the flag.
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+/// Copy bytes both ways between `client` and a new connection to `socket`, until both directions
+/// have ended. If the socket can't be reached, the client's connection is closed, as ssh does.
+///
+/// Each direction ends by shutting down the writing side, not only by dropping it, so the other
+/// end sees the end even if a child process inherited the socket (see [`SPAWN`]).
+fn relay(client: TcpStream, socket: &Path) {
+    let Ok(server) = UnixStream::connect(socket) else {
+        return;
+    };
+    let (mut from_client, mut to_server) =
+        (client.try_clone().unwrap(), server.try_clone().unwrap());
+    let upstream = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut from_client, &mut to_server);
+        let _ = to_server.shutdown(Shutdown::Write);
+    });
+    let (mut from_server, mut to_client) = (server, client);
+    let _ = std::io::copy(&mut from_server, &mut to_client);
+    let _ = to_client.shutdown(Shutdown::Write);
+    let _ = upstream.join();
+}
+
+/// A free port on 127.0.0.1, for a forward to listen on later.
+pub fn free_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .expect("find a free port")
+        .port()
+}
+
+/// This machine's name, as `uname -n` prints it, and as LANI's printed `ssh` command gives it.
+pub fn machine_name() -> String {
+    let output = output(Command::new("uname").arg("-n"));
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// A `BROWSER` for tests in which no browser may be opened: a script in `home` that creates
+/// the returned marker file if it is ever run.
+pub fn recording_browser(home: &Path) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let browser = home.join("browser.sh");
+    let marker = home.join("browser-ran");
+    std::fs::write(
+        &browser,
+        format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+    )
+    .expect("write browser script");
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755))
+        .expect("make browser script executable");
+    (browser, marker)
 }

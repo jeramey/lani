@@ -10,6 +10,7 @@ use axum::http::{Request, StatusCode, header};
 use common::{TestHome, TestRepo, numbered};
 use futures_util::StreamExt as _;
 use lani::base::BaseMode;
+use lani::daemon::Endpoint;
 use lani::executable::Executable;
 use lani::model::{Actor, IssueStatus, Severity, Side};
 use lani::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
@@ -40,6 +41,24 @@ fn fixture() -> Fixture {
 
 /// Like [`fixture`], for a server started from `executable`.
 fn fixture_with(executable: Option<Executable>) -> Fixture {
+    fixture_reached_at(executable, Endpoint::Tcp { port: PORT })
+}
+
+/// Like [`fixture`], for a server in socket mode on the machine "devbox", whose socket is
+/// forwarded to `PORT` (§13.2).
+fn socket_fixture() -> Fixture {
+    fixture_reached_at(
+        None,
+        Endpoint::Socket {
+            socket: "/home/you/.local/share/lani/run/web.sock".into(),
+            browser_port: PORT,
+            ssh_host: Some("devbox".to_string()),
+        },
+    )
+}
+
+/// Like [`fixture`], for a server started from `executable` that browsers reach at `endpoint`.
+fn fixture_reached_at(executable: Option<Executable>, endpoint: Endpoint) -> Fixture {
     let home = TestHome::new();
     let repo = TestRepo::new(&[("src/lib.rs", &numbered(20))]);
     repo.switch_new("feature");
@@ -97,7 +116,7 @@ fn fixture_with(executable: Option<Executable>) -> Fixture {
         Instance {
             token: TOKEN.to_string(),
             instance_id: "test-instance".to_string(),
-            port: PORT,
+            endpoint,
             pid: 1,
             started_at: "2026-10-07T12:00:00.000Z".to_string(),
             home: home.path.clone(),
@@ -212,6 +231,43 @@ async fn requests_need_the_token_and_the_right_host() {
     let (status, _, body) = send(&f.app, bearer).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("\"instance_id\":\"test-instance\""), "{body}");
+}
+
+#[tokio::test]
+async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
+    let f = socket_fixture();
+    let anonymous = Request::builder()
+        .uri("/")
+        .header(header::HOST, HOST)
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, body) = send(&f.app, anonymous).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let hint = "Run `lani open --print-url` on devbox and open the link it prints.";
+    assert!(body.contains(hint), "{body}");
+
+    let expired = Request::builder()
+        .uri("/login?token=stale&next=/")
+        .header(header::HOST, HOST)
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, body) = send(&f.app, expired).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        body.contains("(it may have restarted). Run `lani open --print-url` on devbox"),
+        "{body}"
+    );
+
+    let (_, _, settings) = send(&f.app, get("/settings")).await;
+    assert!(
+        settings.contains("pid 1 · socket /home/you/.local/share/lani/run/web.sock"),
+        "{settings}"
+    );
+    let (_, _, health) = send(&f.app, get("/api/health")).await;
+    let health: serde_json::Value = serde_json::from_str(&health).unwrap();
+    assert_eq!(health["socket"], "/home/you/.local/share/lani/run/web.sock");
+    assert_eq!(health["browser_port"], PORT);
+    assert!(health.get("port").is_none(), "{health}");
 }
 
 #[tokio::test]

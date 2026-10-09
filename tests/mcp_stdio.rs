@@ -260,6 +260,56 @@ fn open_web_ui_starts_the_server_and_opens_the_browser() {
 }
 
 #[test]
+fn open_web_ui_in_socket_mode_gives_directions_to_pass_on_instead_of_a_browser() {
+    let home = TestHome::new();
+    let port = common::free_port();
+    home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
+    let repo = feature_repo();
+    let (browser, browser_ran) = common::recording_browser(&home.path);
+    let mut client =
+        McpClient::start_with_env(&home.path, &[("BROWSER", browser.to_str().unwrap())]);
+    client.ok(
+        "start_review",
+        json!({"repo_path": repo.path.to_str().unwrap(), "title": "t", "author": "reviewer",
+               "base_mode": "auto"}),
+    );
+    let opened = client.ok("open_web_ui", json!({"review_id": 1}));
+    let token = std::fs::read_to_string(home.path.join("run/server.json")).unwrap();
+    let token = serde_json::from_str::<Value>(&token).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    common::output(
+        Command::new(env!("CARGO_BIN_EXE_lani"))
+            .arg("stop")
+            .envs(common::lani_env(&home.path)),
+    );
+    let host = common::machine_name();
+    assert!(
+        opened.starts_with(
+            "No browser was opened, because LANI listens on a Unix socket for use over SSH. Pass \
+             this on to the human:\nTo reach LANI from your own machine,"
+        ),
+        "{opened}"
+    );
+    assert!(
+        opened.contains(&format!(
+            "\nssh -L {port}:{}/run/web.sock {host}\nThen open http://127.0.0.1:{port}/reviews/1\n\
+             If your browser isn't signed in to this server yet, run `lani open --review 1 \
+             --print-url` on {host} and open the link it prints instead.",
+            home.path.display()
+        )),
+        "{opened}"
+    );
+    assert!(opened.contains("Started the LANI web server."), "{opened}");
+    assert!(
+        !opened.contains(&token),
+        "the token must not reach Claude: {opened}"
+    );
+    assert!(!browser_ran.exists(), "no browser was started");
+}
+
+#[test]
 fn open_web_ui_refuses_the_changes_view_of_a_whole_tree_review() {
     let home = TestHome::new();
     let repo = feature_repo();

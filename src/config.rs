@@ -5,13 +5,17 @@
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::listen::Listen;
 use crate::paths;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// The port the web server tries first; 0 means any free port (§13.1).
+    /// The port the web server tries first; 0 means any free port (§13.1). In socket mode, the
+    /// local port the printed command and links suggest you forward from (§13.2).
     pub port: Option<u16>,
+    /// How the web server listens: on a TCP port (the default) or a Unix socket (§13.2).
+    pub listen: Option<Listen>,
 }
 
 impl Config {
@@ -47,7 +51,18 @@ mod tests {
         assert_eq!(Config::parse("").unwrap(), Config::default());
         assert_eq!(
             Config::parse("# comment\nport = 7000\n").unwrap(),
-            Config { port: Some(7000) }
+            Config {
+                port: Some(7000),
+                listen: None
+            }
+        );
+        assert_eq!(
+            Config::parse("listen = \"socket\"\n").unwrap().listen,
+            Some(Listen::Socket)
+        );
+        assert_eq!(
+            Config::parse("listen = \"tcp\"\n").unwrap().listen,
+            Some(Listen::Tcp)
         );
     }
 
@@ -59,5 +74,10 @@ mod tests {
         assert!(out_of_range.contains("line 1"), "{out_of_range}");
         let not_a_number = Config::parse("port = \"7000\"").unwrap_err();
         assert!(not_a_number.contains("invalid type"), "{not_a_number}");
+        let unknown_mode = Config::parse("listen = \"unix\"").unwrap_err();
+        assert!(
+            unknown_mode.contains("unknown variant `unix`, expected `tcp` or `socket`"),
+            "{unknown_mode}"
+        );
     }
 }

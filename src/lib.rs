@@ -11,6 +11,7 @@ pub mod error;
 pub mod executable;
 pub mod git;
 pub mod highlight;
+pub mod listen;
 pub mod markdown;
 pub mod mcp;
 pub mod model;

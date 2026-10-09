@@ -23,7 +23,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Deserialize;
 
 use crate::base::BaseMode;
-use crate::daemon;
+use crate::daemon::{self, Endpoint};
 use crate::error::Error;
 use crate::executable::Executable;
 use crate::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
@@ -83,9 +83,29 @@ Use status \"all\" only when history is needed. Never call close_review unless t
 human asks to see a review or issue, call open_web_ui.";
 
 /// How the human can reach the page without a browser being launched: a `lani open … --print-url`
-/// command. A repository path goes into the command only if it is plain enough to be safe in a
-/// shell; otherwise the human is pointed at the page's address after signing in.
+/// command.
 fn open_command_hint(p: &OpenWebUiParams, url: &str) -> String {
+    let (command, then) = print_url_command(p, url);
+    format!("Ask the human to run `{command}` in a terminal and open the printed URL.{then}")
+}
+
+/// What to pass on to the human for a server listening on a Unix socket, which their browser
+/// reaches through an SSH forward, so no browser is opened (§13.2). `None` for a TCP server.
+fn socket_directions(p: &OpenWebUiParams, url: &str, endpoint: &Endpoint) -> Option<String> {
+    let directions = endpoint.forward_directions()?;
+    let (command, then) = print_url_command(p, url);
+    Some(format!(
+        "No browser was opened, because LANI listens on a Unix socket for use over SSH. Pass this \
+         on to the human:\n{directions}Then open {url}\nIf your browser isn't signed in to this \
+         server yet, run `{command}` on {} and open the link it prints instead.{then}",
+        endpoint.machine()
+    ))
+}
+
+/// The `lani open … --print-url` command that prints a sign-in link to the page, and what to do
+/// after following it. A repository path goes into the command only if it is plain enough to be
+/// safe in a shell; otherwise the human is pointed at the page's address after signing in.
+fn print_url_command(p: &OpenWebUiParams, url: &str) -> (String, String) {
     let mut flags = String::new();
     match (p.review_id, p.issue_id) {
         (Some(review_id), _) => {
@@ -118,9 +138,7 @@ fn open_command_hint(p: &OpenWebUiParams, url: &str) -> String {
             then = format!(" Then go to {url}.");
         }
     }
-    format!(
-        "Ask the human to run `lani open{flags} --print-url` in a terminal and open the printed URL.{then}"
-    )
+    (format!("lani open{flags} --print-url"), then)
 }
 
 // ── parameter types ──────────────────────────────────────────────────────────────────────────
@@ -981,7 +999,8 @@ impl LaniServer {
         description = "Open the LANI web UI in the human's browser at a review, one of its views \
                        (overview, changes or files, optionally at a file and line), or an issue; with \
                        no arguments, the review list. Starts the web server if needed. Returns the \
-                       page's URL without credentials."
+                       page's URL without credentials. When LANI listens on a Unix socket for use over \
+                       SSH, it opens no browser and returns directions to pass on to the human instead."
     )]
     fn open_web_ui(&self, Parameters(p): Parameters<OpenWebUiParams>) -> Result<String, ToolError> {
         let target_given = p.view.is_some() || p.path.is_some() || p.line.is_some();
@@ -1022,13 +1041,18 @@ impl LaniServer {
         let (server, started) =
             daemon::ensure_running(&self.home).map_err(|error| error.to_string())?;
         let url = server.file.public_url(&path);
-        let mut message = match daemon::open_in_browser(&self.home, &server.file, &path) {
-            Ok(()) => format!("Opened {url} in the human's browser."),
-            Err(error) => format!(
-                "Could not open a browser ({error}). {}",
-                open_command_hint(&p, &url)
-            ),
-        };
+        let mut message =
+            if let Some(directions) = socket_directions(&p, &url, &server.file.endpoint) {
+                directions
+            } else {
+                match daemon::open_in_browser(&self.home, &server.file, &path) {
+                    Ok(()) => format!("Opened {url} in the human's browser."),
+                    Err(error) => format!(
+                        "Could not open a browser ({error}). {}",
+                        open_command_hint(&p, &url)
+                    ),
+                }
+            };
         if started {
             message.push_str(" Started the LANI web server.");
         }

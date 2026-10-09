@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Output, Stdio};
 
-use common::TestHome;
+use common::{Forward, TestHome};
 
 fn lani(home: &TestHome, args: &[&str]) -> Output {
     common::output(
@@ -49,10 +49,19 @@ fn port_of(url: &str) -> u16 {
 
 /// `GET path_and_query` against the server, returning the raw response head.
 fn http_get(port: u16, path_and_query: &str) -> String {
+    http_get_with(port, path_and_query, "")
+}
+
+/// `GET path_and_query` with a session cookie, `name=value`.
+fn http_get_signed_in(port: u16, path_and_query: &str, cookie: &str) -> String {
+    http_get_with(port, path_and_query, &format!("Cookie: {cookie}\r\n"))
+}
+
+fn http_get_with(port: u16, path_and_query: &str, headers: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     write!(
         stream,
-        "GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        "GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{headers}Connection: close\r\n\r\n"
     )
     .unwrap();
     let mut response = String::new();
@@ -606,12 +615,12 @@ struct FakeServer {
 
 impl FakeServer {
     fn start(home: &std::path::Path, instance_id: &str) -> Self {
-        use lani::daemon::{self, Health, ServerFile};
+        use lani::daemon::{self, Endpoint, Health, ServerFile};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let file = ServerFile {
             pid: std::process::id(),
-            port,
+            endpoint: Endpoint::Tcp { port },
             token: "t".repeat(64),
             instance_id: instance_id.to_string(),
             version: daemon::VERSION.to_string(),
@@ -622,7 +631,7 @@ impl FakeServer {
             instance_id: file.instance_id.clone(),
             version: file.version.clone(),
             pid: file.pid,
-            port,
+            endpoint: file.endpoint.clone(),
             started_at: file.started_at.clone(),
             idle_timeout: "3h".to_string(),
             idle_timeout_source: "saved setting".to_string(),
@@ -680,7 +689,7 @@ impl FakeServer {
 
 /// A stand-in for a server process that dies untidily. It holds the server lock and answers like
 /// a real server, then stops listening. It keeps the lock for `linger`, as a process still
-/// shutting down would, and ends without removing `server.json` or its redirect file.
+/// shutting down would, and ends without removing `server.json`, its redirect file, or a socket.
 fn untidy_server(home: &TestHome, linger: std::time::Duration) -> std::thread::JoinHandle<()> {
     lani::daemon::ensure_dirs(&home.path).unwrap();
     let lock = lani::daemon::ServerLock::try_acquire(&home.path)
@@ -688,6 +697,7 @@ fn untidy_server(home: &TestHome, linger: std::time::Duration) -> std::thread::J
         .unwrap();
     let server = FakeServer::start(&home.path, "untidy");
     std::fs::write(home.path.join("run/open-untidy.html"), "token").unwrap();
+    drop(std::os::unix::net::UnixListener::bind(home.path.join("run/web.sock")).unwrap());
     std::thread::spawn(move || {
         server.serve_until_shutdown();
         std::thread::sleep(linger);
@@ -709,6 +719,7 @@ fn stop_waits_for_the_server_process_and_clears_what_a_dead_one_left() {
     );
     assert!(!home.path.join("run/server.json").exists());
     assert!(!home.path.join("run/open-untidy.html").exists());
+    assert!(!home.path.join("run/web.sock").exists());
     server.join().unwrap();
 }
 
@@ -760,4 +771,224 @@ fn open_starts_a_server_once_a_stopping_one_lets_go_of_the_lock() {
     let url = stdout(&lani(&home, &["open", "--no-browser", "--print-url"]));
     assert!(url.contains("/login?token="), "{url}");
     exiting.join().unwrap();
+}
+
+// ── socket mode (§13.2) ──────────────────────────────────────────────────────────────────────
+
+/// A LANI home whose configuration file puts servers in socket mode, with links for `port`.
+fn socket_mode_home(port: u16) -> TestHome {
+    let home = TestHome::new();
+    home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
+    home
+}
+
+fn server_json(home: &TestHome) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(home.path.join("run/server.json")).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn socket_mode_serves_on_a_private_socket_that_a_forwarded_port_reaches() {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    let port = common::free_port();
+    let home = socket_mode_home(port);
+    let _stop = StopOnDrop(&home);
+    let socket = home.path.join("run/web.sock");
+    let host = common::machine_name();
+
+    let printed = stdout(&lani(&home, &["serve", "--detach"]));
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(
+        lines[..3],
+        [
+            format!(
+                "To reach LANI from your own machine, forward a local port to it over SSH ({host} \
+                 is this machine's name; use the name you ssh to):"
+            )
+            .as_str(),
+            &format!("ssh -L {port}:{} {host}", socket.display()),
+            "To sign in, open this link; it contains the access token, so keep it private:",
+        ],
+        "{printed}"
+    );
+    let link = lines[3];
+    assert!(
+        link.starts_with(&format!("http://127.0.0.1:{port}/login?token="))
+            && link.ends_with("&next=/"),
+        "{link}"
+    );
+
+    // Only you can reach the socket, and older binaries can't read server.json.
+    let metadata = std::fs::symlink_metadata(&socket).unwrap();
+    assert!(metadata.file_type().is_socket());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    let file = server_json(&home);
+    assert!(file.get("port").is_none(), "{file}");
+    assert_eq!(file["socket"], socket.display().to_string());
+    assert_eq!(file["browser_port"], port);
+
+    // The port is your own machine's: the server left it free, so the forward can listen on it.
+    let forward = Forward::new(port, &socket);
+    let path = link.split_once(&format!(":{port}")).unwrap().1;
+    let signed_in = http_get(forward.port, path);
+    assert!(signed_in.starts_with("HTTP/1.1 200"), "{signed_in}");
+    assert!(
+        signed_in.contains(&format!("set-cookie: lani_{port}=")),
+        "{signed_in}"
+    );
+    let token = file["token"].as_str().unwrap();
+    let cookie = format!("lani_{port}={token}");
+    let page = http_get_signed_in(port, "/", &cookie);
+    assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+
+    // A second forward, on another port, reaches the same server with a cookie of its own.
+    let other = Forward::new(0, &socket);
+    let elsewhere = http_get(other.port, path);
+    assert!(
+        elsewhere.contains(&format!("set-cookie: lani_{}=", other.port)),
+        "{elsewhere}"
+    );
+    let refused = http_get_signed_in(other.port, "/", &cookie);
+    assert!(refused.starts_with("HTTP/1.1 401"), "{refused}");
+    let accepted = http_get_signed_in(other.port, "/", &format!("lani_{}={token}", other.port));
+    assert!(accepted.starts_with("HTTP/1.1 200"), "{accepted}");
+
+    // The other commands reach the server through its socket.
+    let status = stdout(&lani(&home, &["status"]));
+    assert!(
+        status.contains(&format!(", socket {}, version ", socket.display()))
+            && status.ends_with(lines[1]),
+        "{status}"
+    );
+    assert_eq!(stdout(&lani(&home, &["status", "--print-url"])), link);
+
+    // The server removes its socket as it stops, here on SIGTERM, without `lani stop`'s help.
+    let pid = file["pid"].to_string();
+    assert!(
+        common::output(Command::new("kill").args(["-TERM", &pid]))
+            .status
+            .success()
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while socket.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the socket was not removed after SIGTERM"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
+    let port = common::free_port();
+    let home = socket_mode_home(port);
+    let _stop = StopOnDrop(&home);
+    let (browser, browser_ran) = common::recording_browser(&home.path);
+    let open = |args: &[&str]| {
+        common::output(
+            Command::new(env!("CARGO_BIN_EXE_lani"))
+                .arg("open")
+                .args(args)
+                .envs(common::lani_env(&home.path))
+                .env("BROWSER", &browser),
+        )
+    };
+
+    let opened = open(&["--review", "3"]);
+    assert!(opened.status.success(), "{opened:?}");
+    assert_eq!(String::from_utf8_lossy(&opened.stdout), "");
+    let directions = String::from_utf8_lossy(&opened.stderr);
+    let socket = home.path.join("run/web.sock");
+    assert!(
+        directions.contains("LANI listens on a Unix socket, so no browser was opened.")
+            && directions.contains(&format!("ssh -L {port}:{} ", socket.display()))
+            && directions.contains(&format!("Then open http://127.0.0.1:{port}/reviews/3\n"))
+            && directions.contains("run this command again with --print-url"),
+        "{directions}"
+    );
+    let token = server_json(&home)["token"].as_str().unwrap().to_string();
+    assert!(!directions.contains(&token), "{directions}");
+
+    let printed = open(&["--review", "3", "--print-url"]);
+    assert!(printed.status.success(), "{printed:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&printed.stdout).trim(),
+        format!("http://127.0.0.1:{port}/login?token={token}&next=/reviews/3")
+    );
+    assert!(!browser_ran.exists(), "no browser was started");
+}
+
+#[test]
+fn a_dead_servers_socket_is_replaced_but_nothing_else_is() {
+    let home = socket_mode_home(lani::port::DEFAULT_PORT.get());
+    let _stop = StopOnDrop(&home);
+    stdout(&lani(&home, &["serve", "--detach"]));
+    let pid = server_json(&home)["pid"].to_string();
+    assert!(
+        common::output(Command::new("kill").args(["-KILL", &pid]))
+            .status
+            .success()
+    );
+    let socket = home.path.join("run/web.sock");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while lani::daemon::ServerLock::try_acquire(&home.path)
+        .unwrap()
+        .is_none()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the killed server kept its lock"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(socket.exists(), "a killed server leaves its socket behind");
+
+    let restarted = stdout(&lani(&home, &["serve", "--detach"]));
+    assert!(restarted.contains("/login?token="), "{restarted}");
+    let stopped = stdout(&lani(&home, &["stop"]));
+    assert!(stopped.starts_with("Stopped the LANI server"), "{stopped}");
+
+    std::fs::write(&socket, "notes").unwrap();
+    let refused = error_of(&lani(&home, &["open", "--no-browser"]));
+    assert!(
+        refused.contains(&format!(
+            "cannot listen on {}: something other than a socket is there",
+            socket.display()
+        )),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read_to_string(&socket).unwrap(), "notes");
+}
+
+#[test]
+fn a_socket_path_too_long_for_the_os_is_refused() {
+    use std::os::unix::fs::DirBuilderExt;
+    let home = TestHome::new();
+    home.write_config("port = 5264\n");
+    let long_home = home.path.join("h".repeat(60));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&long_home)
+        .unwrap();
+    let socket = long_home.join("run/web.sock");
+    for command in [
+        &["serve", "--listen", "socket"][..],
+        &["serve", "--detach", "--listen", "socket"],
+    ] {
+        let refused = error_of(&common::output(
+            Command::new(env!("CARGO_BIN_EXE_lani"))
+                .args(command)
+                .envs(common::lani_env(&home.path))
+                .env("LANI_HOME", &long_home),
+        ));
+        assert!(
+            refused.contains(&format!(
+                "the socket path {} is {} bytes, too long for a Unix socket",
+                socket.display(),
+                socket.as_os_str().len()
+            )),
+            "{command:?}: {refused}"
+        );
+    }
 }

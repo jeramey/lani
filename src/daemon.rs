@@ -10,7 +10,8 @@ use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt};
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -19,6 +20,8 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::listen::{Binding, Listen, socket_path};
+use crate::port::PortChoice;
 use crate::text::quoted;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -70,11 +73,110 @@ pub fn random_hex(bytes: usize) -> Result<String> {
         }))
 }
 
+/// How to reach the running server, as `server.json` and the health check record it (§13.1).
+///
+/// Untagged, so that a TCP server's `server.json` keeps the format that older `lani` binaries
+/// read, with `port`. A socket-mode one has no `port`, so older binaries cannot read it, and they
+/// never send the token to a TCP port that may belong to someone else (§13.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Endpoint {
+    /// A TCP port on 127.0.0.1.
+    Tcp { port: u16 },
+    /// A Unix socket, reached from your own machine through an SSH forward (§13.2).
+    Socket {
+        socket: PathBuf,
+        /// The local port that the printed command and links suggest you forward from.
+        browser_port: u16,
+        /// This machine's name, for the printed `ssh` command; `None` if it could not be found.
+        ssh_host: Option<String>,
+    },
+}
+
+impl Endpoint {
+    /// The port in links for the browser: the server's own, or the one forwarded to its socket.
+    #[must_use]
+    pub fn browser_port(&self) -> u16 {
+        match self {
+            Self::Tcp { port } => *port,
+            Self::Socket { browser_port, .. } => *browser_port,
+        }
+    }
+
+    /// Where the server listens, for status lines: `port 5264` or `socket /…/run/web.sock`.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Tcp { port } => format!("port {port}"),
+            Self::Socket { socket, .. } => format!("socket {}", socket.display()),
+        }
+    }
+
+    /// The machine LANI runs on, as directions given on your own machine name it.
+    #[must_use]
+    pub fn machine(&self) -> &str {
+        match self {
+            Self::Socket {
+                ssh_host: Some(host),
+                ..
+            } => host,
+            _ => "the machine LANI runs on",
+        }
+    }
+
+    /// How to forward a local port to a socket-mode server, ending in a line break; `None` for
+    /// a TCP server, which needs no directions.
+    #[must_use]
+    pub fn forward_directions(&self) -> Option<String> {
+        let Self::Socket {
+            socket,
+            browser_port,
+            ssh_host,
+        } = self
+        else {
+            return None;
+        };
+        let (host, whose) = match ssh_host {
+            Some(host) => (
+                host.as_str(),
+                format!("{host} is this machine's name; use the name you ssh to"),
+            ),
+            None => ("<host>", "use the name you ssh to".to_string()),
+        };
+        Some(format!(
+            "To reach LANI from your own machine, forward a local port to it over SSH ({whose}):\n\
+             ssh -L {browser_port}:{} {host}\n",
+            socket.display()
+        ))
+    }
+}
+
+/// This machine's name as `uname -n` prints it, the same as `hostname`: usually the name you ssh
+/// to, for the printed `ssh` command (§13.2). `None` if it cannot be found, or if it holds anything
+/// but letters, digits, `.`, `-` and `_`, since it goes into a shell command.
+#[must_use]
+pub fn host_name() -> Option<String> {
+    let output = Command::new("uname")
+        .arg("-n")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let name = String::from_utf8(output.stdout).ok()?;
+    let name = name.trim();
+    let plain = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'));
+    (output.status.success() && plain).then(|| name.to_string())
+}
+
 /// The contents of `run/server.json`: how to reach the running server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerFile {
     pub pid: u32,
-    pub port: u16,
+    #[serde(flatten)]
+    pub endpoint: Endpoint,
     pub token: String,
     pub instance_id: String,
     pub version: String,
@@ -121,18 +223,20 @@ impl ServerFile {
     pub fn login_url(&self, next: &str) -> String {
         format!(
             "http://127.0.0.1:{}/login?token={}&next={}",
-            self.port,
+            self.endpoint.browser_port(),
             self.token,
             encode_query_value(next)
         )
     }
 
-    /// What `lani serve` prints to stdout: the sign-in link to the review list, introduced. It
-    /// contains the token, so a detached server's stdout is `/dev/null`, not the log.
+    /// What `lani serve` prints to stdout: the sign-in link to the review list, introduced, after
+    /// the directions for forwarding a port to a socket-mode server. It contains the token, so a
+    /// detached server's stdout is `/dev/null`, not the log.
     #[must_use]
     pub fn sign_in_text(&self) -> String {
         format!(
-            "To sign in, open this link; it contains the access token, so keep it private:\n{}\n",
+            "{}To sign in, open this link; it contains the access token, so keep it private:\n{}\n",
+            self.endpoint.forward_directions().unwrap_or_default(),
             self.login_url("/")
         )
     }
@@ -140,7 +244,7 @@ impl ServerFile {
     /// The URL of `path` without credentials, safe to show anywhere.
     #[must_use]
     pub fn public_url(&self, path: &str) -> String {
-        format!("http://127.0.0.1:{}{path}", self.port)
+        format!("http://127.0.0.1:{}{path}", self.endpoint.browser_port())
     }
 }
 
@@ -173,7 +277,8 @@ pub struct Health {
     pub instance_id: String,
     pub version: String,
     pub pid: u32,
-    pub port: u16,
+    #[serde(flatten)]
+    pub endpoint: Endpoint,
     pub started_at: String,
     /// The effective idle timeout, e.g. `3h` or `never`.
     pub idle_timeout: String,
@@ -208,7 +313,7 @@ impl RunningServer {
 #[must_use]
 pub fn find_running(home: &Path) -> Option<RunningServer> {
     let file = ServerFile::read(home)?;
-    let (status, body) = http_call(file.port, "GET", "/api/health", &file.token).ok()?;
+    let (status, body) = http_call(&file.endpoint, "GET", "/api/health", &file.token).ok()?;
     if status != 200 {
         return None;
     }
@@ -222,21 +327,21 @@ pub fn ensure_running(home: &Path) -> Result<(RunningServer, bool)> {
     if let Some(server) = find_running(home) {
         return Ok((server, false));
     }
-    Ok((start_detached(home, None, None)?, true))
+    Ok((start_detached(home, None, None, None)?, true))
 }
 
 /// Start `lani serve` as a detached process and wait for it to become healthy.
 pub fn start_detached(
     home: &Path,
     port: Option<u16>,
+    listen: Option<Listen>,
     idle_timeout: Option<&str>,
 ) -> Result<RunningServer> {
     ensure_dirs(home)?;
-    // The server reads the configuration file itself. Reading it here too reports a mistake in it
-    // to whoever is starting the server, instead of only in the server's log.
-    if port.is_none() {
-        crate::port::PortChoice::from_config_file()?;
-    }
+    // The server decides this itself. Deciding it here too reports a mistake in the configuration
+    // file, or a socket path that cannot work, to whoever is starting the server, instead of only
+    // in the server's log.
+    Binding::choose(home, port.map(PortChoice::flag).transpose()?, listen)?;
     let log = OpenOptions::new()
         .create(true)
         .write(true)
@@ -247,6 +352,9 @@ pub fn start_detached(
     command.arg("serve");
     if let Some(port) = port {
         command.args(["--port", &port.to_string()]);
+    }
+    if let Some(listen) = listen {
+        command.args(["--listen", listen.as_str()]);
     }
     if let Some(idle_timeout) = idle_timeout {
         command.args(["--idle-timeout", idle_timeout]);
@@ -343,7 +451,7 @@ pub fn stop(home: &Path) -> Result<Option<Stopped>> {
         return Ok(None);
     };
     let (status, _) = http_call(
-        server.file.port,
+        &server.file.endpoint,
         "POST",
         "/api/shutdown",
         &server.file.token,
@@ -384,10 +492,23 @@ pub fn stop(home: &Path) -> Result<Option<Stopped>> {
     // other server can be running to own them.
     ServerFile::remove_if_ours(home, &server.file.instance_id)?;
     remove_open_files(home, Duration::ZERO);
+    remove_socket(home)?;
     Ok(Some(Stopped {
         server,
         successor: None,
     }))
+}
+
+/// Remove a socket-mode server's socket, if one is there. Only for a holder of the server lock,
+/// for whom no other server can be running to own it (§13.1).
+pub fn remove_socket(home: &Path) -> Result<()> {
+    let path = socket_path(home);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_socket() => Ok(std::fs::remove_file(&path)?),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Open `next` in the browser. The login URL is written to a private redirect file and the
@@ -478,21 +599,45 @@ pub fn remove_open_files(home: &Path, min_age: Duration) {
     }
 }
 
-/// A minimal blocking HTTP/1.1 request to the local LANI server. Returns the status code and
-/// body. Only used for LANI's own small, fixed-length JSON responses.
-fn http_call(port: u16, method: &str, path: &str, token: &str) -> std::io::Result<(u16, Vec<u8>)> {
-    let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let mut stream = TcpStream::connect_timeout(&address, HTTP_TIMEOUT)?;
-    stream.set_read_timeout(Some(HTTP_TIMEOUT * 4))?;
-    stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
-    write!(
-        stream,
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\n\
-         Content-Length: 0\r\nConnection: close\r\n\r\n"
-    )?;
+/// A minimal blocking HTTP/1.1 request to the local LANI server, on its port or its socket.
+/// Returns the status code and body. Only used for LANI's own small, fixed-length JSON responses.
+fn http_call(
+    endpoint: &Endpoint,
+    method: &str,
+    path: &str,
+    token: &str,
+) -> std::io::Result<(u16, Vec<u8>)> {
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {token}\r\n\
+         Content-Length: 0\r\nConnection: close\r\n\r\n",
+        endpoint.browser_port()
+    );
+    let response = match endpoint {
+        Endpoint::Tcp { port } => {
+            let address = SocketAddr::from(([127, 0, 0, 1], *port));
+            let stream = TcpStream::connect_timeout(&address, HTTP_TIMEOUT)?;
+            stream.set_read_timeout(Some(HTTP_TIMEOUT * 4))?;
+            stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
+            exchange(stream, &request)?
+        }
+        Endpoint::Socket { socket, .. } => {
+            // std has no connect timeout for Unix sockets. The kernel completes the connection
+            // without the server's help, so this waits only while the listen queue is full.
+            let stream = UnixStream::connect(socket)?;
+            stream.set_read_timeout(Some(HTTP_TIMEOUT * 4))?;
+            stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
+            exchange(stream, &request)?
+        }
+    };
+    parse_http_response(&response)
+}
+
+/// Send `request` and read the response until the server closes the connection.
+fn exchange(mut stream: impl Read + Write, request: &str) -> std::io::Result<Vec<u8>> {
+    stream.write_all(request.as_bytes())?;
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
-    parse_http_response(&response)
+    Ok(response)
 }
 
 fn parse_http_response(response: &[u8]) -> std::io::Result<(u16, Vec<u8>)> {
@@ -578,7 +723,7 @@ mod tests {
     fn login_url_encodes_next() {
         let file = ServerFile {
             pid: 1,
-            port: 4242,
+            endpoint: Endpoint::Tcp { port: 4242 },
             token: "abc".into(),
             instance_id: "i".into(),
             version: "v".into(),
@@ -588,6 +733,93 @@ mod tests {
             file.login_url("/reviews/3?status=all&x=1#c2"),
             "http://127.0.0.1:4242/login?token=abc&next=/reviews/3%3Fstatus%3Dall%26x%3D1%23c2"
         );
+    }
+
+    #[test]
+    fn server_json_keeps_its_tcp_format_and_leaves_port_out_in_socket_mode() {
+        // As the lani versions before socket mode write and read it.
+        let older = r#"{"pid": 7, "port": 5264, "token": "t", "instance_id": "i",
+                        "version": "0.1.0", "started_at": "s"}"#;
+        let file: ServerFile = serde_json::from_str(older).unwrap();
+        assert_eq!(file.endpoint, Endpoint::Tcp { port: 5264 });
+        assert_eq!(
+            serde_json::to_value(&file).unwrap(),
+            serde_json::from_str::<serde_json::Value>(older).unwrap(),
+            "unchanged, so older binaries still read it"
+        );
+
+        let socket = ServerFile {
+            endpoint: Endpoint::Socket {
+                socket: "/home/you/.local/share/lani/run/web.sock".into(),
+                browser_port: 5300,
+                ssh_host: Some("devbox".into()),
+            },
+            ..file
+        };
+        let written = serde_json::to_value(&socket).unwrap();
+        assert!(
+            written.get("port").is_none(),
+            "older binaries must fail to read it: {written}"
+        );
+        assert_eq!(
+            written["socket"],
+            "/home/you/.local/share/lani/run/web.sock"
+        );
+        assert_eq!(written["browser_port"], 5300);
+        assert_eq!(written["ssh_host"], "devbox");
+        assert_eq!(
+            serde_json::from_value::<ServerFile>(written).unwrap(),
+            socket
+        );
+    }
+
+    #[test]
+    fn a_socket_mode_server_is_reached_through_a_forwarded_port() {
+        let file = ServerFile {
+            pid: 1,
+            endpoint: Endpoint::Socket {
+                socket: "/home/you/.local/share/lani/run/web.sock".into(),
+                browser_port: 5300,
+                ssh_host: Some("devbox".into()),
+            },
+            token: "abc".into(),
+            instance_id: "i".into(),
+            version: "v".into(),
+            started_at: "t".into(),
+        };
+        assert_eq!(
+            file.sign_in_text(),
+            "To reach LANI from your own machine, forward a local port to it over SSH (devbox is \
+             this machine's name; use the name you ssh to):\n\
+             ssh -L 5300:/home/you/.local/share/lani/run/web.sock devbox\n\
+             To sign in, open this link; it contains the access token, so keep it private:\n\
+             http://127.0.0.1:5300/login?token=abc&next=/\n"
+        );
+        assert_eq!(
+            file.public_url("/reviews/3"),
+            "http://127.0.0.1:5300/reviews/3"
+        );
+        assert_eq!(file.endpoint.machine(), "devbox");
+        assert_eq!(
+            file.endpoint.describe(),
+            "socket /home/you/.local/share/lani/run/web.sock"
+        );
+
+        let unnamed = Endpoint::Socket {
+            socket: "/s".into(),
+            browser_port: 5264,
+            ssh_host: None,
+        };
+        assert_eq!(
+            unnamed.forward_directions().unwrap(),
+            "To reach LANI from your own machine, forward a local port to it over SSH (use the \
+             name you ssh to):\nssh -L 5264:/s <host>\n"
+        );
+        assert_eq!(unnamed.machine(), "the machine LANI runs on");
+
+        let tcp = Endpoint::Tcp { port: 5264 };
+        assert_eq!(tcp.forward_directions(), None);
+        assert_eq!(tcp.describe(), "port 5264");
     }
 
     #[test]

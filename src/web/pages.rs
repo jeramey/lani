@@ -407,7 +407,8 @@ struct SettingsPage {
     remaining: Option<String>,
     version: &'static str,
     pid: u32,
-    port: u16,
+    /// `port 5264`, or `socket /…/run/web.sock` in socket mode.
+    endpoint: String,
     started: String,
     round_limit: u32,
 }
@@ -427,7 +428,7 @@ pub async fn settings(State(state): State<AppState>) -> Result<Html<String>, Pag
         remaining: idle.remaining(Instant::now()).map(settings::hours_minutes),
         version: daemon::VERSION,
         pid: instance.pid,
-        port: instance.port,
+        endpoint: instance.endpoint.describe(),
         started: time::to_local(&instance.started_at),
         round_limit,
     };
@@ -442,7 +443,7 @@ pub async fn health(State(state): State<AppState>) -> Json<Health> {
         instance_id: instance.instance_id.clone(),
         version: daemon::VERSION.to_string(),
         pid: instance.pid,
-        port: instance.port,
+        endpoint: instance.endpoint.clone(),
         started_at: instance.started_at.clone(),
         idle_timeout: idle.timeout.to_string(),
         idle_timeout_source: idle.source.label().to_string(),

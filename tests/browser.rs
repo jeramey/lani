@@ -21,7 +21,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use common::{TestHome, TestRepo, numbered};
+use common::{Forward, TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
 use lani::model::{Actor, IssueStatus, Severity, Side};
 use lani::service::{CommentTarget, CreateIssue, Service, SpanRequest, StartReview};
@@ -584,6 +584,40 @@ fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
 
 #[test]
 #[ignore = "needs Safari with remote automation enabled; run with --ignored"]
+fn a_socket_mode_server_works_through_a_forwarded_port() {
+    let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
+    let fixture = Fixture::through_a_forward();
+    let browser = WebDriver::safari();
+    let review_id = fixture.review_id;
+    // Forms post through the forward, and the Origin check accepts them.
+    let changes = format!("/reviews/{review_id}/changes");
+    browser.sign_in(&fixture, &changes);
+    browser.watch_for_problems();
+    browser.click(&format!("#{LIB_ANCHOR}-B20 td.ln a"));
+    browser.click("tr.new-issue-bar button");
+    browser.fill_title_and_severity("Line 20 is gone", "nit");
+    browser.type_text("form.new-issue textarea", "Why was line 20 removed?");
+    browser.click("form.new-issue button[type=\"submit\"]");
+    let issue_id = browser.wait_for_new_issue(&changes);
+    reply_and_resolve_in_place(&browser, &fixture, &changes, issue_id);
+
+    // Live updates stream through it too.
+    let overview = format!("/reviews/{review_id}");
+    browser.navigate(&format!("{}{overview}", fixture.base));
+    browser.wait_for(
+        &format!(
+            "return location.pathname === {} && document.readyState === 'complete';",
+            json!(overview)
+        ),
+        "the overview",
+    );
+    browser.run("window.laniSamePage = true; return true;");
+    changes_arrive_in_place(&browser, &mut fixture.service(), review_id);
+    browser.assert_no_problems("socket mode");
+}
+
+#[test]
+#[ignore = "needs Safari with remote automation enabled; run with --ignored"]
 fn the_changes_view_asks_for_a_reload_when_its_files_change() {
     let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
     let fixture = Fixture::new();
@@ -667,10 +701,22 @@ struct Fixture {
     token: String,
     head: String,
     merge_base: String,
+    /// In socket mode, the forward the browser reaches the server through.
+    _forward: Option<Forward>,
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::start(false)
+    }
+
+    /// Like [`Fixture::new`], with the server in socket mode, reached through a forward from a
+    /// local port as over SSH (§13.2).
+    fn through_a_forward() -> Self {
+        Self::start(true)
+    }
+
+    fn start(through_a_forward: bool) -> Self {
         let repo = TestRepo::new(&[("src/lib.rs", &numbered(40))]);
         let merge_base = repo.head();
         repo.switch_new("feature");
@@ -696,6 +742,11 @@ impl Fixture {
             .view
             .review
             .id;
+        let forward = through_a_forward.then(|| {
+            let port = common::free_port();
+            home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
+            Forward::new(port, &home.path.join("run/web.sock"))
+        });
         let output = lani(&home.path, &["open", "--no-browser", "--print-url"]);
         assert!(
             output.status.success(),
@@ -714,6 +765,7 @@ impl Fixture {
             review_id,
             head,
             merge_base,
+            _forward: forward,
         }
     }
 

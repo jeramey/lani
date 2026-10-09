@@ -98,18 +98,52 @@ starts one; it exits 1 if no server is running.
 ### On a remote machine
 
 LANI can run on the machine where the repository and the Claude Code sessions are, with your local
-browser reaching it over SSH port forwarding:
+browser reaching it over SSH port forwarding.
+
+**Socket mode** is the safer way, and the one to use on a machine other people also use.
+
+- **How it works.** The server listens on a Unix socket in your private LANI directory instead of a
+  TCP port, and you forward a local port to that socket.
+- **Why it is safer.** Nobody else on the remote machine can connect to LANI. Nobody can take the
+  port your forward points at, either, which would hand them your sign-in token. Set it in
+  `~/.config/lani/config.toml` on the remote machine:
+
+  ```toml
+  listen = "socket"
+  ```
+
+- **Starting it.** `lani serve --detach` then prints the `ssh -L` command to run on your own
+  machine, and the sign-in link to open there:
+
+  ```
+  To reach LANI from your own machine, forward a local port to it over SSH (devbox is this
+  machine's name; use the name you ssh to):
+  ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
+  To sign in, open this link; it contains the access token, so keep it private:
+  http://127.0.0.1:5264/login?token=…&next=/
+  ```
+
+- **A forward set up once.** The socket's path never changes, so the forward can go in your
+  `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
+- **No browser on the remote machine.** In socket mode, `lani open` and Claude's `open_web_ui`
+  never open one. They print the forward command and the page's address. To sign in, run
+  `lani open --print-url` or `lani status --print-url` on the remote machine.
+- **What ssh needs.** It needs OpenSSH 6.7 or later at both ends. The remote sshd must allow
+  Unix-socket forwarding, which it does by default (`AllowStreamLocalForwarding`).
+
+**TCP forwarding** works too, with the server's default port:
 
 ```sh
 ssh -L 5264:127.0.0.1:5264 remote-host
 lani serve --detach        # on the remote host; prints the sign-in link
 ```
 
-Open the printed link in your local browser. `lani serve` starts the server without opening a
-browser, and prints the link in the foreground too. If the server took a port above 5264 because
-5264 was in use, forward that port. If 5264 is taken on your own machine, for example by a local
-LANI, forward another local port, as in `-L 5300:127.0.0.1:5264`, and change the link's port to
-match.
+- **Opening it.** Open the printed link in your local browser. `lani serve` starts the server
+  without opening a browser, and prints the link in the foreground too.
+- **A different remote port.** If the server took a port above 5264 because 5264 was in use,
+  forward that port.
+- **5264 taken on your own machine,** for example by a local LANI: forward another local port, as
+  in `-L 5300:127.0.0.1:5264`, and change the link's port to match.
 
 ## Command line
 
@@ -118,8 +152,9 @@ lani mcp                         the MCP server; Claude Code starts it
 lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --issue ID]
           [--print-url] [--no-browser]
                                  open the web UI, starting the server if needed
-lani serve [--port N] [--idle-timeout DURATION|never] [--detach]
-                                 run the web server; --port N uses exactly port N
+lani serve [--port N] [--listen tcp|socket] [--idle-timeout DURATION|never] [--detach]
+                                 run the web server; --port N uses exactly port N;
+                                 --listen socket listens on a Unix socket, for SSH
 lani status [--print-url]        whether the server is running, and its idle timeout;
                                  --print-url prints only its sign-in URL
 lani stop                        stop the server
@@ -153,6 +188,10 @@ port = 7300   # 0 lets the OS pick any free port
 
 `lani serve --port N` overrides it for one run and uses exactly port N. Browsers refuse a few ports,
 including the IRC ports 6665–6669, so LANI refuses them too and skips them when counting up.
+
+`listen = "socket"` puts the server in socket mode, for use over SSH (see "On a remote machine").
+`port` is then the local port that the printed command and links suggest you forward from.
+`lani serve --listen tcp|socket` overrides it for one run.
 
 ## Upgrading
 

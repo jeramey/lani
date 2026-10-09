@@ -12,7 +12,8 @@ mod live;
 mod pages;
 mod views;
 
-use std::path::PathBuf;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -20,9 +21,10 @@ use axum::Router;
 use axum::routing::{get, post};
 use tokio::sync::watch;
 
-use crate::daemon::{self, ServerFile};
+use crate::daemon::{self, Endpoint, ServerFile};
 use crate::error::{Error, Result};
 use crate::executable::Executable;
+use crate::listen::{Binding, Listen};
 use crate::port::PortChoice;
 use crate::service::Service;
 use crate::settings::IdleTimeout;
@@ -101,7 +103,7 @@ impl Stop {
 pub struct Instance {
     pub token: String,
     pub instance_id: String,
-    pub port: u16,
+    pub endpoint: Endpoint,
     pub pid: u32,
     pub started_at: String,
     pub home: PathBuf,
@@ -286,9 +288,12 @@ pub fn router(state: AppState) -> Router {
 /// Options for `lani serve`.
 pub struct ServeOptions {
     pub home: PathBuf,
-    /// The port from `--port`. Without it, the server reads the configuration file once it holds
-    /// the server lock, so a mistake in the file doesn't stop it naming a running server.
+    /// The port from `--port`. For what the flags leave open, the server reads the configuration
+    /// file once it holds the server lock, so a mistake in the file doesn't stop it naming a
+    /// running server.
     pub port: Option<PortChoice>,
+    /// `--listen`: a TCP port or a Unix socket (§13.2).
+    pub listen: Option<Listen>,
     /// Overrides the saved idle timeout for this run.
     pub idle_timeout: Option<IdleTimeout>,
 }
@@ -306,9 +311,9 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         match daemon::find_running(&options.home) {
             Some(server) => {
                 eprintln!(
-                    "A LANI server is already running (pid {}, port {}); this one was not \
-                     started.",
-                    server.health.pid, server.health.port
+                    "A LANI server is already running (pid {}, {}); this one was not started.",
+                    server.health.pid,
+                    server.health.endpoint.describe()
                 );
                 print!("{}", server.file.sign_in_text());
             }
@@ -317,10 +322,7 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         }
         return Ok(());
     };
-    let port = match options.port {
-        Some(choice) => choice,
-        None => PortChoice::from_config_file()?,
-    };
+    let binding = Binding::choose(&options.home, options.port, options.listen)?;
     let service = Service::open(&crate::paths::db_path(&options.home))?;
     let (timeout, source) = match options.idle_timeout {
         Some(timeout) => (timeout, TimeoutSource::Flag),
@@ -330,29 +332,61 @@ pub fn serve(options: &ServeOptions) -> Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    runtime.block_on(run(options, port, service, executable, (timeout, source)))
+    runtime.block_on(run(
+        options,
+        binding,
+        service,
+        executable,
+        (timeout, source),
+    ))
+}
+
+/// A listening socket of either kind.
+enum Listener {
+    Tcp(tokio::net::TcpListener),
+    Socket(tokio::net::UnixListener),
 }
 
 async fn run(
     options: &ServeOptions,
-    port_choice: PortChoice,
+    binding: Binding,
     service: Service,
     executable: Option<Executable>,
     (timeout, source): (IdleTimeout, TimeoutSource),
 ) -> Result<()> {
-    let listener = listen(port_choice).await?;
-    let port = listener.local_addr()?.port();
+    let (listener, endpoint, taken) = match binding {
+        Binding::Tcp(choice) => {
+            let listener = listen(choice).await?;
+            let port = listener.local_addr()?.port();
+            let taken = match choice {
+                PortChoice::From(base) if base.get() != port => {
+                    format!("; port {base} was in use")
+                }
+                _ => String::new(),
+            };
+            (Listener::Tcp(listener), Endpoint::Tcp { port }, taken)
+        }
+        Binding::Socket { path, browser_port } => (
+            Listener::Socket(listen_on_socket(&path)?),
+            Endpoint::Socket {
+                socket: path,
+                browser_port: browser_port.get(),
+                ssh_host: daemon::host_name(),
+            },
+            String::new(),
+        ),
+    };
     let instance = Instance {
         token: daemon::random_hex(32)?,
         instance_id: daemon::random_hex(16)?,
-        port,
+        endpoint: endpoint.clone(),
         pid: std::process::id(),
         started_at: crate::time::now(),
         home: options.home.clone(),
     };
     let server_file = ServerFile {
         pid: instance.pid,
-        port,
+        endpoint,
         token: instance.token.clone(),
         instance_id: instance.instance_id.clone(),
         version: daemon::VERSION.to_string(),
@@ -360,14 +394,12 @@ async fn run(
     };
     let state = AppState::new(service, instance, executable, (timeout, source));
     server_file.write(&options.home)?;
-    let taken = match port_choice {
-        PortChoice::From(base) if base.get() != port => {
-            format!("; port {base} was in use")
-        }
-        _ => String::new(),
+    let address = match &server_file.endpoint {
+        Endpoint::Tcp { port } => format!("127.0.0.1:{port}"),
+        Endpoint::Socket { socket, .. } => socket.display().to_string(),
     };
     eprintln!(
-        "LANI server listening on 127.0.0.1:{port} (pid {}){taken}",
+        "LANI server listening on {address} (pid {}){taken}",
         server_file.pid
     );
     // The sign-in link holds the token, so it goes to stdout, never to the log on stderr. A
@@ -377,20 +409,46 @@ async fn run(
     tokio::spawn(housekeeping(state.clone()));
     tokio::spawn(handle_signals(state.clone()));
 
-    let served = axum::serve(listener, router(state.clone()))
-        .with_graceful_shutdown({
-            let state = state.clone();
-            async move {
-                state.shutdown_requested().await;
-            }
-        })
-        .await;
+    let served = match listener {
+        Listener::Tcp(listener) => serve_until_stopped(listener, state.clone()).await,
+        Listener::Socket(listener) => serve_until_stopped(listener, state.clone()).await,
+    };
     // `lani stop` waits for the server lock, which this process holds until it exits, so this
     // cleanup is done by the time `lani stop` returns.
     daemon::remove_open_files(&options.home, Duration::ZERO);
+    daemon::remove_socket(&options.home)?;
     ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
     eprintln!("LANI server stopped");
     served.map_err(Error::Io)
+}
+
+/// Serve the web UI on `listener` until a shutdown is requested.
+async fn serve_until_stopped<L>(listener: L, state: AppState) -> std::io::Result<()>
+where
+    L: axum::serve::Listener,
+    L::Addr: std::fmt::Debug,
+{
+    axum::serve(listener, router(state.clone()))
+        .with_graceful_shutdown(async move {
+            state.shutdown_requested().await;
+        })
+        .await
+}
+
+/// Listen on the Unix socket at `path`, with mode 0600 like `server.json`, in the 0700 run
+/// directory. The caller holds the server lock, so a socket already there was left by a server
+/// that died, and it is replaced (§13.1).
+fn listen_on_socket(path: &Path) -> Result<tokio::net::UnixListener> {
+    let cannot = |error: std::io::Error| {
+        Error::Unavailable(format!("cannot listen on {} ({error})", path.display()))
+    };
+    // Anything other than a socket stays, and binding then fails with an error naming the path.
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket()) {
+        std::fs::remove_file(path).map_err(cannot)?;
+    }
+    let listener = tokio::net::UnixListener::bind(path).map_err(cannot)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(cannot)?;
+    Ok(listener)
 }
 
 /// Listen on 127.0.0.1 at the chosen port. A port in use is skipped only when counting up from a
