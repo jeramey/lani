@@ -381,24 +381,42 @@ async fn listen(choice: PortChoice) -> Result<tokio::net::TcpListener> {
     for &port in &candidates {
         match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
             Ok(listener) => return Ok(listener),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
-                if let PortChoice::Exact(_) = choice {
-                    return Err(Error::Unavailable(format!(
-                        "port {port} on 127.0.0.1 is already in use; pass another --port, or \
-                         leave --port out to use the first free port from the configured one"
-                    )));
-                }
-            }
-            Err(error) => return Err(error.into()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AddrInUse
+                    && matches!(choice, PortChoice::From(_)) => {}
+            Err(error) => return Err(cannot_listen(choice, port, &error)),
         }
     }
     let (first, last) = (candidates.first(), candidates.last());
     Err(Error::Unavailable(format!(
-        "ports {} to {} on 127.0.0.1 are all in use; set another port in {}, or pass --port",
+        "ports {} to {} on 127.0.0.1 are all in use; {}",
         first.copied().unwrap_or_default(),
         last.copied().unwrap_or_default(),
-        crate::paths::shown_config_path()
+        change_port(choice)
     )))
+}
+
+/// Why the server cannot listen on `port`, and what to change.
+fn cannot_listen(choice: PortChoice, port: u16, error: &std::io::Error) -> Error {
+    let problem = if error.kind() == std::io::ErrorKind::AddrInUse {
+        format!("port {port} on 127.0.0.1 is already in use")
+    } else {
+        format!("cannot listen on port {port} on 127.0.0.1 ({error})")
+    };
+    Error::Unavailable(format!("{problem}; {}", change_port(choice)))
+}
+
+/// What to change to use another port: the flag that chose this one, or the configuration file.
+fn change_port(choice: PortChoice) -> String {
+    match choice {
+        PortChoice::Exact(_) => "pass another --port, or leave --port out to use the first free \
+                                 port from the configured one"
+            .to_string(),
+        PortChoice::From(_) | PortChoice::Any => format!(
+            "set another port in {}, or pass --port",
+            crate::paths::shown_config_path()
+        ),
+    }
 }
 
 /// Stop when idle, and delete expired browser-launch redirect files.
@@ -441,6 +459,24 @@ async fn handle_signals(state: AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_port_that_cannot_be_used_is_named_with_what_to_change() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let message = |choice| cannot_listen(choice, 1000, &denied).to_string();
+        let port = std::num::NonZeroU16::new(1000).unwrap();
+        let flag = message(PortChoice::Exact(port));
+        assert!(
+            flag.starts_with("cannot listen on port 1000 on 127.0.0.1 (permission denied)")
+                && flag.contains("; pass another --port"),
+            "{flag}"
+        );
+        let configured = message(PortChoice::From(port));
+        assert!(
+            configured.contains("; set another port in ") && configured.ends_with("or pass --port"),
+            "{configured}"
+        );
+    }
 
     #[test]
     fn idle_state_counts_down_and_never_expires() {
