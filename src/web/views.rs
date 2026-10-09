@@ -255,7 +255,8 @@ pub struct ReviewHeader {
     pub files_url: String,
     /// `None` for a whole-tree review, which has no diff.
     pub changes_url: Option<String>,
-    /// The active tab: "overview", "changes" or "files"; `""` for none.
+    /// The page: "overview", "changes" or "files", the tabs; or "issue", which shows a link back
+    /// to the overview instead of the tabs. Only the overview shows the hand-off note.
     pub tab: &'static str,
     /// Whose turn the review is; `None` for a closed review or when it is nobody's (§11.5).
     pub turn: Option<TurnView>,

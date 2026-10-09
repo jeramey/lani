@@ -1996,6 +1996,52 @@ async fn overview_forms_return_to_the_view_they_were_posted_from() {
 }
 
 #[tokio::test]
+async fn the_hand_off_note_is_on_the_overview_only_and_the_issue_page_links_back() {
+    let f = fixture();
+    let review_id = f.review_id;
+    f.state
+        .call(move |service| {
+            service.hand_off(
+                Actor::Human,
+                review_id,
+                Some(Actor::Reviewer),
+                Some("Look at **this**."),
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let url = format!("/reviews/{review_id}");
+    let note = "Look at <strong>this</strong>.";
+
+    let (_, _, overview) = send(&f.app, get(&url)).await;
+    assert!(overview.contains(note), "{overview}");
+    assert!(overview.contains("class=\"tabs\""));
+    for page in [
+        format!("{url}/issues/{}", f.issue_id),
+        format!("{url}/files/src/lib.rs"),
+        format!("{url}/changes"),
+    ] {
+        let (status, _, body) = send(&f.app, get(&page)).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(
+            body.contains("<strong>Waiting for:</strong>"),
+            "{page}: {body}"
+        );
+        assert!(
+            !body.contains(note),
+            "{page} leaves the note to the overview"
+        );
+    }
+    let (_, _, issue) = send(&f.app, get(&format!("{url}/issues/{}", f.issue_id))).await;
+    assert!(
+        issue.contains(&format!("<a href=\"{url}\">← Back to the review</a>"))
+            && !issue.contains("class=\"tabs\""),
+        "{issue}"
+    );
+}
+
+#[tokio::test]
 async fn the_round_limit_is_a_setting() {
     let f = fixture();
     let (_, _, settings) = send(&f.app, get("/settings")).await;

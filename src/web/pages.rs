@@ -350,7 +350,10 @@ pub async fn issue(
         outdated: state.outdated(),
     };
     let page = IssuePage {
-        review: views::review_header(&detail.view, &live),
+        review: views::ReviewHeader {
+            tab: "issue",
+            ..views::review_header(&detail.view, &live)
+        },
         editable: detail.view.review.status == ReviewStatus::Open,
         id: issue.id,
         title: issue.title.clone(),

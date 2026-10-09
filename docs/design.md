@@ -797,10 +797,11 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   needing you until you comment on it, resolve it or reopen it, any of which clears the question.
 - **Where you see it.** These places show whose turn it is and the questions waiting for you:
   - the review list marks reviews that need you;
-  - every review page shows the turn, with the note, and lists the questions as links to their
-    issues;
-  - the overview has a collapsed *Earlier hand-offs (N)* line under the turn, which opens to the
-    earlier hand-offs, newest first, each with its note;
+  - every review page shows whose turn it is, and lists the questions as links to their issues;
+  - the overview also shows the hand-off note, and under it a collapsed *Earlier hand-offs (N)*
+    line, which opens to the earlier hand-offs, newest first, each with its note. Other pages
+    leave the note out: you have read it on the overview, which may still be open in another
+    tab;
   - issue rows, issue pages and inline threads mark issues that need you, and the overview lists
     them first.
 
@@ -1216,11 +1217,11 @@ server's token protects it from other users of your machine as it does locally.
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is with the hand-off note, and the questions waiting for you as links (§11.5); the overview lists those issues first and has a *Hand on* control. |
+| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21); close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is and the questions waiting for you as links (§11.5); the overview adds the hand-off note and the earlier hand-offs, lists the issues that need you first, and has a *Hand on* control. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
-| `/reviews/{id}/issues/{issue_id}`           | **Issue.** Code context (current or outdated snippet), full thread, and links to the file and diff views. This is the deep-link target for `open_web_ui(issue_id)`. |
+| `/reviews/{id}/issues/{issue_id}`           | **Issue.** Code context (current or outdated snippet), full thread, and links to the file and diff views. A *Back to the review* link replaces the Overview/Changes/Files tabs, which read as the issue's own views. This is the deep-link target for `open_web_ui(issue_id)`. |
 | `/reviews/{id}/events`                      | Server-Sent Events stream (§13.5). |
 | `/issues/{issue_id}`                        | Redirects to the issue's page under its review, so `lani open --issue` and other links need only the issue ID. |
 | `/settings`                                 | Idle timeout (§13.1); round limit (§11.5); server version, pid, port and uptime. |

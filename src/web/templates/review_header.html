@@ -15,7 +15,7 @@
 {% if let Some(turn) = review.turn %}
 <div class="turn{% if turn.yours %} yours{% endif %}">
   <p><strong>Waiting for:</strong> <span class="author {{ turn.class }}">{{ turn.label }}</span>{% if let Some(detail) = turn.detail %} <span class="muted small">· {{ detail }}</span>{% endif %}</p>
-  {% if let Some(html) = turn.note_html %}<div class="markdown turn-note">{{ html|safe }}</div>{% endif %}
+  {% if review.tab == "overview" %}{% if let Some(html) = turn.note_html %}<div class="markdown turn-note">{{ html|safe }}</div>{% endif %}{% endif %}
 </div>
 {% endif %}
 {% if !review.hand_offs.is_empty() %}
@@ -39,11 +39,15 @@
   </ul>
 </div>
 {% endif %}
+{% if review.tab == "issue" %}
+<p class="back-to-review"><a href="{{ review.url }}">← Back to the review</a></p>
+{% else %}
 <nav class="tabs" aria-label="Review views">
   <a href="{{ review.url }}"{% if review.tab == "overview" %} class="active" aria-current="page"{% endif %}>Overview</a>
   {% if let Some(url) = review.changes_url %}<a href="{{ url }}"{% if review.tab == "changes" %} class="active" aria-current="page"{% endif %}>Changes</a>{% endif %}
   <a href="{{ review.files_url }}"{% if review.tab == "files" %} class="active" aria-current="page"{% endif %}>Files</a>
 </nav>
+{% endif %}
 {% if let Some(notice) = review.repo_notice %}
 <p class="notice">Repository not available: {{ notice }}. Everything LANI has stored is shown, and issues appear as they were when opened. Commenting needs the repository; resolving and closing do not.</p>
 {% endif %}
