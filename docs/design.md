@@ -1251,7 +1251,7 @@ socket`. The server listens on a Unix socket in your private run directory (§13
 forward a local port to it:
 
 ```
-ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
+ssh -o ExitOnForwardFailure=yes -L 5264:/home/you/.local/share/lani/run/web.sock devbox
 ```
 
 **`lani socket`** is the command you run on the remote machine to reach LANI this way.
@@ -1283,13 +1283,15 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   listener there is open to other users of that machine and to the cookie exposure in §15. So the
   token, the cookie, the `Host` and `Origin` checks and the CSP all stay as they are.
 - **A forward set up once.** The socket's path never changes, so the forward can go in
-  `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
+  `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock` with
+  `ExitOnForwardFailure yes` (see "The local port taken" below).
   - The printed path is absolute, because ssh expands anything else on your machine, not the
     remote one.
   - ssh expands tokens in that file, so write any `%` in the path as `%%`.
-- **The printed command** uses `port` as the local port. Its `-L` argument is written so that the
-  shell and then ssh read back exactly the socket's path. Each of these cases was checked with
-  `ssh -G` through `sh` and `zsh`:
+- **The printed command** uses `port` as the local port, and passes `-o ExitOnForwardFailure=yes`
+  (see "The local port taken" below). Its `-L` argument is written so that the shell and then
+  ssh read back exactly the socket's path. Each of these cases was checked with `ssh -G` through
+  `sh` and `zsh`:
   - `%` is written `%%`, because ssh expands `%` tokens in socket paths, on the command line too.
   - A path with a `:` or a `\` goes in brackets. Outside them, ssh's parser would split it at the
     `:`, and drop the `\` as an escape.
@@ -1306,16 +1308,16 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   - **Why `uname -n`.** POSIX requires it, and calling `gethostname` would need unsafe code, which
     the crate forbids.
 - **The local port taken.** If `port` is in use on your own machine, for example by a local LANI,
-  ssh warns that it can't listen there but opens the session anyway (`ExitOnForwardFailure`
-  defaults to `no`).
-  - The printed link then reaches whatever does listen on that port. A local LANI shows *Link
-    expired*, and any other program gets the token.
+  ssh by default only warns that it can't listen there, and opens the session anyway
+  (`ExitOnForwardFailure` defaults to `no`).
+  - The printed link would then reach whatever does listen on that port. A local LANI shows
+    *Link expired*, and any other program gets the token.
+  - So the printed command passes `-o ExitOnForwardFailure=yes`, which makes ssh stop with an
+    error instead. The human chose this in review 6 (#60).
   - The fix is on the remote machine: set `port` in its configuration file, or pass
     `lani socket --port N`, and the printed command and link follow it.
   - A running server keeps the port it started with, so run `lani stop` first. A configuration
     file changed while a server runs applies to the next one.
-  - Adding `-o ExitOnForwardFailure=yes` makes ssh stop instead of carrying on without the
-    forward.
 - **No browser on the remote machine.** A browser there could not reach a Unix socket, so
   `lani open` and `open_web_ui` never open one in socket mode.
   - They give directions instead: the forward command, the page's address without the token, and

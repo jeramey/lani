@@ -155,7 +155,9 @@ impl Endpoint {
     }
 
     /// How to forward a local port to a socket-mode server, ending in a line break; `None` for
-    /// a TCP server, which needs no directions.
+    /// a TCP server, which needs no directions. The command makes ssh stop if it can't listen on
+    /// the local port, which by default it only warns about: the sign-in link would then go to
+    /// whatever holds that port on your machine (§13.2).
     #[must_use]
     pub fn forward_directions(&self) -> Option<String> {
         let Self::Socket {
@@ -175,7 +177,7 @@ impl Endpoint {
         };
         Some(format!(
             "To reach LANI from your own machine, forward a local port to it over SSH ({whose}):\n\
-             ssh -L {} {host}\n",
+             ssh -o ExitOnForwardFailure=yes -L {} {host}\n",
             forward_argument(*browser_port, socket)
         ))
     }
@@ -868,7 +870,8 @@ mod tests {
             file.sign_in_text(),
             "To reach LANI from your own machine, forward a local port to it over SSH (devbox is \
              this machine's name; use the name you ssh to):\n\
-             ssh -L 5300:/home/you/.local/share/lani/run/web.sock devbox\n\
+             ssh -o ExitOnForwardFailure=yes -L 5300:/home/you/.local/share/lani/run/web.sock \
+             devbox\n\
              To sign in, open this link; it contains the access token, so keep it private:\n\
              http://127.0.0.1:5300/login?token=abc&next=/\n"
         );
@@ -890,7 +893,7 @@ mod tests {
         assert_eq!(
             unnamed.forward_directions().unwrap(),
             "To reach LANI from your own machine, forward a local port to it over SSH (use the \
-             name you ssh to):\nssh -L 5264:/s <host>\n"
+             name you ssh to):\nssh -o ExitOnForwardFailure=yes -L 5264:/s <host>\n"
         );
         assert_eq!(unnamed.machine(), "the machine LANI runs on");
 

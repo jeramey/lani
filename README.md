@@ -120,18 +120,25 @@ browser reaching it over SSH port forwarding.
   ```
   To reach LANI from your own machine, forward a local port to it over SSH (devbox is this
   machine's name; use the name you ssh to):
-  ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
+  ssh -o ExitOnForwardFailure=yes -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   To sign in, open this link; it contains the access token, so keep it private:
   http://127.0.0.1:5264/login?token=…&next=/
   ```
 
 - **A forward set up once.** The socket's path never changes, so the forward can go in your
-  `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
-- **If 5264 is taken on your own machine,** for example by a local LANI, ssh only warns, and the
-  printed link reaches that program instead. Set `port` to a free port in the remote machine's
+  `~/.ssh/config`:
+
+  ```
+  Host devbox
+    LocalForward 5264 /home/you/.local/share/lani/run/web.sock
+    ExitOnForwardFailure yes
+  ```
+
+- **If 5264 is taken on your own machine,** for example by a local LANI, the printed command's
+  `ExitOnForwardFailure=yes` makes ssh stop with an error. Without it, ssh would only warn, and the
+  sign-in link would reach that program instead. Set `port` to a free port in the remote machine's
   configuration file, or run `lani socket --port N`; the printed command and link follow it. A
   running server keeps the port it started with, so run `lani stop` first.
-  `ssh -o ExitOnForwardFailure=yes` makes ssh stop instead of carrying on without the forward.
 - **No browser on the remote machine.** In socket mode, `lani open` and Claude's `open_web_ui`
   never open one. They print the forward command and the page's address, and Claude never sees
   your token. To sign in, run `lani socket` on the remote machine.

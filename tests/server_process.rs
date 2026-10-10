@@ -809,7 +809,10 @@ fn socket_mode_serves_on_a_private_socket_that_a_forwarded_port_reaches() {
                  is this machine's name; use the name you ssh to):"
             )
             .as_str(),
-            &format!("ssh -L {port}:{} {host}", socket.display()),
+            &format!(
+                "ssh -o ExitOnForwardFailure=yes -L {port}:{} {host}",
+                socket.display()
+            ),
             "To sign in, open this link; it contains the access token, so keep it private:",
         ],
         "{printed}"
@@ -903,7 +906,10 @@ fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
     let socket = home.path.join("run/web.sock");
     assert!(
         directions.contains("LANI listens on a Unix socket, so no browser was opened.")
-            && directions.contains(&format!("ssh -L {port}:{} ", socket.display()))
+            && directions.contains(&format!(
+                "ssh -o ExitOnForwardFailure=yes -L {port}:{} ",
+                socket.display()
+            ))
             && directions.contains(&format!("Then open http://127.0.0.1:{port}/reviews/3\n"))
             && directions.contains(&format!(
                 "If your browser isn't signed in to this server yet, sign in first. Run lani socket \
@@ -935,7 +941,10 @@ fn socket_starts_or_finds_a_socket_mode_server_and_says_how_to_reach_it() {
     let printed = stdout(&started);
     assert!(
         printed.starts_with("To reach LANI from your own machine, forward a local port")
-            && printed.contains(&format!("\nssh -L {port}:{} ", socket.display()))
+            && printed.contains(&format!(
+                "\nssh -o ExitOnForwardFailure=yes -L {port}:{} ",
+                socket.display()
+            ))
             && printed.contains(&format!("\nhttp://127.0.0.1:{port}/login?token=")),
         "{printed}"
     );
