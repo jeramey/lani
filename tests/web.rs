@@ -2299,6 +2299,12 @@ async fn hand_over_chooses_the_other_role_from_the_one_that_handed_it_over() {
     hand(Actor::Implementer, Actor::Human).await;
     let (_, _, page) = send(&f.app, get(&review)).await;
     assert_eq!(chosen(&page), ["reviewer"]);
+    // While a role holds the turn, even one the reviewer handed it to, the form keeps its first
+    // choice, as the human decided in review 8.
+    hand(Actor::Human, Actor::Reviewer).await;
+    hand(Actor::Reviewer, Actor::Implementer).await;
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(chosen(&page), ["reviewer"], "the implementer's turn");
 }
 
 #[tokio::test]
