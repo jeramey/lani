@@ -68,11 +68,6 @@ impl PortChoice {
         }
     }
 
-    /// The choice when `--port` is not given, from the configuration file on disk.
-    pub fn from_config_file() -> Result<Self> {
-        Self::configured(&Config::load()?)
-    }
-
     /// The ports to try, in order; 0 asks the OS for any free port.
     #[must_use]
     pub fn candidates(self) -> Vec<u16> {
