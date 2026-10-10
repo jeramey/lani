@@ -10,7 +10,7 @@
       <h1><a class="plain" href="{{ review.url }}">{{ review.title }}</a> <span class="muted">#{{ review.id }}</span></h1>
       {% if review.editable %}
       <details class="inline-edit toggle" name="review-edit">
-        <summary class="icon-button" title="Rename the review" aria-label="Rename the review"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21l1-4L16 5l3 3L7 20z"/><path d="M14 7l3 3"/></svg></summary>
+        <summary class="icon-button" title="Rename the review"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21l1-4L16 5l3 3L7 20z"/><path d="M14 7l3 3"/></svg></summary>
         <form method="post" action="{{ review.url }}/title"><input type="hidden" name="back" data-current-page>
           <label for="title">Title</label>
           <input id="title" type="text" name="title" value="{{ review.title }}" maxlength="200" required>
