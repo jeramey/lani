@@ -23,8 +23,9 @@ struct GenericPrompt<'a> {
     f: &'a Fields<'a>,
 }
 
-/// What both templates fill in. `head` and `base` are for reading; `instructions` and `range` go
-/// into commands, so they are quoted where a shell needs it.
+/// What both templates fill in. `head` and `base` are short names, for reading; `instructions` and
+/// `range` go into commands, so they use full ref names, which git cannot mistake for a tag of the
+/// same name, and are quoted where a shell needs it.
 struct Fields<'a> {
     review: i64,
     head: &'a str,
@@ -38,12 +39,11 @@ struct Fields<'a> {
 
 /// The default reviewer prompt of this kind for a review.
 pub fn default_text(kind: PromptKind, review: &Review) -> Result<String> {
-    let head = short_ref(&review.head_ref);
-    let base = review.base_ref.as_deref().map(short_ref);
+    let (head, base) = (&review.head_ref, review.base_ref.as_deref());
     let fields = Fields {
         review: review.id,
-        head,
-        base,
+        head: short_ref(head),
+        base: base.map(short_ref),
         instructions: shell_word(&format!("{}:REVIEW.md", base.unwrap_or(head))),
         range: base.map(|base| shell_word(&format!("{base}...{head}"))),
     };
@@ -179,8 +179,8 @@ mod tests {
              MCP server's instructions for reviewers, with author \"reviewer\".\n\
              \n\
              1. Read the review with get_review, and the repository's review instructions, if any, \
-             with `git show main:REVIEW.md`.\n\
-             2. Run the code-review skill with args \"xhigh main...feature/x\", without --fix or \
+             with `git show refs/heads/main:REVIEW.md`.\n\
+             2. Run the code-review skill with args \"xhigh refs/heads/main...refs/heads/feature/x\", without --fix or \
              --comment. It doesn't read REVIEW.md, so apply that yourself. Also check what the \
              summary asks you to look at, and whether docs and tests match the change.\n\
              3. Verify each finding against the code before filing it with create_issue.\n\
@@ -190,7 +190,7 @@ mod tests {
             default_text(PromptKind::Generic, &review("feature/x", Some("main"))).unwrap();
         assert!(
             generic.contains(
-                "`git show main:REVIEW.md`, and the change with `git diff main...feature/x`"
+                "`git show refs/heads/main:REVIEW.md`, and the change with `git diff refs/heads/main...refs/heads/feature/x`"
             ),
             "{generic}"
         );
@@ -209,7 +209,10 @@ mod tests {
                 text.contains("a whole-tree review of branch feature/x."),
                 "{text}"
             );
-            assert!(text.contains("`git show feature/x:REVIEW.md`"), "{text}");
+            assert!(
+                text.contains("`git show refs/heads/feature/x:REVIEW.md`"),
+                "{text}"
+            );
             assert!(
                 !text.contains("git diff") && !text.contains("code-review"),
                 "{text}"
@@ -238,9 +241,12 @@ mod tests {
     #[test]
     fn refs_in_commands_are_quoted_for_the_shell() {
         let text = default_text(PromptKind::Generic, &review("x$(touch y)", Some("it's"))).unwrap();
-        assert!(text.contains(r"`git show 'it'\''s:REVIEW.md'`"), "{text}");
         assert!(
-            text.contains(r"`git diff 'it'\''s...x$(touch y)'`"),
+            text.contains(r"`git show 'refs/heads/it'\''s:REVIEW.md'`"),
+            "{text}"
+        );
+        assert!(
+            text.contains(r"`git diff 'refs/heads/it'\''s...refs/heads/x$(touch y)'`"),
             "{text}"
         );
         assert!(text.contains("branch x$(touch y) against it's."), "{text}");
@@ -250,6 +256,28 @@ mod tests {
         );
         assert_eq!(shell_word("a;b"), "'a;b'");
         assert_eq!(shell_word(""), "''");
+    }
+
+    #[test]
+    fn commands_name_full_refs_so_a_tag_of_the_same_name_cannot_stand_in() {
+        // git resolves a short name to refs/tags/<name> before refs/heads/<name>.
+        let mut remote = review("release-1.2", Some("main"));
+        remote.base_ref = Some("refs/remotes/origin/main".to_string());
+        for kind in [PromptKind::ClaudeCode, PromptKind::Generic] {
+            let text = default_text(kind, &remote).unwrap();
+            assert!(
+                text.contains("branch release-1.2 against origin/main."),
+                "{text}"
+            );
+            assert!(
+                text.contains("`git show refs/remotes/origin/main:REVIEW.md`"),
+                "{text}"
+            );
+            assert!(
+                text.contains("refs/remotes/origin/main...refs/heads/release-1.2"),
+                "{text}"
+            );
+        }
     }
 
     #[test]

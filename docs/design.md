@@ -1656,10 +1656,10 @@ shows while the review is open.
   JavaScript, through CSS `:has()`.
   - *Claude Code* relies on what Claude Code provides:
     - The server instructions (§12.2), which Claude Code gives the model.
-    - The `code-review` skill, given the review's range, such as `xhigh main...feature/x`. It
-      gets neither `--fix`, since editing is the implementer's job, nor `--comment`, which posts
-      to a GitHub PR. `ultra`, the multi-agent cloud review, is billed and only you can start
-      it, so the prompt uses `xhigh`.
+    - The `code-review` skill, given the review's range, such as
+      `xhigh refs/heads/main...refs/heads/feature/x`. It gets neither `--fix`, since editing is
+      the implementer's job, nor `--comment`, which posts to a GitHub PR. `ultra`, the
+      multi-agent cloud review, is billed and only you can start it, so the prompt uses `xhigh`.
     - Background commands, for `lani wait`.
   - *Other harness* is for harnesses that can use MCP servers, such as OpenCode. It doesn't
     assume the harness gives the model the server instructions, so it carries the steps itself:
@@ -1676,8 +1676,10 @@ shows while the review is open.
   - A pasted prompt reads as your own words, so text from Claude or a comment would carry your
     authority. The session reads that text through `get_review`, where it is marked as quoted
     (§12.4).
-  - Ref names may contain `$`, `;` or backquotes. So in commands, a ref with anything but
-    `[A-Za-z0-9._/:-]` is single-quoted for the shell.
+  - **Refs in commands.** Commands name full refs, such as `refs/heads/main`, because git resolves
+    a short name to a tag of the same name before the branch. The prose uses short names.
+  - **Quoting.** Ref names may contain `$`, `;` or backquotes. So in commands, a ref with anything
+    but `[A-Za-z0-9._/:-]` is single-quoted for the shell.
 - **`REVIEW.md`.** Project-specific review instructions go in `REVIEW.md` at the top of the
   repository. It is the file Anthropic's GitHub Code Review reads; no cross-tool convention
   exists for review-only instructions. `AGENTS.md`, or `CLAUDE.md`, holds general instructions,
