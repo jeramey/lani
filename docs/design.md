@@ -366,7 +366,7 @@ CREATE TABLE prompt_edit (
   review_id    INTEGER NOT NULL REFERENCES review(id),
   kind         TEXT NOT NULL CHECK (kind IN ('claude_code', 'generic')),
   default_id   INTEGER NOT NULL REFERENCES prompt_default(id),
-  patch        TEXT,                                -- unified diff from the default; NULL = the default
+  patch        TEXT,                    -- unified diff from the default; NULL = the default
   lani_version TEXT NOT NULL,
   created_at   TEXT NOT NULL
 ) STRICT;
@@ -1438,6 +1438,9 @@ back to the page (303 See Other); live updates then refresh other open pages (§
 - Update settings: the idle timeout, and the round limit (`POST /settings/round-limit`).
 - Render a Markdown preview (`POST /preview`, which returns an HTML fragment for an editor's
   *Preview* tab).
+- Save a reviewer prompt the human copied (`POST /reviews/{id}/prompts`, §13.9). lani.js posts it
+  after copying, so it answers 204 No Content instead of redirecting. Saving one records no event,
+  so other pages don't refresh.
 
 **The activity timeline** (overview) shows a review's events in pages, newest first.
 
@@ -1933,6 +1936,7 @@ clippy.toml          words doc comments may use without backticks, such as WebDr
 | Templates          | `askama` |
 | Highlighting       | `syntect` + `two-face` |
 | Markdown           | `comrak` |
+| Prompt edit diffs  | `diffy`, for creating and parsing the unified diffs; LANI applies them itself (§13.9) |
 | Errors             | `thiserror` in the library, `anyhow` at the CLI edge |
 | Logging            | `tracing` + `tracing-subscriber`; MCP logs to stderr only, because stdout carries the protocol |
 | Time and durations | `jiff` |
@@ -2034,10 +2038,10 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     Remote Automation", then `safaridriver --enable`.
   - A socket-mode server works through a forwarded port: creating an issue, replying and
     resolving, and live updates.
-  - **The Reviewer prompt panel.** Choosing a prompt, the *Edited* badge, *Reset to default*, and
-    *Copy to clipboard*: the test reads the clipboard back with `pbpaste`, checks that the panel
-    closed and the saved revision. Copying replaces the system clipboard's text, so the test puts the earlier text
-    back afterwards.
+  - **The Reviewer prompt panel.** It covers choosing a prompt, the *Edited* badge, *Reset to
+    default* and *Copy to clipboard*. The test reads the clipboard back with `pbpaste`, and checks
+    that the panel closes and that the revision is saved. Copying replaces the system clipboard's
+    text, so the test puts the earlier text back afterwards.
   - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
     toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline
     script injected); both breaks fail the test.
