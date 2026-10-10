@@ -894,7 +894,11 @@ fn an_issue_filed_with_ask_human_waits_for_the_human() {
                "spans": [{"path": "src/lib.rs", "side": "head", "start_line": 5, "end_line": 5,
                           "start_line_text": "line five"}]}),
     );
-    assert!(created.contains("It asks the human"), "{created}");
+    assert!(
+        created.contains("It asks the human")
+            && created.contains("then hand the review to the human: until they answer"),
+        "{created}"
+    );
     let review = reviewer.ok("get_review", json!({"review_id": 1}));
     assert!(
         review.contains("Questions for the human: issue 1\n"),
@@ -956,7 +960,11 @@ fn sessions_take_turns_and_ask_the_human() {
         json!({"author": "implementer", "issue_id": 1, "ask_human": true,
                "body": "Digits or words?"}),
     );
-    assert!(asked.contains("asked the human about it"), "{asked}");
+    assert!(
+        asked.contains("asked the human about it")
+            && asked.contains("then hand the review to the human: until they answer"),
+        "{asked}"
+    );
     let issues = implementer.ok(
         "list_issues",
         json!({"review_id": 1, "status": "open", "detail": "summary"}),

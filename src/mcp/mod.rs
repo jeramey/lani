@@ -477,6 +477,11 @@ fn nullable_string(_generator: &mut SchemaGenerator) -> Schema {
 
 // ── server ───────────────────────────────────────────────────────────────────────────────────
 
+/// What a session that has just asked the human a question does next (§11.5): the replies to
+/// `create_issue` and `add_comment` with `ask_human` end with it.
+const AFTER_ASKING: &str = "Finish your pass, then hand the review to the human: until they \
+answer, a hand-off to anyone else is refused. Mention the question when you tell them.";
+
 /// Added to every tool result while this process is older than the installed lani or the
 /// database (§12.5).
 const UPDATE_NOTICE: &str = "Note: lani has been reinstalled since this session's LANI MCP server \
@@ -867,10 +872,10 @@ impl LaniServer {
             render::locations_text(&issue)
         );
         if p.ask_human {
-            message.push_str(
-                "It asks the human: it shows as waiting for them until they reply, resolve or \
-                 reopen it. Carry on with the rest of the review, and mention the question in \
-                 your reply.\n",
+            let _ = writeln!(
+                message,
+                "It asks the human: it shows as waiting for them until they reply or resolve it. \
+                 {AFTER_ASKING}"
             );
         }
         if let Some(note) = quote_note(&[("title", Some(p.title.as_str()))]) {
@@ -904,8 +909,7 @@ impl LaniServer {
         let message = match target {
             CommentTarget::Issue(issue_id) if p.ask_human => format!(
                 "Added comment c{} to issue {issue_id} and asked the human about it; the issue \
-                 shows as waiting for them until they reply, resolve or reopen it. Carry on with \
-                 the rest of the review, and mention the question in your reply.",
+                 shows as waiting for them until they reply or resolve it. {AFTER_ASKING}",
                 comment.id
             ),
             CommentTarget::Issue(issue_id) => {
