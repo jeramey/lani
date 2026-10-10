@@ -290,6 +290,9 @@ pub enum PromptNotice {
     /// The edit was made from another default: the review's base or LANI changed since. It would
     /// name the old base, or miss improvements, so it stays in the history only.
     DefaultChanged,
+    /// The edit's stored diff no longer applies to its default, as after a hand edit of the
+    /// database. A side panel must not take the review's page down, so the page shows the default.
+    Unreadable,
 }
 
 impl ReviewerPrompt {
@@ -2149,13 +2152,15 @@ fn shown_prompt(
             default_text,
             patch: Some(patch),
         }) => {
-            if default_text == default {
-                Ok(Shown {
-                    text: prompt::apply(&default_text, &patch)?,
-                    notice: None,
-                })
-            } else {
-                Ok(the_default(Some(PromptNotice::DefaultChanged)))
+            if default_text != default {
+                return Ok(the_default(Some(PromptNotice::DefaultChanged)));
+            }
+            match prompt::apply(&default_text, &patch) {
+                Ok(text) => Ok(Shown { text, notice: None }),
+                Err(error) => {
+                    tracing::warn!(review_id, kind = kind.as_str(), %error, "showing the default prompt");
+                    Ok(the_default(Some(PromptNotice::Unreadable)))
+                }
             }
         }
         Some(store::PromptRevision { patch: None, .. }) | None => Ok(the_default(None)),

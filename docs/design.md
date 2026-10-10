@@ -1715,6 +1715,9 @@ shows while the review is open.
     improvements. So the panel shows the new default instead, with a note saying why; the edit
     stays in the history. Copying the new default accepts it: that records a return to the
     default, and the note goes.
+  - **When a revision can't be read back.** A stored diff that no longer applies to its default,
+    as after a hand edit in `sqlite3`, must not take the review's page down. The panel shows the
+    default with a note, and the server logs a warning. Copying starts again from the default.
   - **Hunks apply at the lines they name.** The default is stored with the diff, so its line
     numbers are exact. Without context lines, diffy's own `apply` has nothing to place a hunk by:
     it searches outwards for matching text, and moved a deleted blank line to an earlier blank

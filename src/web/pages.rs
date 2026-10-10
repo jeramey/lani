@@ -205,6 +205,10 @@ impl PromptPanel {
                     "The default changed since your last edit, with a new base or a new version of \
                      LANI. Your edit is kept in the history; copying the new default accepts it."
                 }
+                PromptNotice::Unreadable => {
+                    "Your last edit could not be read back from the history, so this is the \
+                     default. The edit is still stored; copying starts again from this text."
+                }
             }),
             text: prompt.text,
             default: prompt.default,

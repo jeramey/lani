@@ -2386,6 +2386,32 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
 }
 
 #[tokio::test]
+async fn an_unreadable_prompt_edit_does_not_take_the_overview_down() {
+    let f = fixture();
+    let review = format!("/reviews/{}", f.review_id);
+    send(
+        &f.app,
+        post(&format!("{review}/prompts"), "kind=claude_code&text=Mine."),
+    )
+    .await;
+    let conn = rusqlite::Connection::open(f.home.db_path()).unwrap();
+    // As after a hand edit in sqlite3: the diff deletes a line its default doesn't have.
+    conn.execute(
+        "UPDATE prompt_edit SET patch = '--- original\n+++ modified\n@@ -1 +0,0 @@\n-Not there.\n'",
+        [],
+    )
+    .unwrap();
+    let (status, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let (text, default, edited) = prompt_panel(&page, "claude_code");
+    assert!(text == default && !edited, "{page}");
+    assert!(
+        page.contains("<p class=\"notice prompt-notice\">Your last edit could not be read back"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
 async fn after_a_base_change_the_prompt_panel_shows_the_new_default_and_says_why() {
     let f = fixture();
     let review = format!("/reviews/{}", f.review_id);

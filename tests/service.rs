@@ -2690,6 +2690,47 @@ fn after_its_default_changes_an_edit_gives_way_to_the_new_default_with_a_notice(
 }
 
 #[test]
+fn a_stored_diff_that_no_longer_applies_gives_way_to_the_default() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Implementer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let (default, _) = prompt_text(&service, review_id, PromptKind::Generic);
+    let save = |service: &mut Service, text: &str| {
+        service
+            .save_reviewer_prompt(Actor::Human, review_id, PromptKind::Generic, text)
+            .unwrap()
+    };
+    assert!(save(&mut service, &format!("{default}\n\nMore.")));
+    // As after a hand edit in sqlite3: the diff deletes a line its default doesn't have.
+    let conn = rusqlite::Connection::open(home.db_path()).unwrap();
+    conn.execute(
+        "UPDATE prompt_edit SET patch = '--- original\n+++ modified\n@@ -1 +0,0 @@\n-Not there.\n'",
+        [],
+    )
+    .unwrap();
+
+    let prompts = service.reviewer_prompts(review_id).unwrap();
+    let generic = prompts
+        .iter()
+        .find(|prompt| prompt.kind == PromptKind::Generic)
+        .unwrap();
+    assert_eq!(
+        (generic.text.as_str(), generic.notice),
+        (default.as_str(), Some(PromptNotice::Unreadable))
+    );
+    // Copying the default starts again from it.
+    assert!(save(&mut service, &default));
+    assert_eq!(
+        prompt_text(&service, review_id, PromptKind::Generic),
+        (default, false)
+    );
+}
+
+#[test]
 fn only_the_human_edits_prompts_and_only_on_an_open_review() {
     let home = TestHome::new();
     let repo = feature_repo();
