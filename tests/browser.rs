@@ -696,10 +696,6 @@ fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str
     assert_eq!(view.comments.len(), 2);
 }
 
-// ── fixture ──────────────────────────────────────────────────────────────────────────────────
-
-/// A diff review of `feature` against `main`, served by the real `lani` binary. On `feature`,
-/// line 5 of `src/lib.rs` is rewritten and line 20 removed.
 #[test]
 #[ignore = "needs Safari with remote automation enabled; run with --ignored"]
 fn the_reviewer_prompt_is_copied_and_its_edit_kept() {
@@ -835,6 +831,10 @@ impl Drop for Clipboard {
     }
 }
 
+// ── fixture ──────────────────────────────────────────────────────────────────────────────────
+
+/// A diff review of `feature` against `main`, served by the real `lani` binary. On `feature`,
+/// line 5 of `src/lib.rs` is rewritten and line 20 removed.
 struct Fixture {
     home: TestHome,
     repo: TestRepo,
