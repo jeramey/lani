@@ -1664,9 +1664,12 @@ shows while the review is open.
   - *Other harness* is for harnesses that can use MCP servers, such as OpenCode. It doesn't
     assume the harness gives the model the server instructions, so it carries the steps itself:
     read the change, look for problems, file issues, hand off, wait and follow up.
-    - It waits with `lani wait --timeout 10m` in the foreground, and runs it again on exit code
-      4, since such harnesses may not have background commands. A harness without a shell tool
-      is to say so.
+    - It waits with `lani wait --timeout 1m` in the foreground, and runs it again on exit code
+      4, since such harnesses may not have background commands. A minute stays under the usual
+      2-minute limit of their shell tools (Claude Code's Bash tool has the same default). Each
+      rerun is a tool call that adds to the session's context, so the wait isn't shorter. If
+      the shell tool stops it first, the prompt says to use a shorter timeout. A harness without
+      a shell tool is to say so.
     - The server enforces its own rules, such as the first hand-off going to you and questions
       holding the review, and its replies explain them.
   - **Whole-tree reviews.** Their prompts ask for the files you list at the end, instead of a

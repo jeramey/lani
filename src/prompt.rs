@@ -196,7 +196,7 @@ mod tests {
         );
         assert!(
             generic
-                .contains("`lani wait --review 12 --for reviewer --timeout 10m` in the foreground"),
+                .contains("`lani wait --review 12 --for reviewer --timeout 1m` in the foreground, and run it again whenever it exits with code 4"),
             "{generic}"
         );
     }
