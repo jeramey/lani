@@ -7,8 +7,8 @@
 
 <div class="toolbar" id="toolbar" data-live>
   {% if editable %}
-  <details class="inline-edit">
-    <summary class="button secondary"><span class="when-closed">Change base</span><span class="when-open">Cancel</span></summary>
+  <details class="inline-edit toggle" name="review-edit">
+    <summary class="button secondary">Change base</summary>
     <form method="post" action="{{ review.url }}/base"><input type="hidden" name="back" data-current-page>
       <label for="base">Base</label>
       <select id="base" name="base">
@@ -23,13 +23,13 @@
   </details>
   {% if !review.questions.is_empty() %}
   {# Not inline-edit: it holds no editor, so live updates may replace it while it is open. #}
-  <details class="inline-note">
-    <summary class="button secondary"><span class="when-closed">Hand over</span><span class="when-open">Close</span></summary>
+  <details class="inline-note toggle" name="review-edit">
+    <summary class="button secondary">Hand over</summary>
     <p class="hint">Answer the questions for you first. Until each one has your reply, or you resolve its issue, the review can only be handed to you.</p>
   </details>
   {% else %}
-  <details class="inline-edit">
-    <summary class="button"><span class="when-closed">Hand over</span><span class="when-open">Cancel</span></summary>
+  <details class="inline-edit toggle" name="review-edit">
+    <summary class="button">Hand over</summary>
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>

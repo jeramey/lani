@@ -195,8 +195,14 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .light.author-human { --role: var(--human); }
 .light.author-implementer { --role: var(--implementer); }
 
-.toolbar { display: flex; gap: 8px 20px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0; }
-.toolbar details[open] { flex-basis: 100%; order: 1; }
+.toolbar {
+  display: flex;
+  gap: 8px 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  position: relative;
+}
 .toolbar form.inline { margin-left: auto; }
 
 /* An inline-note looks like an inline-edit but holds no editor, so live updates replace it even
@@ -255,23 +261,43 @@ button.secondary, .button.secondary {
 }
 .button:hover { text-decoration: none; }
 
-/* A summary that toggles its form or note, drawn as a button. It reads "Cancel" (or "Close") while
-   open, so the open panel doesn't show the same label on two buttons. */
+/* The review's toggles: the pencil by the title, and the Change base and Hand over buttons. Each
+   opens its form, or note, in a panel under its row and over the page below, so the toggle stays
+   where it is and shows as pressed. They share a details name, so opening one closes another. */
 summary.button, summary.icon-button { list-style: none; user-select: none; }
 summary.button::-webkit-details-marker,
 summary.icon-button::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-details > summary .when-open,
-details[open] > summary .when-closed { display: none; }
-details[open] > summary .when-open { display: inline; }
+summary.button::after { content: "\25BE"; margin-left: 6px; font-size: 0.85em; }
+details[open] > summary.button::after { content: "\25B4"; }
 details[open] > summary.button {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
+  box-shadow: inset 0 2px 5px rgb(0 0 0 / 0.3);
+  filter: brightness(0.85);
+}
+details[open] > summary.button.secondary {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: none;
+  filter: none;
+}
+details.toggle[open] { background: none; border: 0; padding: 0; }
+details.toggle > :not(summary) {
+  position: absolute;
+  z-index: 10;
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+.toolbar > details.toggle > :not(summary) { top: calc(100% + 6px); left: 0; right: 0; }
+.title-row > details.toggle > :not(summary) {
+  top: 100%;
+  left: 0;
+  width: min(36rem, calc(100vw - 32px));
 }
 
-/* The title, with the pencil that renames the review; its form opens in a panel under the title,
-   leaving the pencil where it is. */
 /* The pencil lines up with the title's first line, however many lines the title takes. */
 .title-row { display: flex; align-items: flex-start; gap: 6px; position: relative; }
 .title-row > details { margin-top: 6px; }
@@ -287,19 +313,6 @@ summary.icon-button {
 }
 summary.icon-button:hover,
 details[open] > summary.icon-button { color: var(--link); background: var(--surface); }
-details.inline-edit.rename[open] { background: none; border: 0; padding: 0; }
-details.rename > form {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 10;
-  width: min(36rem, calc(100vw - 32px));
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
-}
 
 .comment {
   border: 1px solid var(--border);

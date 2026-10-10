@@ -1947,7 +1947,7 @@ async fn a_question_holds_the_review_until_the_human_answers(
     let note = page.find("Answer the questions for you first.").unwrap();
     let details = page[..note].rfind("<details class=\"").unwrap();
     assert!(
-        page[details..note].starts_with("<details class=\"inline-note\">"),
+        page[details..note].starts_with("<details class=\"inline-note toggle\""),
         "{}",
         &page[details..note]
     );
@@ -2211,18 +2211,23 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
         assert_eq!(page.matches(&rename).count(), 1, "{path}");
     }
 
-    // Change base and Hand over are buttons, which read Cancel while their form is open.
+    // Change base and Hand over are buttons. Like the pencil, they share a details name, so only
+    // one of their panels is open at a time.
     let (_, _, overview) = send(&f.app, get(&review)).await;
+    let toggle = "<details class=\"inline-edit toggle\" name=\"review-edit\">";
     assert!(
-        overview.contains(
-            "<summary class=\"button secondary\"><span class=\"when-closed\">Change base</span>\
-             <span class=\"when-open\">Cancel</span></summary>"
-        ) && overview.contains(
-            "<summary class=\"button\"><span class=\"when-closed\">Hand over</span>\
-             <span class=\"when-open\">Cancel</span></summary>"
-        ) && overview.contains("<button type=\"submit\">Hand over</button>")
+        overview.contains(&format!(
+            "{toggle}\n    <summary class=\"button secondary\">Change base</summary>"
+        )) && overview.contains(&format!(
+            "{toggle}\n    <summary class=\"button\">Hand over</summary>"
+        )) && overview.contains("<button type=\"submit\">Hand over</button>")
             && !overview.contains("Hand on"),
         "{overview}"
+    );
+    assert_eq!(
+        overview.matches("name=\"review-edit\"").count(),
+        3,
+        "the pencil, Change base and Hand over: {overview}"
     );
 
     // A closed review can't be renamed.
