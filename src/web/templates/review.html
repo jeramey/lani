@@ -8,15 +8,7 @@
 <div class="toolbar" id="toolbar" data-live>
   {% if editable %}
   <details class="inline-edit">
-    <summary>Rename</summary>
-    <form method="post" action="{{ review.url }}/title"><input type="hidden" name="back" data-current-page>
-      <label for="title">Title</label>
-      <input id="title" type="text" name="title" value="{{ review.title }}" maxlength="200" required>
-      <div class="form-actions"><button type="submit">Save title</button></div>
-    </form>
-  </details>
-  <details class="inline-edit">
-    <summary>Change base</summary>
+    <summary class="button secondary"><span class="when-closed">Change base</span><span class="when-open">Cancel</span></summary>
     <form method="post" action="{{ review.url }}/base"><input type="hidden" name="back" data-current-page>
       <label for="base">Base</label>
       <select id="base" name="base">
@@ -32,12 +24,12 @@
   {% if !review.questions.is_empty() %}
   {# Not inline-edit: it holds no editor, so live updates may replace it while it is open. #}
   <details class="inline-note">
-    <summary>Hand on</summary>
+    <summary class="button secondary"><span class="when-closed">Hand over</span><span class="when-open">Close</span></summary>
     <p class="hint">Answer the questions for you first. Until each one has your reply, or you resolve its issue, the review can only be handed to you.</p>
   </details>
   {% else %}
   <details class="inline-edit">
-    <summary>Hand on</summary>
+    <summary class="button"><span class="when-closed">Hand over</span><span class="when-open">Cancel</span></summary>
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
@@ -48,7 +40,7 @@
       <label for="turn-note">Note (optional)</label>
       <textarea id="turn-note" name="note" rows="3" placeholder="What should happen next? Markdown is supported"></textarea>
       <p class="hint">Handing the review to Claude starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
-      <div class="form-actions"><button type="submit">Hand on</button></div>
+      <div class="form-actions"><button type="submit">Hand over</button></div>
     </form>
   </details>
   {% endif %}

@@ -2186,6 +2186,55 @@ async fn overview_forms_return_to_the_view_they_were_posted_from() {
 }
 
 #[tokio::test]
+async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
+    let f = fixture();
+    let review = format!("/reviews/{}", f.review_id);
+    let rename = format!("<form method=\"post\" action=\"{review}/title\">");
+    for path in [
+        review.clone(),
+        format!("{review}/issues/{}", f.issue_id),
+        format!("{review}/files/"),
+        format!("{review}/files/src/lib.rs"),
+        format!("{review}/changes"),
+    ] {
+        let (_, _, page) = send(&f.app, get(&path)).await;
+        let title_row = &page[page.find("<div class=\"title-row\">").unwrap()..];
+        let pencil = title_row
+            .find("<summary class=\"icon-button\" title=\"Rename the review\"")
+            .unwrap();
+        let form = title_row.find(&rename).unwrap();
+        let facts = title_row.find("<dl class=\"facts\">").unwrap();
+        assert!(
+            pencil < form && form < facts,
+            "the rename form opens from the pencil by the title: {path}"
+        );
+        assert_eq!(page.matches(&rename).count(), 1, "{path}");
+    }
+
+    // Change base and Hand over are buttons, which read Cancel while their form is open.
+    let (_, _, overview) = send(&f.app, get(&review)).await;
+    assert!(
+        overview.contains(
+            "<summary class=\"button secondary\"><span class=\"when-closed\">Change base</span>\
+             <span class=\"when-open\">Cancel</span></summary>"
+        ) && overview.contains(
+            "<summary class=\"button\"><span class=\"when-closed\">Hand over</span>\
+             <span class=\"when-open\">Cancel</span></summary>"
+        ) && overview.contains("<button type=\"submit\">Hand over</button>")
+            && !overview.contains("Hand on"),
+        "{overview}"
+    );
+
+    // A closed review can't be renamed.
+    send(&f.app, post(&format!("{review}/close"), "back=")).await;
+    let (_, _, closed) = send(&f.app, get(&review)).await;
+    assert!(
+        !closed.contains("Rename the review") && !closed.contains(&rename),
+        "{closed}"
+    );
+}
+
+#[tokio::test]
 async fn the_hand_off_note_is_on_the_overview_only_and_the_issue_page_links_back() {
     let f = fixture();
     let review_id = f.review_id;

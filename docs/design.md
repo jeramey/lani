@@ -816,7 +816,7 @@ Claude sessions can run the review loop on their own and bring you in when it ma
     other role, and yours, from the review page, to a role or to nobody.
     - A session finishes its pass and hands the review to you. The refusal names the waiting
       issues and says to hand to you.
-    - On the review page, the *Hand on* form gives way to a note until you have answered each one.
+    - On the review page, the *Hand over* form gives way to a note until you have answered each one.
     - The check is on where the review would go. So a hand-off that LANI sends to you anyway
       goes through: the reviewer's first findings, and a reached round limit.
     - The rule was added at your request after a review in which the sessions went on handing the
@@ -1386,7 +1386,7 @@ In either mode, `lani serve` prints the sign-in link, in the foreground or with 
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title (editable); head, base picker (§9.5) with an *auto-detected* label when applicable, merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21), each row giving the number of replies (comments after the description) and who wrote the last, and ending in three lights, reviewer, human and implementer, filled for each role that created or commented on the issue, with a tooltip naming the role and what it did; close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is and the questions waiting for you as links (§11.5); the overview adds the hand-off note and the earlier hand-offs, lists the issues that need you first, and has a *Hand on* control. |
+| `/reviews/{id}`                             | **Overview.** Title; head, base with an *auto-detected* label when applicable, and a *Change base* button for the base picker (§9.5); merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21), each row giving the number of replies (comments after the description) and who wrote the last, and ending in three lights, reviewer, human and implementer, filled for each role that created or commented on the issue, with a tooltip naming the role and what it did; close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is and the questions waiting for you as links (§11.5); the overview adds the hand-off note and the earlier hand-offs, lists the issues that need you first, and has a *Hand over* button. On every review page, a pencil by the title renames the review while it is open. The *Change base* and *Hand over* buttons open their forms in place and read *Cancel* while open, so the panel doesn't show the same label twice. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
@@ -1913,7 +1913,7 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   event ids, two MCP sessions taking turns, and `lani wait`'s three exits in a real process.
   - **Questions hold the review for the human.** Every other hand-off is refused, the human's too,
     while redirects to them go through. Each refusal names every waiting issue, and the review
-    page swaps its *Hand on* form for a note.
+    page swaps its *Hand over* form for a note.
   - **Only the human settles a question.** The reviewer's resolve is refused, keeping no comment,
     and the human's own resolve answers. A resolved issue takes no question.
 - **Idle timer:** tested with an injected clock.

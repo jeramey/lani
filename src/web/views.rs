@@ -240,6 +240,8 @@ pub struct ReviewHeader {
     pub id: i64,
     pub url: String,
     pub title: String,
+    /// Whether the review is open, so its title can be renamed from any review page.
+    pub editable: bool,
     pub repo: String,
     pub status_label: &'static str,
     pub status_class: &'static str,
@@ -450,6 +452,7 @@ pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
         files_url: files_url(review.id, "", true),
         changes_url: review.base_ref.is_some().then(|| changes_url(review.id)),
         tab: "overview",
+        editable: review.status == ReviewStatus::Open,
         turn: turn(review),
         hand_offs: Vec::new(),
         questions: if review.status == ReviewStatus::Open {
