@@ -1274,8 +1274,8 @@ impl Service {
     }
 
     /// Record a reviewer prompt the human copied, when its text differs from what the review page
-    /// showed for it: as a diff from the default, or as a return to the default (§13.9). Returns
-    /// whether a revision was recorded.
+    /// shows for it now, or the page shows a notice: as a diff from the default, or as a return to
+    /// the default (§13.9). Returns whether a revision was recorded.
     pub fn save_reviewer_prompt(
         &mut self,
         actor: Actor,

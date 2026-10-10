@@ -1716,9 +1716,14 @@ shows while the review is open.
   - **The clipboard.** Loopback pages are a secure context, so the clipboard API is available.
     If writing fails, the panel selects the text and falls back to `document.execCommand("copy")`.
   - **Without JavaScript,** the buttons are hidden and you copy the text yourself.
-- **Saving edits.** A save records a revision when the copied text differs from what the panel
-  showed. The panel then starts from your last copied edit next time, for each review and
-  prompt. Copying the default after an edit records a return to the default.
+- **Saving edits.** A save records a revision when the copied text differs from what the page
+  shows for the prompt now: the latest revision, or the default if there is none. It also records
+  one when the page shows the default with a note (below). The panel then starts from your last
+  copied edit next time, for each review and prompt. Copying the default after an edit records a
+  return to the default.
+  - **Two tabs.** The server can't know what an older tab showed, since saving records no event.
+    So copying the default from a tab opened before an edit in another tab records a return to
+    the default. That is what you copied last; the edit stays in the history.
   - **Kept for later analysis.** Each revision holds a unified diff from its default, without
     context lines, since a line of a prompt is a whole paragraph. The default itself is stored
     once, in `prompt_default` (§7.3).
