@@ -99,9 +99,28 @@ impl Binding {
     }
 }
 
-/// Check that a socket can be made at `path`: the path fits in a Unix socket address, and nothing
-/// but a socket left over from an earlier server is there.
+/// Check that a socket can be made at `path` and forwarded to: the path fits in a Unix socket
+/// address, the printed `ssh -L` command can name it, and nothing but a socket left over from an
+/// earlier server is there.
 fn check_socket_path(path: &Path) -> Result<()> {
+    // The command is printed as text, and ssh expands `${…}` in socket paths with no escape for it
+    // (§13.2).
+    match path.to_str() {
+        None => {
+            return Err(Error::Invalid(format!(
+                "the socket path {} is not UTF-8, so the ssh command to reach it can't be printed; \
+                 set LANI_HOME to a directory whose path is",
+                path.display()
+            )));
+        }
+        Some(text) if text.contains("${") => {
+            return Err(Error::Invalid(format!(
+                "the socket path {text} contains \"${{\", which ssh would expand, so the server \
+                 couldn't be reached through a forward; set LANI_HOME to a directory without it"
+            )));
+        }
+        Some(_) => {}
+    }
     if std::os::unix::net::SocketAddr::from_pathname(path).is_err() {
         return Err(Error::Invalid(format!(
             "the socket path {} is {} bytes, too long for a Unix socket, which allows 103 on macOS \
@@ -121,6 +140,8 @@ fn check_socket_path(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::ffi::OsStrExt;
+
     use super::*;
 
     fn port(port: u16) -> NonZeroU16 {
@@ -188,6 +209,16 @@ mod tests {
                 && too_long.ends_with("set LANI_HOME to a shorter directory"),
             "{too_long}"
         );
+
+        let expanded = directory.path().join("${HOME}").join("web.sock");
+        let refused = check_socket_path(&expanded).unwrap_err().to_string();
+        assert!(refused.contains("which ssh would expand"), "{refused}");
+        let not_utf8 = directory
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"caf\xe9"))
+            .join("web.sock");
+        let refused = check_socket_path(&not_utf8).unwrap_err().to_string();
+        assert!(refused.contains("is not UTF-8"), "{refused}");
 
         let path = directory.path().join("web.sock");
         check_socket_path(&path).unwrap();

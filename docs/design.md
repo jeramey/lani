@@ -1096,6 +1096,10 @@ routine:
     default is about 45 bytes for a typical home directory, and the test suite's temporary homes
     on macOS come to about 81. A longer path is refused before binding, with the suggestion to
     set a shorter `LANI_HOME`.
+  - **Paths a forward can't name** are refused the same way.
+    - A path containing `${` is refused because ssh expands `${…}` in socket paths, with no way
+      to escape it (§13.2).
+    - A path that isn't UTF-8 is refused because the command is printed as text.
   - **`port` is not bound.** It is the local port that the printed command and links suggest you
     forward from, so nothing counts up, and 0 is refused.
 - Generate a 256-bit token and a 128-bit `instance_id` from the OS RNG.
@@ -1263,14 +1267,21 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   - The printed path is absolute, because ssh expands anything else on your machine, not the
     remote one.
   - ssh expands tokens in that file, so write any `%` in the path as `%%`.
-- **The printed command** uses `port` as the local port.
+- **The printed command** uses `port` as the local port. Its `-L` argument is written so that the
+  shell and then ssh read back exactly the socket's path. Each of these cases was checked with
+  `ssh -G` through `sh` and `zsh`:
+  - `%` is written `%%`, because ssh expands `%` tokens in socket paths, on the command line too.
+  - A path with a `:` goes in brackets, because ssh's parser would otherwise split it there.
+  - Anything but letters, digits and `._/:-` puts the whole argument in single quotes, with `'`
+    written `'\''`.
   - **The host name** is this machine's name as `uname -n` prints it, the same as `hostname`. The
     server records it as `ssh_host` in `server.json`.
   - **Usually right.** It is usually the name you ssh to. Cloud machines named after private
     addresses, ssh aliases, jump hosts and containers are the exceptions, so the line says whose
     name it is.
-  - **No name.** If there is none, or it has anything but letters, digits, `.`, `-` and `_`, the
-    command shows `<host>`.
+  - **No name.** The command shows `<host>` if there is no name, or if the name has anything but
+    letters, digits, `.`, `-` and `_`. It does the same for a name starting with `-`, which ssh
+    would take for an option.
   - **Why `uname -n`.** POSIX requires it, and calling `gethostname` would need unsafe code, which
     the crate forbids.
 - **No browser on the remote machine.** A browser there could not reach a Unix socket, so

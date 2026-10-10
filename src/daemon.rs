@@ -145,15 +145,39 @@ impl Endpoint {
         };
         Some(format!(
             "To reach LANI from your own machine, forward a local port to it over SSH ({whose}):\n\
-             ssh -L {browser_port}:{} {host}\n",
-            socket.display()
+             ssh -L {} {host}\n",
+            forward_argument(*browser_port, socket)
         ))
     }
 }
 
+/// The `-L` argument that forwards `browser_port` to `socket`, written so that the shell and then
+/// ssh read back exactly that path (§13.2):
+/// - `%` is written `%%`, because ssh expands `%` tokens in socket paths. It also expands `${…}`,
+///   which can't be escaped, so [`crate::listen::Binding`] refuses a path containing it.
+/// - A path with a `:` goes in brackets, since ssh's parser otherwise splits the argument there.
+/// - Anything but letters, digits and `._/:-` puts the whole argument in single quotes.
+fn forward_argument(browser_port: u16, socket: &Path) -> String {
+    let path = socket.to_string_lossy().replace('%', "%%");
+    let path = if path.contains(':') {
+        format!("[{path}]")
+    } else {
+        path
+    };
+    let argument = format!("{browser_port}:{path}");
+    let plain = argument.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'/' | b':' | b'-')
+    });
+    if plain {
+        argument
+    } else {
+        format!("'{}'", argument.replace('\'', r"'\''"))
+    }
+}
+
 /// This machine's name as `uname -n` prints it, the same as `hostname`: usually the name you ssh
-/// to, for the printed `ssh` command (§13.2). `None` if it cannot be found, or if it holds anything
-/// but letters, digits, `.`, `-` and `_`, since it goes into a shell command.
+/// to, for the printed `ssh` command (§13.2). `None` if it cannot be found, or if it isn't
+/// [`plain_host`].
 #[must_use]
 pub fn host_name() -> Option<String> {
     let output = Command::new("uname")
@@ -162,13 +186,23 @@ pub fn host_name() -> Option<String> {
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    let name = String::from_utf8(output.stdout).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    plain_host(&String::from_utf8(output.stdout).ok()?)
+}
+
+/// `name`, trimmed, if it can go into the printed `ssh` command as it is: letters, digits, `.`, `-`
+/// and `_` only, so the shell leaves it alone, and no leading `-`, which ssh would read as an
+/// option.
+fn plain_host(name: &str) -> Option<String> {
     let name = name.trim();
     let plain = !name.is_empty()
+        && !name.starts_with('-')
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'));
-    (output.status.success() && plain).then(|| name.to_string())
+    plain.then(|| name.to_string())
 }
 
 /// The contents of `run/server.json`: how to reach the running server.
@@ -820,6 +854,49 @@ mod tests {
         let tcp = Endpoint::Tcp { port: 5264 };
         assert_eq!(tcp.forward_directions(), None);
         assert_eq!(tcp.describe(), "port 5264");
+    }
+
+    #[test]
+    fn the_forward_argument_reads_back_as_the_socket_path() {
+        let argument = |path: &str| forward_argument(5264, Path::new(path));
+        assert_eq!(
+            argument("/home/you/.local/share/lani/run/web.sock"),
+            "5264:/home/you/.local/share/lani/run/web.sock",
+            "a plain path as it is"
+        );
+        assert_eq!(
+            argument("/home/a b/run/web.sock"),
+            "'5264:/home/a b/run/web.sock'"
+        );
+        assert_eq!(
+            argument("/home/it's/run/web.sock"),
+            r"'5264:/home/it'\''s/run/web.sock'"
+        );
+        assert_eq!(
+            argument("/home/a:b/run/web.sock"),
+            "'5264:[/home/a:b/run/web.sock]'",
+            "ssh splits at a bare colon; the brackets make the shell quote it too"
+        );
+        assert_eq!(
+            argument("/home/50%/run/web.sock"),
+            "'5264:/home/50%%/run/web.sock'"
+        );
+        assert_eq!(
+            argument("/x/$(id)`id`;/web.sock"),
+            "'5264:/x/$(id)`id`;/web.sock'"
+        );
+    }
+
+    #[test]
+    fn a_host_name_goes_into_the_command_only_if_plain() {
+        assert_eq!(
+            plain_host("devbox.example.com\n").as_deref(),
+            Some("devbox.example.com")
+        );
+        assert_eq!(plain_host("build_07-a").as_deref(), Some("build_07-a"));
+        for unusable in ["", "-devbox", "a b", "a;b", "a$b", "naïve"] {
+            assert_eq!(plain_host(unusable), None, "{unusable:?}");
+        }
     }
 
     #[test]
