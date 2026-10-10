@@ -805,7 +805,9 @@ Claude sessions can run the review loop on their own and bring you in when it ma
     - Your own resolve is that acknowledgement: you accept the outcome the sessions reached
       without having to write a reply.
     - A resolved issue takes no question, since it would be resolved before you answered. A
-      session asks on an open issue, or has the issue reopened first.
+      session asks on an open issue, or has the issue reopened first. You allowed a question to
+      reopen the issue by itself instead. LANI refuses rather than reopen: the implementer can't
+      reopen issues, and a question shouldn't let it.
     - So while a question waits, its issue is open, and you answer by replying or resolving.
       Both checks are made in the write transaction, so a question and a resolve made at the same
       moment can't slip past each other.
