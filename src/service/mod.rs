@@ -22,11 +22,12 @@ use crate::base::{self, BaseChoice, BaseMode};
 use crate::error::{Error, Result};
 use crate::git::{self, Git, PathChange, Worktree};
 use crate::model::{
-    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
-    ReviewStatus, Severity, Side, short_ref, short_sha,
+    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, PromptKind, Repo,
+    Review, ReviewStatus, Severity, Side, short_ref, short_sha,
 };
+use crate::prompt;
 use crate::settings::{self, IdleTimeout};
-use crate::store::{self, IssueCounts, NewComment, NewEvent, NewReview};
+use crate::store::{self, IssueCounts, NewComment, NewEvent, NewPromptEdit, NewReview};
 use crate::text::{self, quoted};
 use crate::time;
 
@@ -270,6 +271,22 @@ pub struct IssueList {
     /// Issues left out by the status filter: in the filtered file when a path was given,
     /// otherwise in the whole review.
     pub not_shown: IssueCounts,
+}
+
+/// A reviewer prompt for the review page (§13.8): its default, and the text the page shows, which
+/// is the human's last copied edit when there is one.
+#[derive(Clone, Debug)]
+pub struct ReviewerPrompt {
+    pub kind: PromptKind,
+    pub default: String,
+    pub text: String,
+}
+
+impl ReviewerPrompt {
+    #[must_use]
+    pub fn edited(&self) -> bool {
+        self.text != self.default
+    }
 }
 
 // ── operations ───────────────────────────────────────────────────────────────────────────────
@@ -1225,6 +1242,63 @@ impl Service {
         self.review_view(store::get_review(&self.conn, review_id)?, true)
     }
 
+    /// The review's reviewer prompts, one of each kind, for the review page (§13.8).
+    pub fn reviewer_prompts(&self, review_id: i64) -> Result<Vec<ReviewerPrompt>> {
+        let review = store::get_review(&self.conn, review_id)?;
+        [PromptKind::ClaudeCode, PromptKind::Generic]
+            .into_iter()
+            .map(|kind| {
+                let default = prompt::default_text(kind, &review)?;
+                let text = shown_prompt(&self.conn, review_id, kind, &default)?;
+                Ok(ReviewerPrompt {
+                    kind,
+                    default,
+                    text,
+                })
+            })
+            .collect()
+    }
+
+    /// Record a reviewer prompt the human copied, when its text differs from what the review page
+    /// showed for it: as a diff from the default, or as a return to the default (§13.8). Returns
+    /// whether a revision was recorded.
+    pub fn save_reviewer_prompt(
+        &mut self,
+        actor: Actor,
+        review_id: i64,
+        kind: PromptKind,
+        text: &str,
+    ) -> Result<bool> {
+        require_human(actor, "edit reviewer prompts")?;
+        let review = store::get_review(&self.conn, review_id)?;
+        require_open(&review)?;
+        let text = normalize_newlines(text);
+        let default = prompt::default_text(kind, &review)?;
+        let patch = if text == default {
+            None
+        } else {
+            Some(prompt::diff(&default, &text)?)
+        };
+        let now = time::now();
+        let tx = store::write_transaction(&mut self.conn)?;
+        if text == shown_prompt(&tx, review_id, kind, &default)? {
+            return Ok(false);
+        }
+        store::insert_prompt_edit(
+            &tx,
+            &NewPromptEdit {
+                review_id,
+                kind,
+                default_text: &default,
+                patch: patch.as_deref(),
+                lani_version: crate::daemon::VERSION,
+                now: &now,
+            },
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Refs a review's base can be changed to: local and remote-tracking branches other than
     /// the review's head, as full ref names.
     pub fn base_candidates(&self, review_id: i64) -> Result<Vec<String>> {
@@ -2033,6 +2107,23 @@ fn require_human(actor: Actor, what: &str) -> Result<()> {
         Err(Error::Forbidden(format!(
             "only the human can {what}, in the web UI"
         )))
+    }
+}
+
+/// The text the review page shows for a prompt: the latest revision, or the current default
+/// when there is none or the latest went back to the default.
+fn shown_prompt(
+    conn: &Connection,
+    review_id: i64,
+    kind: PromptKind,
+    default: &str,
+) -> Result<String> {
+    match store::latest_prompt_edit(conn, review_id, kind)? {
+        Some(store::PromptRevision {
+            default_text,
+            patch: Some(patch),
+        }) => prompt::apply(&default_text, &patch),
+        Some(store::PromptRevision { patch: None, .. }) | None => Ok(default.to_string()),
     }
 }
 

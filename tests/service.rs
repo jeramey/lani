@@ -7,7 +7,7 @@ use std::path::Path;
 use common::{TestHome, TestRepo, numbered};
 use lani::base::BaseMode;
 use lani::error::Error;
-use lani::model::{Actor, IssueStatus, ReviewStatus, Severity, Side};
+use lani::model::{Actor, IssueStatus, PromptKind, ReviewStatus, Severity, Side};
 use lani::service::{
     CommentTarget, CreateIssue, IssueView, Location, Redirect, Service, SpanRequest, StartReview,
     StartedReview,
@@ -1106,8 +1106,8 @@ fn reopening_the_database_keeps_the_schema() {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        version, 4,
-        "the baseline schema, the turns migration and hand-off notes"
+        version, 5,
+        "the baseline schema, the turns migration, hand-off notes and prompt edits"
     );
     let timeout: String = conn
         .query_row(
@@ -1318,7 +1318,7 @@ fn a_running_lani_stops_once_a_newer_lani_upgrades_the_database() {
     let outdated = |error: Error| match error {
         Error::Outdated(message) => {
             assert!(
-                message.contains("schema version 99") && message.contains("up to 4"),
+                message.contains("schema version 99") && message.contains("up to 5"),
                 "{message}"
             );
         }
@@ -2533,4 +2533,163 @@ fn a_hand_off_made_meanwhile_is_seen_not_overwritten() {
         (Some(Actor::Reviewer), Some(Actor::Human)),
         "the human's hand-off stands"
     );
+}
+
+/// The `prompt_edit` rows, oldest first: (kind, patch, default text, LANI version).
+fn prompt_rows(home: &TestHome) -> Vec<(String, Option<String>, String, String)> {
+    let conn = rusqlite::Connection::open(home.db_path()).unwrap();
+    let mut statement = conn
+        .prepare(
+            "SELECT kind, patch, prompt_default.text, lani_version
+             FROM prompt_edit JOIN prompt_default ON prompt_default.id = default_id
+             ORDER BY prompt_edit.id",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn prompt_text(service: &Service, review_id: i64, kind: PromptKind) -> (String, bool) {
+    let prompts = service.reviewer_prompts(review_id).unwrap();
+    let prompt = prompts.iter().find(|prompt| prompt.kind == kind).unwrap();
+    (prompt.text.clone(), prompt.edited())
+}
+
+#[test]
+fn a_copied_edit_is_kept_as_a_diff_and_shown_next_time() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Implementer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let prompts = service.reviewer_prompts(review_id).unwrap();
+    let kinds: Vec<PromptKind> = prompts.iter().map(|prompt| prompt.kind).collect();
+    assert_eq!(kinds, [PromptKind::ClaudeCode, PromptKind::Generic]);
+    assert!(prompts.iter().all(|prompt| !prompt.edited()));
+    let default = prompts[0].default.clone();
+    assert!(default.contains("branch feature against main"), "{default}");
+
+    // Copying the default as it is records nothing.
+    let save = |service: &mut Service, text: &str| {
+        service
+            .save_reviewer_prompt(Actor::Human, review_id, PromptKind::ClaudeCode, text)
+            .unwrap()
+    };
+    assert!(!save(&mut service, &default));
+    assert_eq!(prompt_rows(&home), []);
+
+    // An edit is stored as a diff from the default, and the page shows it from then on.
+    let edited = format!("{default}\n\nAlso run the benchmarks.");
+    assert!(save(&mut service, &edited));
+    assert_eq!(
+        prompt_text(&service, review_id, PromptKind::ClaudeCode),
+        (edited.clone(), true)
+    );
+    assert!(
+        !prompt_text(&service, review_id, PromptKind::Generic).1,
+        "the other kind keeps its default"
+    );
+    let rows = prompt_rows(&home);
+    let (kind, patch, stored_default, version) = &rows[0];
+    let patch = patch.as_deref().unwrap();
+    assert_eq!(kind, "claude_code");
+    assert!(patch.contains("+Also run the benchmarks."), "{patch}");
+    assert!(
+        patch.len() < default.len(),
+        "a diff, not the whole text: {patch}"
+    );
+    assert_eq!(
+        (stored_default, version.as_str()),
+        (&default, env!("CARGO_PKG_VERSION"))
+    );
+
+    // Copying the same text again, even with the line endings a browser submits, adds nothing.
+    assert!(!save(&mut service, &edited.replace('\n', "\r\n")));
+    assert_eq!(prompt_rows(&home).len(), 1);
+
+    // A second edit is another revision; the default it was made from is stored only once.
+    let edited_again = edited.replace("benchmarks", "fuzzer");
+    assert!(save(&mut service, &edited_again));
+    let conn = rusqlite::Connection::open(home.db_path()).unwrap();
+    let defaults: i64 = conn
+        .query_row("SELECT count(*) FROM prompt_default", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!((prompt_rows(&home).len(), defaults), (2, 1));
+
+    // Going back to the default is a revision too, so the page starts from the default again.
+    assert!(save(&mut service, &default));
+    assert_eq!(
+        prompt_text(&service, review_id, PromptKind::ClaudeCode),
+        (default.clone(), false)
+    );
+    assert_eq!(prompt_rows(&home)[2].1, None);
+    assert!(!save(&mut service, &default));
+    assert_eq!(prompt_rows(&home).len(), 3);
+}
+
+#[test]
+fn an_edit_outlives_a_change_of_its_default() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Implementer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    let (default, _) = prompt_text(&service, review_id, PromptKind::Generic);
+    let edited = default.replace("Look for real problems", "Look hard for real problems");
+    assert!(
+        service
+            .save_reviewer_prompt(Actor::Human, review_id, PromptKind::Generic, &edited)
+            .unwrap()
+    );
+
+    // A whole-tree review has another default; the page still shows the edit, as an edit.
+    service
+        .change_base(Actor::Human, review_id, &BaseMode::None)
+        .unwrap();
+    let prompts = service.reviewer_prompts(review_id).unwrap();
+    let generic = prompts
+        .iter()
+        .find(|prompt| prompt.kind == PromptKind::Generic)
+        .unwrap();
+    assert!(
+        generic.default.contains("a whole-tree review"),
+        "{}",
+        generic.default
+    );
+    assert_eq!(
+        (generic.text.as_str(), generic.edited()),
+        (edited.as_str(), true)
+    );
+}
+
+#[test]
+fn only_the_human_edits_prompts_and_only_on_an_open_review() {
+    let home = TestHome::new();
+    let repo = feature_repo();
+    let mut service = service(&home);
+    let review_id = start(&mut service, &repo, Actor::Implementer, BaseMode::Auto)
+        .view
+        .review
+        .id;
+    for actor in [Actor::Reviewer, Actor::Implementer] {
+        assert!(matches!(
+            service.save_reviewer_prompt(actor, review_id, PromptKind::Generic, "Mine."),
+            Err(Error::Forbidden(_))
+        ));
+    }
+    service.close_review(Actor::Human, review_id).unwrap();
+    expect_invalid(
+        service.save_reviewer_prompt(Actor::Human, review_id, PromptKind::Generic, "Mine."),
+        "is closed",
+    );
+    assert_eq!(prompt_rows(&home), []);
 }

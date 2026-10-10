@@ -58,6 +58,14 @@ db_enum!(
 
 db_enum!(ReviewStatus { Open => "open", Closed => "closed" });
 
+db_enum!(
+    /// The kind of harness a reviewer prompt is written for (§13.8).
+    PromptKind {
+        ClaudeCode => "claude_code",
+        Generic => "generic",
+    }
+);
+
 db_enum!(IssueStatus { Open => "open", Resolved => "resolved" });
 
 db_enum!(

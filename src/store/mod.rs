@@ -13,8 +13,8 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehav
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, Repo, Review,
-    ReviewStatus, Severity,
+    Actor, Anchor, BaseSource, Comment, Event, EventKind, Issue, IssueStatus, PromptKind, Repo,
+    Review, ReviewStatus, Severity,
 };
 
 /// Migrations in order. The first creates the baseline schema at [`BASELINE_VERSION`]; each
@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0002_baseline.sql"),
     include_str!("migrations/0003_turns.sql"),
     include_str!("migrations/0004_hand_off_notes.sql"),
+    include_str!("migrations/0005_prompt_edits.sql"),
 ];
 
 /// The schema version the baseline migration creates. Databases at an earlier version come from
@@ -822,6 +823,69 @@ pub fn questions(conn: &Connection, review_id: i64) -> Result<Vec<Question>> {
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+// ── prompt edits ─────────────────────────────────────────────────────────────────────────────
+
+/// A revision of a review's prompt: the default it was edited from, and the edit as a diff from
+/// it, or `None` when the text went back to the default (§13.8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptRevision {
+    pub default_text: String,
+    pub patch: Option<String>,
+}
+
+pub struct NewPromptEdit<'a> {
+    pub review_id: i64,
+    pub kind: PromptKind,
+    pub default_text: &'a str,
+    pub patch: Option<&'a str>,
+    pub lani_version: &'a str,
+    pub now: &'a str,
+}
+
+/// The latest revision of a review's prompt of this kind, if the human ever edited it.
+pub fn latest_prompt_edit(
+    conn: &Connection,
+    review_id: i64,
+    kind: PromptKind,
+) -> Result<Option<PromptRevision>> {
+    Ok(conn
+        .query_row(
+            "SELECT prompt_default.text, prompt_edit.patch
+             FROM prompt_edit JOIN prompt_default ON prompt_default.id = prompt_edit.default_id
+             WHERE prompt_edit.review_id = ?1 AND prompt_edit.kind = ?2
+             ORDER BY prompt_edit.id DESC LIMIT 1",
+            params![review_id, kind],
+            |row| {
+                Ok(PromptRevision {
+                    default_text: row.get(0)?,
+                    patch: row.get(1)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Record a revision, storing its default text only if no earlier revision used the same one.
+pub fn insert_prompt_edit(conn: &Connection, edit: &NewPromptEdit<'_>) -> Result<()> {
+    conn.execute(
+        "INSERT INTO prompt_default (text) VALUES (?1) ON CONFLICT (text) DO NOTHING",
+        [edit.default_text],
+    )?;
+    conn.execute(
+        "INSERT INTO prompt_edit (review_id, kind, default_id, patch, lani_version, created_at)
+         VALUES (?1, ?2, (SELECT id FROM prompt_default WHERE text = ?3), ?4, ?5, ?6)",
+        params![
+            edit.review_id,
+            edit.kind,
+            edit.default_text,
+            edit.patch,
+            edit.lani_version,
+            edit.now
+        ],
+    )?;
+    Ok(())
 }
 
 // ── settings ─────────────────────────────────────────────────────────────────────────────────
