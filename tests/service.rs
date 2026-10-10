@@ -9,8 +9,8 @@ use lani::base::BaseMode;
 use lani::error::Error;
 use lani::model::{Actor, IssueStatus, PromptKind, ReviewStatus, Severity, Side};
 use lani::service::{
-    CommentTarget, CreateIssue, IssueView, Location, Redirect, Service, SpanRequest, StartReview,
-    StartedReview,
+    CommentTarget, CreateIssue, IssueView, Location, PromptNotice, Redirect, Service, SpanRequest,
+    StartReview, StartedReview,
 };
 
 fn service(home: &TestHome) -> Service {
@@ -2635,7 +2635,7 @@ fn a_copied_edit_is_kept_as_a_diff_and_shown_next_time() {
 }
 
 #[test]
-fn an_edit_outlives_a_change_of_its_default() {
+fn after_its_default_changes_an_edit_gives_way_to_the_new_default_with_a_notice() {
     let home = TestHome::new();
     let repo = feature_repo();
     let mut service = service(&home);
@@ -2645,30 +2645,48 @@ fn an_edit_outlives_a_change_of_its_default() {
         .id;
     let (default, _) = prompt_text(&service, review_id, PromptKind::Generic);
     let edited = default.replace("Look for real problems", "Look hard for real problems");
-    assert!(
+    let save = |service: &mut Service, text: &str| {
         service
-            .save_reviewer_prompt(Actor::Human, review_id, PromptKind::Generic, &edited)
+            .save_reviewer_prompt(Actor::Human, review_id, PromptKind::Generic, text)
             .unwrap()
-    );
+    };
+    assert!(save(&mut service, &edited));
 
-    // A whole-tree review has another default; the page still shows the edit, as an edit.
+    // A whole-tree review has another default. The edit names the old base and range, so the page
+    // shows the new default instead, says why, and keeps the edit in the history.
     service
         .change_base(Actor::Human, review_id, &BaseMode::None)
         .unwrap();
-    let prompts = service.reviewer_prompts(review_id).unwrap();
-    let generic = prompts
-        .iter()
-        .find(|prompt| prompt.kind == PromptKind::Generic)
-        .unwrap();
+    let generic = |service: &Service| {
+        service
+            .reviewer_prompts(review_id)
+            .unwrap()
+            .into_iter()
+            .find(|prompt| prompt.kind == PromptKind::Generic)
+            .unwrap()
+    };
+    let shown = generic(&service);
     assert!(
-        generic.default.contains("a whole-tree review"),
+        shown.default.contains("a whole-tree review"),
         "{}",
-        generic.default
+        shown.default
     );
     assert_eq!(
-        (generic.text.as_str(), generic.edited()),
-        (edited.as_str(), true)
+        (shown.text.as_str(), shown.edited(), shown.notice),
+        (
+            shown.default.as_str(),
+            false,
+            Some(PromptNotice::DefaultChanged)
+        )
     );
+    assert_eq!(prompt_rows(&home).len(), 1);
+
+    // Copying the new default accepts it: that is recorded, and the notice goes.
+    assert!(save(&mut service, &shown.default));
+    assert_eq!(generic(&service).notice, None);
+    assert_eq!(prompt_rows(&home)[1].1, None);
+    assert!(!save(&mut service, &shown.default));
+    assert_eq!(prompt_rows(&home).len(), 2);
 }
 
 #[test]

@@ -2336,7 +2336,7 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
     let (_, _, page) = send(&f.app, get(&review)).await;
     assert_eq!(
         prompt_panel(&page, "generic"),
-        (edited, default.clone(), true)
+        (edited.clone(), default.clone(), true)
     );
     assert!(
         !prompt_panel(&page, "claude_code").2,
@@ -2382,6 +2382,40 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
     assert!(
         refused.contains("<p class=\"message-text\">") && refused.contains("is closed"),
         "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn after_a_base_change_the_prompt_panel_shows_the_new_default_and_says_why() {
+    let f = fixture();
+    let review = format!("/reviews/{}", f.review_id);
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    let (_, default, _) = prompt_panel(&page, "generic");
+    let edited = format!("{default}\n\nAlso read the notes.");
+    // An edit made for the old base gives way to the new default, and the panel says why.
+    let notice = "<p class=\"notice prompt-notice\">The default changed since your last edit";
+    assert!(!page.contains(notice), "{page}");
+    send(
+        &f.app,
+        post(
+            &format!("{review}/prompts"),
+            &format!("kind=generic&text={}", form_value(&edited)),
+        ),
+    )
+    .await;
+    send(&f.app, post(&format!("{review}/base"), "base=&back=")).await;
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    let (text, default, edited_now) = prompt_panel(&page, "generic");
+    assert!(
+        default.contains("a whole-tree review") && text == default && !edited_now,
+        "{page}"
+    );
+    let generic = &page[page
+        .find("<div class=\"prompt\" data-kind=\"generic\">")
+        .unwrap()..];
+    assert!(
+        generic[..generic.find("</textarea>").unwrap()].contains(notice),
+        "{page}"
     );
 }
 

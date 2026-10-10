@@ -1708,9 +1708,13 @@ shows while the review is open.
   - **Kept for later analysis.** Each revision holds a unified diff from its default, without
     context lines, since a line of a prompt is a whole paragraph. The default itself is stored
     once, in `prompt_default` (§7.3).
-  - **Each revision stands alone.** Showing it applies one diff to its own default, so it stays
-    readable after the default changes, as with a new base or a new LANI version. Before it is
+  - **Each revision stands alone.** Showing it applies one diff to its own default. Before it is
     stored, the diff is checked to restore the text exactly.
+  - **When the default changes.** A new base or a new version of LANI changes the default. An
+    edit made from the old default would name the old base and range, or miss the new default's
+    improvements. So the panel shows the new default instead, with a note saying why; the edit
+    stays in the history. Copying the new default accepts it: that records a return to the
+    default, and the note goes.
   - **Hunks apply at the lines they name.** The default is stored with the diff, so its line
     numbers are exact. Without context lines, diffy's own `apply` has nothing to place a hunk by:
     it searches outwards for matching text, and moved a deleted blank line to an earlier blank

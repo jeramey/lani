@@ -280,6 +280,16 @@ pub struct ReviewerPrompt {
     pub kind: PromptKind,
     pub default: String,
     pub text: String,
+    /// Why the page shows the default although the human's last copy was an edit.
+    pub notice: Option<PromptNotice>,
+}
+
+/// Why the review page shows a prompt's default instead of the human's last copied edit (§13.9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptNotice {
+    /// The edit was made from another default: the review's base or LANI changed since. It would
+    /// name the old base, or miss improvements, so it stays in the history only.
+    DefaultChanged,
 }
 
 impl ReviewerPrompt {
@@ -1249,11 +1259,12 @@ impl Service {
             .into_iter()
             .map(|kind| {
                 let default = prompt::default_text(kind, &review)?;
-                let text = shown_prompt(&self.conn, review_id, kind, &default)?;
+                let Shown { text, notice } = shown_prompt(&self.conn, review_id, kind, &default)?;
                 Ok(ReviewerPrompt {
                     kind,
                     default,
                     text,
+                    notice,
                 })
             })
             .collect()
@@ -1276,7 +1287,10 @@ impl Service {
         let default = prompt::default_text(kind, &review)?;
         let now = time::now();
         let tx = store::write_transaction(&mut self.conn)?;
-        if text == shown_prompt(&tx, review_id, kind, &default)? {
+        // Copying what the page shows records nothing, unless the page also says why it shows the
+        // default: then the copy accepts the new default, and the notice goes.
+        let shown = shown_prompt(&tx, review_id, kind, &default)?;
+        if text == shown.text && shown.notice.is_none() {
             return Ok(false);
         }
         // Only now, so that copying what the page shows never depends on diffing it.
@@ -2111,20 +2125,40 @@ fn require_human(actor: Actor, what: &str) -> Result<()> {
     }
 }
 
-/// The text the review page shows for a prompt: the latest revision, or the current default
-/// when there is none or the latest went back to the default.
+/// What the review page shows for a prompt, and why when it isn't the human's last copy.
+struct Shown {
+    text: String,
+    notice: Option<PromptNotice>,
+}
+
+/// The text the review page shows for a prompt: the latest revision, or the current `default`
+/// when there is none, the latest went back to the default, or the latest was made from another
+/// default.
 fn shown_prompt(
     conn: &Connection,
     review_id: i64,
     kind: PromptKind,
     default: &str,
-) -> Result<String> {
+) -> Result<Shown> {
+    let the_default = |notice| Shown {
+        text: default.to_string(),
+        notice,
+    };
     match store::latest_prompt_edit(conn, review_id, kind)? {
         Some(store::PromptRevision {
             default_text,
             patch: Some(patch),
-        }) => prompt::apply(&default_text, &patch),
-        Some(store::PromptRevision { patch: None, .. }) | None => Ok(default.to_string()),
+        }) => {
+            if default_text == default {
+                Ok(Shown {
+                    text: prompt::apply(&default_text, &patch)?,
+                    notice: None,
+                })
+            } else {
+                Ok(the_default(Some(PromptNotice::DefaultChanged)))
+            }
+        }
+        Some(store::PromptRevision { patch: None, .. }) | None => Ok(the_default(None)),
     }
 }
 

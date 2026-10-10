@@ -17,7 +17,7 @@ use super::views::{
 };
 use crate::daemon::{self, Health};
 use crate::model::{IssueStatus, PromptKind, ReviewStatus, short_ref};
-use crate::service::{ReviewView, ReviewerPrompt};
+use crate::service::{PromptNotice, ReviewView, ReviewerPrompt};
 use crate::settings;
 use crate::time;
 
@@ -187,6 +187,8 @@ struct PromptPanel {
     text: String,
     default: String,
     edited: bool,
+    /// Why the panel shows the default although the human's last copy was an edit.
+    notice: Option<&'static str>,
 }
 
 impl PromptPanel {
@@ -198,6 +200,12 @@ impl PromptPanel {
                 PromptKind::Generic => "Other harness",
             },
             edited: prompt.edited(),
+            notice: prompt.notice.map(|notice| match notice {
+                PromptNotice::DefaultChanged => {
+                    "The default changed since your last edit, with a new base or a new version of \
+                     LANI. Your edit is kept in the history; copying the new default accepts it."
+                }
+            }),
             text: prompt.text,
             default: prompt.default,
         }

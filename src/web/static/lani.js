@@ -283,8 +283,10 @@
         const message = page.querySelector(".message-text");
         throw new Error(message ? message.textContent : "HTTP " + response.status);
       }
-      // The page now shows this text, so the panel no longer counts as being edited.
+      // The page now shows this text, so the panel no longer counts as being edited, and a notice
+      // that it showed the default for a reason no longer applies.
       textarea.defaultValue = text;
+      prompt.querySelector(".prompt-notice")?.remove();
     } catch (error) {
       if (copied) {
         copiedStatus.textContent = "Prompt copied, but not saved: " + error.message;

@@ -59,6 +59,7 @@
           <label for="prompt-{{ prompt.kind }}">Prompt for {{ prompt.label }}</label>
           <span class="badge prompt-edited"{% if !prompt.edited %} hidden{% endif %}>Edited</span>
         </div>
+        {% if let Some(notice) = prompt.notice %}<p class="notice prompt-notice">{{ notice }}</p>{% endif %}
         {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
         <textarea id="prompt-{{ prompt.kind }}" rows="12" spellcheck="false" data-default="{{ prompt.default }}">
 {{ prompt.text }}</textarea>
