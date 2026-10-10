@@ -71,9 +71,9 @@ continue. Hand the review to the human when every issue is resolved or you need 
 tell the human (in your reply, and with a push notification if you can) and call open_web_ui. To ask \
 the human about one issue, pass ask_human: true to add_comment or create_issue; their reply, or their \
 resolving the issue, answers it. Only the human resolves an issue whose question waits for them; if \
-they ask you to, tell them to reply or resolve it in the web UI. Until every question is answered, hand \
-the review only to the human: other hand-offs are refused. Writing that the human should decide, \
-without ask_human, flags nothing. After a set number of rounds without the human, LANI hands the \
+they ask you to, tell them to reply or resolve it in the web UI. You can finish your pass meanwhile, but \
+until every question is answered, hand the review only to the human: other hand-offs are refused. \
+Writing that the human should decide, without ask_human, flags nothing. After a set number of rounds without the human, LANI hands the \
 review to them.
 
 Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \

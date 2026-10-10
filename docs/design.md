@@ -903,8 +903,8 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
 - **Taking turns.** Hand the review on with `hand_off` at the end of each pass, then wait with
   `lani wait` as a background command. The reviewer's first hand-off goes to the human. Hand it to
   the human when it has converged or needs a decision, and tell them. Ask the human about one
-  issue with `add_comment` and `ask_human: true`; until they answer, hand the review only to them
-  (§11.5).
+  issue with `add_comment` and `ask_human: true`, and finish the pass meanwhile; until they
+  answer, hand the review only to them (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.
 
