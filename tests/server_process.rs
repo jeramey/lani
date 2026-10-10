@@ -1015,22 +1015,38 @@ fn a_socket_path_too_long_for_the_os_is_refused() {
     use std::os::unix::fs::DirBuilderExt;
     let home = TestHome::new();
     home.write_config("port = 5264\n");
-    let long_home = home.path.join("h".repeat(60));
+    // Too long for any temporary directory: the limit is 103 bytes on macOS and 107 on Linux.
+    let long_home = home.path.join("h".repeat(110));
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&long_home)
         .unwrap();
+    let _stop = StopInHome(&home, &long_home);
     let socket = long_home.join("run/web.sock");
     for command in [
         &["serve", "--listen", "socket"][..],
         &["serve", "--detach", "--listen", "socket"],
     ] {
-        let refused = error_of(&common::output(
+        let mut child = common::spawn(
             Command::new(env!("CARGO_BIN_EXE_lani"))
                 .args(command)
                 .envs(common::lani_env(&home.path))
-                .env("LANI_HOME", &long_home),
-        ));
+                .env("LANI_HOME", &long_home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        );
+        // A server that wrongly starts in the foreground serves until stopped; give it ten seconds
+        // to fail.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("{command:?} started a server on a socket path too long for the OS");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let refused = error_of(&child.wait_with_output().unwrap());
         assert!(
             refused.contains(&format!(
                 "the socket path {} is {} bytes, too long for a Unix socket",
@@ -1038,6 +1054,21 @@ fn a_socket_path_too_long_for_the_os_is_refused() {
                 socket.as_os_str().len()
             )),
             "{command:?}: {refused}"
+        );
+    }
+}
+
+/// Stops the server of a LANI home other than the test's own, here `.1`, using the test's
+/// configuration file, even if an assertion fails part-way.
+struct StopInHome<'a>(&'a TestHome, &'a std::path::Path);
+
+impl Drop for StopInHome<'_> {
+    fn drop(&mut self) {
+        let _ = common::output(
+            Command::new(env!("CARGO_BIN_EXE_lani"))
+                .arg("stop")
+                .envs(common::lani_env(&self.0.path))
+                .env("LANI_HOME", self.1),
         );
     }
 }
