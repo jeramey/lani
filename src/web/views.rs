@@ -339,6 +339,19 @@ pub struct QuestionLink {
     pub asked_by: AuthorView,
 }
 
+/// Who the human most likely hands a review to next, chosen in advance in the Hand over form
+/// (§11.5): the other role from the one that handed it to them, so the loop carries on.
+#[must_use]
+pub fn likely_next(review: &crate::model::Review) -> Actor {
+    match (review.turn, review.turn_by) {
+        // The reviewer handed it over: the implementer acts on its findings next.
+        (Some(Actor::Human), Some(Actor::Reviewer)) => Actor::Implementer,
+        // The implementer handed it over, so the reviewer checks its fixes next. With no such
+        // hint, the reviewer is the form's first choice, as before.
+        _ => Actor::Reviewer,
+    }
+}
+
 /// Whose turn an open review is, or `None` when closed or nobody's.
 #[must_use]
 pub fn turn(review: &crate::model::Review) -> Option<TurnView> {

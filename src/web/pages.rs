@@ -172,6 +172,8 @@ struct ReviewPage {
     issues: Vec<IssueRow>,
     issues_empty: &'static str,
     base_options: Vec<BaseOption>,
+    /// The role chosen in advance in the Hand over form: `reviewer` or `implementer`.
+    hand_over_to: &'static str,
     activity: ActivityView,
 }
 
@@ -257,6 +259,7 @@ pub async fn review(
         },
         issues_empty,
         base_options,
+        hand_over_to: views::likely_next(review).as_str(),
         activity: activity::view(review_id, active, request, &activity),
     };
     Ok(Html(page.render()?))

@@ -33,8 +33,8 @@
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
-        <option value="reviewer">Claude · reviewer</option>
-        <option value="implementer">Claude · implementer</option>
+        <option value="reviewer"{% if hand_over_to == "reviewer" %} selected{% endif %}>Claude · reviewer</option>
+        <option value="implementer"{% if hand_over_to == "implementer" %} selected{% endif %}>Claude · implementer</option>
         <option value="nobody">Nobody</option>
       </select>
       <label for="turn-note">Note (optional)</label>

@@ -2240,6 +2240,46 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
 }
 
 #[tokio::test]
+async fn hand_over_chooses_the_other_role_from_the_one_that_handed_it_over() {
+    let f = fixture();
+    let review_id = f.review_id;
+    let review = format!("/reviews/{review_id}");
+    let chosen = |page: &str| {
+        let form = &page[page.find("<select id=\"turn-to\"").unwrap()..];
+        let form = &form[..form.find("</select>").unwrap()];
+        form.split("<option value=\"")
+            .filter(|option| option.contains("\" selected>"))
+            .map(|option| option.split('"').next().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let hand = |actor, to| {
+        let state = f.state.clone();
+        async move {
+            state
+                .call(move |service| service.hand_off(actor, review_id, Some(to), None))
+                .await
+                .unwrap();
+        }
+    };
+
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(
+        chosen(&page),
+        ["reviewer"],
+        "nobody's turn: the first choice"
+    );
+    // The reviewer's first findings come to the human, who then hands them to the implementer.
+    hand(Actor::Reviewer, Actor::Implementer).await;
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(chosen(&page), ["implementer"]);
+    // The implementer hands its fixes to the human, who then hands them to the reviewer.
+    hand(Actor::Human, Actor::Implementer).await;
+    hand(Actor::Implementer, Actor::Human).await;
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(chosen(&page), ["reviewer"]);
+}
+
+#[tokio::test]
 async fn the_hand_off_note_is_on_the_overview_only_and_the_issue_page_links_back() {
     let f = fixture();
     let review_id = f.review_id;
