@@ -10,7 +10,6 @@ use lani::model::Actor;
 use lani::service::Service;
 use serde_json::{Value, json};
 
-/// The human hands review 1 to the implementer from the web UI, with `note`.
 /// The human's reply on `issue_id`, which answers a question about it (§11.5).
 fn human_answers(home: &TestHome, issue_id: i64) {
     Service::open(&home.db_path())
@@ -23,6 +22,7 @@ fn human_answers(home: &TestHome, issue_id: i64) {
         .unwrap();
 }
 
+/// The human hands review 1 to the implementer from the web UI, with `note`.
 fn human_hands_to_implementer(home: &TestHome, note: &str) {
     Service::open(&home.db_path())
         .unwrap()
