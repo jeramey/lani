@@ -951,6 +951,24 @@ fn socket_starts_or_finds_a_socket_mode_server_and_says_how_to_reach_it() {
         printed,
         "the running server's directions and link"
     );
+    // Its port can't change while it runs, and a link for the old one could reach whatever took
+    // that port on your machine.
+    let other_port = (port + 1).to_string();
+    let moved = lani(&home, &["socket", "--port", &other_port]);
+    assert_eq!(String::from_utf8_lossy(&moved.stdout), "", "no link");
+    let refused = error_of(&moved);
+    assert!(
+        refused.contains(&format!("its command and link use port {port}"))
+            && refused.contains(&format!(
+                "run `lani stop`, then `lani socket --port {other_port}`"
+            )),
+        "{refused}"
+    );
+    let zero = error_of(&lani(&home, &["socket", "--port", "0"]));
+    assert!(
+        zero.ends_with("cannot be 0; pass another --port\n"),
+        "{zero}"
+    );
     let told = String::from_utf8_lossy(&again.stderr);
     assert!(told.contains("already running"), "{told}");
     home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));

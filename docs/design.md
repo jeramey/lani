@@ -1254,7 +1254,12 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
 - **The configuration file.** A server that `lani open` or Claude starts, for example after this
   one stops when idle, takes its mode from that file. So `lani socket` adds a note when the file
   doesn't set `listen = "socket"`.
-- **`--port N`** sets the local port in the printed command and link, for that run.
+- **`--port N`** sets the local port in the printed command and link of a server it starts.
+  - A server's port is set when it starts. So with a server already running on another port,
+    `lani socket --port N` prints no link, and says to run `lani stop` first.
+  - Printing the running server's link instead could send the token to whatever holds that port
+    on your machine, which is often why another port was asked for.
+  - `--port 0` is refused, as in the configuration file.
 - **For you, not Claude.** Claude's directions name `lani socket` for you to run. Nothing tells
   Claude to run it, so the token stays out of Claude's context.
 
@@ -1298,6 +1303,8 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
     expired*, and any other program gets the token.
   - The fix is on the remote machine: set `port` in its configuration file, or pass
     `lani socket --port N`, and the printed command and link follow it.
+  - A running server keeps the port it started with, so run `lani stop` first. A configuration
+    file changed while a server runs applies to the next one.
   - Adding `-o ExitOnForwardFailure=yes` makes ssh stop instead of carrying on without the
     forward.
 - **No browser on the remote machine.** A browser there could not reach a Unix socket, so

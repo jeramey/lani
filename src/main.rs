@@ -6,7 +6,7 @@ use rmcp::ServiceExt as _;
 
 use lani::config::Config;
 use lani::daemon::{self, Endpoint, RunningServer};
-use lani::listen::Listen;
+use lani::listen::{self, Listen};
 use lani::mcp::LaniServer;
 use lani::mcp::render;
 use lani::model::Actor;
@@ -389,6 +389,9 @@ fn serve(
 fn socket(port: Option<u16>) -> anyhow::Result<()> {
     let home = home()?;
     // Checked at once, like `lani serve --port`.
+    if port == Some(0) {
+        return Err(listen::port_zero(true).into());
+    }
     port.map(PortChoice::flag).transpose()?;
     let (server, started) = match daemon::find_running(&home) {
         Some(server) => (server, false),
@@ -403,6 +406,20 @@ fn socket(port: Option<u16>) -> anyhow::Result<()> {
         anyhow::bail!(
             "A LANI server is already running on port {port}, not on a Unix socket. Stop it with \
              `lani stop`, then run `lani socket` again."
+        );
+    }
+    // A server's port is set when it starts. Printing its link for another port would send the
+    // token to whatever holds that port on your machine, often the reason another was asked for.
+    let running_port = server.file.endpoint.browser_port();
+    if let Some(wanted) = port
+        && wanted != running_port
+    {
+        anyhow::bail!(
+            "A LANI server is already running (pid {}, {}), and its command and link use port \
+             {running_port}. A server's port is set when it starts: run `lani stop`, then \
+             `lani socket --port {wanted}`.",
+            server.health.pid,
+            server.health.endpoint.describe()
         );
     }
     if started {

@@ -84,21 +84,7 @@ impl Binding {
             Listen::Socket => {
                 let browser_port = match port {
                     PortChoice::Exact(port) | PortChoice::From(port) => port,
-                    PortChoice::Any => {
-                        // Like `change_port` for a TCP server: what to change is whatever said 0.
-                        let instead = if from_flag {
-                            "pass another --port".to_string()
-                        } else {
-                            format!(
-                                "set another port in {}, or pass --port",
-                                paths::shown_config_path()
-                            )
-                        };
-                        return Err(Error::Invalid(format!(
-                            "in socket mode the port is the one your browser uses through an SSH \
-                             forward, so it cannot be 0; {instead}"
-                        )));
-                    }
+                    PortChoice::Any => return Err(port_zero(from_flag)),
                 };
                 let path = socket_path(home);
                 check_socket_path(&path)?;
@@ -106,6 +92,24 @@ impl Binding {
             }
         }
     }
+}
+
+/// Why socket mode can't have port 0, and what to change: `--port` if the 0 came from the flag,
+/// otherwise the configuration file, as `change_port` says for a TCP server.
+#[must_use]
+pub fn port_zero(from_flag: bool) -> Error {
+    let instead = if from_flag {
+        "pass another --port".to_string()
+    } else {
+        format!(
+            "set another port in {}, or pass --port",
+            paths::shown_config_path()
+        )
+    };
+    Error::Invalid(format!(
+        "in socket mode the port is the one your browser uses through an SSH forward, so it \
+         cannot be 0; {instead}"
+    ))
 }
 
 /// Check that a socket can be made at `path` and forwarded to: the path fits in a Unix socket

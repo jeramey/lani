@@ -129,7 +129,8 @@ browser reaching it over SSH port forwarding.
   `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
 - **If 5264 is taken on your own machine,** for example by a local LANI, ssh only warns, and the
   printed link reaches that program instead. Set `port` to a free port in the remote machine's
-  configuration file, or run `lani socket --port N`; the printed command and link follow it.
+  configuration file, or run `lani socket --port N`; the printed command and link follow it. A
+  running server keeps the port it started with, so run `lani stop` first.
   `ssh -o ExitOnForwardFailure=yes` makes ssh stop instead of carrying on without the forward.
 - **No browser on the remote machine.** In socket mode, `lani open` and Claude's `open_web_ui`
   never open one. They print the forward command and the page's address, and Claude never sees
