@@ -2185,6 +2185,16 @@ async fn overview_forms_return_to_the_view_they_were_posted_from() {
     }
 }
 
+/// The opening tag of the `<details>` that `summary` opens on `page`.
+fn details_of<'a>(page: &'a str, summary: &str) -> &'a str {
+    let at = page
+        .find(summary)
+        .unwrap_or_else(|| panic!("no {summary} in {page}"));
+    let start = page[..at].rfind("<details").unwrap();
+    let end = start + page[start..].find('>').unwrap() + 1;
+    &page[start..end]
+}
+
 #[tokio::test]
 async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
     let f = fixture();
@@ -2220,13 +2230,19 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
     // Change base and Hand over are buttons. Like the pencil, they share a details name, so only
     // one of their panels is open at a time.
     let (_, _, overview) = send(&f.app, get(&review)).await;
-    let toggle = "<details class=\"inline-edit toggle\" name=\"review-edit\">";
+    for summary in [
+        "<summary class=\"button secondary\">Change base</summary>",
+        "<summary class=\"button\">Hand over</summary>",
+    ] {
+        let details = details_of(&overview, summary);
+        assert!(
+            details.contains("class=\"inline-edit toggle\"")
+                && details.contains("name=\"review-edit\""),
+            "{summary}: {details}"
+        );
+    }
     assert!(
-        overview.contains(&format!(
-            "{toggle}\n    <summary class=\"button secondary\">Change base</summary>"
-        )) && overview.contains(&format!(
-            "{toggle}\n    <summary class=\"button\">Hand over</summary>"
-        )) && overview.contains("<button type=\"submit\">Hand over</button>")
+        overview.contains("<button type=\"submit\">Hand over</button>")
             && !overview.contains("Hand on"),
         "{overview}"
     );
