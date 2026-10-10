@@ -978,11 +978,10 @@ impl Service {
         // While a question waits for the human, the review goes only to them: nobody hands it on,
         // the human included, until each question has had their answer (§11.5). Checked on where
         // the review would go, so a redirect to the human goes through.
-        if to != Some(Actor::Human) {
-            let questions = store::questions(&tx, review_id)?;
-            if !questions.is_empty() {
-                return Err(Error::Invalid(awaiting_answers(actor, &questions)));
-            }
+        if to != Some(Actor::Human)
+            && let Some(refusal) = awaiting_answers(actor, &store::questions(&tx, review_id)?)
+        {
+            return Err(Error::Invalid(refusal));
         }
         let now = time::now();
         store::change_turn(
@@ -1971,18 +1970,20 @@ fn round_limit(conn: &Connection) -> Result<u32> {
 }
 
 /// Why `actor`'s hand-off to anyone but the human is refused while `questions` wait for the
-/// human's answer (§11.5), and what to do instead. Issue numbers only: titles would need quoting.
-fn awaiting_answers(actor: Actor, questions: &[store::Question]) -> String {
+/// human's answer (§11.5), and what to do instead; `None` when no question waits. Issue numbers
+/// only: titles would need quoting.
+fn awaiting_answers(actor: Actor, questions: &[store::Question]) -> Option<String> {
     let numbers: Vec<String> = questions
         .iter()
         .map(|question| question.issue_id.to_string())
         .collect();
-    let issues = match numbers.split_last() {
-        Some((only, [])) => format!("Issue {only} is"),
-        Some((last, rest)) => format!("Issues {} and {last} are", rest.join(", ")),
-        None => "No issue is".to_string(),
+    let (last, rest) = numbers.split_last()?;
+    let issues = if rest.is_empty() {
+        format!("Issue {last} is")
+    } else {
+        format!("Issues {} and {last} are", rest.join(", "))
     };
-    if actor == Actor::Human {
+    Some(if actor == Actor::Human {
         format!(
             "{issues} waiting for your answer. Answer each one first: a comment, or resolving or \
              reopening the issue, counts. Until then the review stays with you."
@@ -1992,7 +1993,7 @@ fn awaiting_answers(actor: Actor, questions: &[store::Question]) -> String {
             "{issues} waiting for the human's answer, so the review can only be handed to the \
              human until they answer. Call hand_off with to \"human\", and tell them."
         )
-    }
+    })
 }
 
 fn require_human(actor: Actor, what: &str) -> Result<()> {
