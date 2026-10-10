@@ -1274,16 +1274,17 @@ impl Service {
         require_open(&review)?;
         let text = normalize_newlines(text);
         let default = prompt::default_text(kind, &review)?;
-        let patch = if text == default {
-            None
-        } else {
-            Some(prompt::diff(&default, &text)?)
-        };
         let now = time::now();
         let tx = store::write_transaction(&mut self.conn)?;
         if text == shown_prompt(&tx, review_id, kind, &default)? {
             return Ok(false);
         }
+        // Only now, so that copying what the page shows never depends on diffing it.
+        let patch = if text == default {
+            None
+        } else {
+            Some(prompt::diff(&default, &text)?)
+        };
         store::insert_prompt_edit(
             &tx,
             &NewPromptEdit {

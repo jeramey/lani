@@ -86,12 +86,58 @@ pub fn diff(default: &str, text: &str) -> Result<String> {
     }
 }
 
-/// Apply a diff made by [`diff`] to the default it was made from.
+/// Apply a diff made by [`diff`] to the default it was made from. Each hunk applies exactly at the
+/// line it names: the default is stored with the diff, so the line numbers are exact, and a diff
+/// without context lines has nothing else to place a hunk by. `diffy::apply` instead searches
+/// outwards from the hunk's line in the new text, which can move a deletion to an earlier line with
+/// the same text, such as another blank line.
 pub fn apply(default: &str, patch: &str) -> Result<String> {
-    let parsed = diffy::Patch::from_str(patch)
-        .map_err(|error| Error::Internal(format!("a stored prompt diff is unreadable: {error}")))?;
-    diffy::apply(default, &parsed)
-        .map_err(|error| Error::Internal(format!("a stored prompt diff does not apply: {error}")))
+    let broken = |what: String| Error::Internal(format!("a stored prompt diff {what}"));
+    let parsed =
+        diffy::Patch::from_str(patch).map_err(|error| broken(format!("is unreadable: {error}")))?;
+    // Lines with their line endings, as diffy's hunks hold them.
+    let lines: Vec<&str> = default.split_inclusive('\n').collect();
+    let mut text = String::with_capacity(default.len());
+    let mut next = 0;
+    for hunk in parsed.hunks() {
+        let range = hunk.old_range();
+        // Lines are numbered from 1, and an empty range names the line it comes after.
+        let start = if range.is_empty() {
+            Some(range.start())
+        } else {
+            range.start().checked_sub(1)
+        };
+        let Some(start) = start.filter(|&start| start >= next && start <= lines.len()) else {
+            return Err(broken(format!(
+                "has a hunk out of place at line {}",
+                range.start()
+            )));
+        };
+        lines[next..start]
+            .iter()
+            .for_each(|line| text.push_str(line));
+        let mut at = start;
+        for line in hunk.lines() {
+            match line {
+                diffy::Line::Context(old) | diffy::Line::Delete(old) => {
+                    if lines.get(at) != Some(old) {
+                        return Err(broken(format!(
+                            "does not match its default at line {}",
+                            at + 1
+                        )));
+                    }
+                    if let diffy::Line::Context(old) = line {
+                        text.push_str(old);
+                    }
+                    at += 1;
+                }
+                diffy::Line::Insert(new) => text.push_str(new),
+            }
+        }
+        next = at;
+    }
+    lines[next..].iter().for_each(|line| text.push_str(line));
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -226,5 +272,46 @@ mod tests {
         }
         let patch = diff(default, "One.\n\nTwo, changed.\nThree.").unwrap();
         assert!(patch.contains("-Two.\n+Two, changed.\n"), "{patch}");
+    }
+
+    #[test]
+    fn a_deletion_applies_at_its_own_line_not_an_earlier_one_like_it() {
+        // Without context lines, a deleted blank line looks like every other blank line, and
+        // diffy::apply removed the first one it found. Seen with a whole-tree prompt, edited by
+        // deleting steps 1 to 3 and the blank line before "Files to review:".
+        let default = default_text(PromptKind::ClaudeCode, &review("feature/x", None)).unwrap();
+        let lines: Vec<&str> = default.split_inclusive('\n').collect();
+        assert_eq!((lines[1], lines[6]), ("\n", "\n"), "{default}");
+        let edited: String = [lines[0], lines[1], lines[5], lines[7]].concat();
+        let patch = diff(&default, &edited).unwrap();
+        assert_eq!(apply(&default, &patch).unwrap(), edited, "{patch}");
+
+        for (default, text) in [
+            ("a\n\nb\n\nc", "a\n\nb\nc"),
+            ("x\nx\nx\n", "x\nx\n"),
+            ("x\nx\nx\n", "x\ny\nx\nx\n"),
+            ("same\nsame", "same\n"),
+        ] {
+            let patch = diff(default, text).unwrap();
+            assert_eq!(apply(default, &patch).unwrap(), text, "{patch}");
+        }
+    }
+
+    #[test]
+    fn a_diff_that_does_not_fit_its_default_is_refused() {
+        let patch = diff("a\nb\nc\n", "a\nc\n").unwrap();
+        for default in ["a\nB\nc\n", "a\n", ""] {
+            assert!(
+                matches!(apply(default, &patch), Err(Error::Internal(_))),
+                "{default:?}"
+            );
+        }
+        let out_of_order = "--- original\n+++ modified\n@@ -3 +2,0 @@\n-c\n@@ -1 +0,0 @@\n-a\n";
+        assert!(matches!(
+            apply("a\nb\nc\n", out_of_order),
+            Err(Error::Internal(_))
+        ));
+        let line_zero = "--- original\n+++ modified\n@@ -0 +0,0 @@\n-a\n";
+        assert!(matches!(apply("a\n", line_zero), Err(Error::Internal(_))));
     }
 }

@@ -1711,6 +1711,10 @@ shows while the review is open.
   - **Each revision stands alone.** Showing it applies one diff to its own default, so it stays
     readable after the default changes, as with a new base or a new LANI version. Before it is
     stored, the diff is checked to restore the text exactly.
+  - **Hunks apply at the lines they name.** The default is stored with the diff, so its line
+    numbers are exact. Without context lines, diffy's own `apply` has nothing to place a hunk by:
+    it searches outwards for matching text, and moved a deleted blank line to an earlier blank
+    line. LANI reads the hunks with diffy and applies them itself.
   - **Reading them.** Use `sqlite3`, for example
     `SELECT kind, patch FROM prompt_edit WHERE review_id = 9`.
   - **Who can save.** Only you, and only on an open review.
