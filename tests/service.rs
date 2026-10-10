@@ -2252,6 +2252,42 @@ fn while_a_question_waits_the_review_can_only_go_to_the_human() {
 }
 
 #[test]
+fn a_hand_back_that_reaches_the_round_limit_still_goes_to_the_human_while_a_question_waits() {
+    let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
+    let review_id = service.get_issue(issue_id).unwrap().issue.review_id;
+    service.set_round_limit(Actor::Human, 2).unwrap();
+    let hand = |service: &mut Service, actor, to| {
+        service
+            .hand_off(actor, review_id, Some(to), None)
+            .unwrap()
+            .review
+            .turn
+    };
+    // The reviewer's first findings come to the human, who starts the loop; one round follows.
+    hand(&mut service, Actor::Reviewer, Actor::Implementer);
+    hand(&mut service, Actor::Human, Actor::Reviewer);
+    hand(&mut service, Actor::Reviewer, Actor::Implementer);
+    assert_eq!(
+        hand(&mut service, Actor::Implementer, Actor::Reviewer),
+        Some(Actor::Reviewer)
+    );
+    hand(&mut service, Actor::Reviewer, Actor::Implementer);
+
+    // The hand-back that reaches the limit names the reviewer but goes to the human, so the
+    // question doesn't stop it.
+    service
+        .ask_human(Actor::Implementer, issue_id, "Should this stay public?")
+        .unwrap();
+    let handed = service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+    assert_eq!(
+        (handed.review.turn, handed.redirected, handed.review.rounds),
+        (Some(Actor::Human), Some(Redirect::RoundLimit(2)), 2)
+    );
+}
+
+#[test]
 fn only_the_human_settles_an_issue_whose_question_waits_for_them() {
     let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
     service
