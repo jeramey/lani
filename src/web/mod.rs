@@ -441,7 +441,11 @@ async fn run(
     // `lani stop` waits for the server lock, which this process holds until it exits, so this
     // cleanup is done by the time `lani stop` returns.
     daemon::remove_open_files(&options.home, Duration::ZERO);
-    daemon::remove_socket(&options.home)?;
+    // Best effort, like the redirect files, so that server.json is still removed: a socket left
+    // behind is replaced at the next start.
+    if let Err(error) = daemon::remove_socket(&options.home) {
+        eprintln!("could not remove the socket: {error}");
+    }
     ServerFile::remove_if_ours(&options.home, &server_file.instance_id)?;
     eprintln!("LANI server stopped");
     served.map_err(Error::Io)
