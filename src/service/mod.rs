@@ -623,7 +623,8 @@ impl Service {
     }
 
     /// Ask the human about an issue: add `body` as a comment and mark the issue as waiting for
-    /// the human until they comment on it, resolve it or reopen it (§11.5). Only Claude asks.
+    /// the human until they reply on it or resolve it (§11.5). Only Claude asks, and only on an
+    /// open issue.
     pub fn ask_human(&mut self, actor: Actor, issue_id: i64, body: &str) -> Result<Comment> {
         if actor == Actor::Human {
             return Err(Error::Invalid(
@@ -657,6 +658,18 @@ impl Service {
 
         let now = time::now();
         let tx = store::write_transaction(&mut self.conn)?;
+        // A question has to be answered before its issue is resolved (§11.5), so a resolved issue
+        // takes none. Read in the write transaction, so a resolve made at the same moment is seen.
+        if ask_human
+            && let Some(issue_id) = issue_id
+            && store::get_issue(&tx, issue_id)?.status == IssueStatus::Resolved
+        {
+            return Err(Error::Invalid(format!(
+                "issue {issue_id} is resolved, and a question for the human must be answered \
+                 before its issue is resolved. Ask on an open issue, or have the issue reopened \
+                 first: the reviewer reopens with set_issue_status."
+            )));
+        }
         let comment_id = store::insert_comment(
             &tx,
             &NewComment {
@@ -839,6 +852,21 @@ impl Service {
 
         let now = time::now();
         let tx = store::write_transaction(&mut self.conn)?;
+        // A question is settled by the human: their reply, or their own resolve, which acknowledges
+        // the outcome. Nobody resolves the issue for them meanwhile (§11.5). Read in the write
+        // transaction, so a question asked at the same moment is seen.
+        if status == IssueStatus::Resolved
+            && actor != Actor::Human
+            && let Some(asker) = store::get_issue(&tx, issue_id)?.asked_by
+        {
+            return Err(Error::Forbidden(format!(
+                "issue {issue_id} has a question for the human, asked by the {}, so only the \
+                 human can resolve it until they answer. If the human asked you to resolve it, \
+                 tell them to reply on the issue, or resolve it themselves, in the web UI, so \
+                 that the review keeps their answer.",
+                asker.as_str()
+            )));
+        }
         if let (Some(body), Some(head_sha)) = (&comment, &head_sha) {
             let comment_id = store::insert_comment(
                 &tx,

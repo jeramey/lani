@@ -2242,6 +2242,71 @@ fn while_a_question_waits_the_review_can_only_go_to_the_human() {
 }
 
 #[test]
+fn only_the_human_settles_an_issue_whose_question_waits_for_them() {
+    let (_home, _repo, mut service, issue_id) = repo_with_issue(3, 3);
+    service
+        .ask_human(Actor::Implementer, issue_id, "Should this stay public?")
+        .unwrap();
+
+    // The reviewer doesn't resolve it on the human's behalf, and is told how to bring them in.
+    match service.set_issue_status(
+        Actor::Reviewer,
+        issue_id,
+        IssueStatus::Resolved,
+        Some("Settled: keep it."),
+    ) {
+        Err(Error::Forbidden(message)) => assert!(
+            message.contains(&format!(
+                "issue {issue_id} has a question for the human, asked by the implementer"
+            )) && message.contains("tell them to reply on the issue, or resolve it themselves"),
+            "{message}"
+        ),
+        other => panic!("expected Forbidden, got {other:?}"),
+    }
+    let view = service.get_issue(issue_id).unwrap();
+    assert_eq!(
+        (view.issue.status, view.issue.asked_by),
+        (IssueStatus::Open, Some(Actor::Implementer))
+    );
+    assert_eq!(
+        view.comments.len(),
+        2,
+        "the refused resolve's comment isn't kept"
+    );
+
+    // The human's own resolve acknowledges the outcome, which answers the question.
+    service
+        .set_issue_status(Actor::Human, issue_id, IssueStatus::Resolved, None)
+        .unwrap();
+    assert_eq!(service.get_issue(issue_id).unwrap().issue.asked_by, None);
+
+    // A resolved issue takes no question: it would be resolved before the human answered.
+    expect_invalid(
+        service.ask_human(Actor::Reviewer, issue_id, "Reopen it?"),
+        &format!("issue {issue_id} is resolved, and a question for the human must be answered"),
+    );
+
+    // Once the human has replied, the reviewer resolves the issue as usual.
+    service
+        .set_issue_status(Actor::Human, issue_id, IssueStatus::Open, None)
+        .unwrap();
+    service
+        .ask_human(Actor::Reviewer, issue_id, "Rename it?")
+        .unwrap();
+    service
+        .add_comment(Actor::Human, CommentTarget::Issue(issue_id), "Yes.")
+        .unwrap();
+    service
+        .set_issue_status(
+            Actor::Reviewer,
+            issue_id,
+            IssueStatus::Resolved,
+            Some("Renamed."),
+        )
+        .unwrap();
+}
+
+#[test]
 fn migrating_a_version_2_database_keeps_its_data_and_event_ids() {
     let home = TestHome::new();
     let path = home.db_path();

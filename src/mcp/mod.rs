@@ -75,7 +75,9 @@ exits when it is your turn again, or when the review is closed, and then you con
 review to the human when every issue is resolved or you need their decision; then tell the human \
 (in your reply, and with a push notification if you can) and call open_web_ui. To ask the human \
 about one issue, call add_comment with ask_human: true, or pass ask_human: true to create_issue to \
-ask as you file it; their reply clears it. You can finish your pass meanwhile, but until every \
+ask as you file it; their reply, or their resolving the issue, answers it. Only the human resolves \
+an issue whose question waits for them: if they ask you to, tell them to reply on the issue or \
+resolve it in the web UI. You can finish your pass meanwhile, but until every \
 question is answered, hand the review only to the human: a hand-off to anyone else is refused. \
 Writing that the human should decide, without ask_human, flags nothing for them. After a set \
 number of rounds without the human, LANI hands the review to them for you.
@@ -368,7 +370,7 @@ pub struct AddCommentParams {
     #[serde(default)]
     pub review_id: Option<i64>,
     /// With `issue_id`: the comment is a question for the human, and the issue shows as waiting
-    /// for them until they reply, resolve or reopen it. Until then, the review can be handed only
+    /// for them until they reply or resolve it. Until then, the review can be handed only
     /// to the human.
     #[serde(default)]
     pub ask_human: bool,
@@ -966,7 +968,9 @@ impl LaniServer {
 
     #[tool(
         description = "Resolve or reopen an issue. Only the reviewer may do this; implementers reply with \
-                       add_comment instead. Reopening needs a comment."
+                       add_comment instead. Reopening needs a comment. An issue whose question waits \
+                       for the human can be resolved only by the human: if they ask you to resolve \
+                       it, tell them to reply on the issue or resolve it in the web UI."
     )]
     fn set_issue_status(
         &self,

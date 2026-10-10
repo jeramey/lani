@@ -11,7 +11,7 @@
     <span class="badges"><span class="badge {{ severity.class }}">{{ severity.label }}</span> <span class="badge {{ status_class }}">{{ status_label }}</span></span>
   </div>
   <p class="meta">Opened by <span class="author {{ opened_by.class }}">{{ opened_by.label }}</span> · {{ opened }}{% if let Some(edited) = details_edited %} · <span class="edited">{{ edited }}</span>{% endif %}</p>
-  {% if let Some(question) = question %}<p class="notice needs-you-notice"><span class="badge needs-you">Needs you</span> {{ question }}. Reply below, or resolve or reopen the issue, to answer.</p>{% endif %}
+  {% if let Some(question) = question %}<p class="notice needs-you-notice"><span class="badge needs-you">Needs you</span> {{ question }}. Reply below, or resolve the issue, to answer.</p>{% endif %}
   {% if editable %}
   <details class="inline-edit">
     <summary>Edit title or severity</summary>

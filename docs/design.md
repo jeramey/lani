@@ -798,6 +798,17 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   it files the issue, with `create_issue` and `ask_human: true`; the issue's body is then the
   question. The issue shows as needing you until you comment on it, resolve it or reopen it, any
   of which clears the question.
+  - **Only you settle it.** You decided this in review 7: a question must be answered or
+    acknowledged by you before its issue is resolved.
+    - The reviewer can't resolve the issue on your behalf. If you ask it to, the refusal tells it
+      to have you reply on the issue, or resolve it yourself, so the review keeps your answer.
+    - Your own resolve is that acknowledgement: you accept the outcome the sessions reached
+      without having to write a reply.
+    - A resolved issue takes no question, since it would be resolved before you answered. A
+      session asks on an open issue, or has the issue reopened first.
+    - So while a question waits, its issue is open, and you answer by replying or resolving.
+      Both checks are made in the write transaction, so a question and a resolve made at the same
+      moment can't slip past each other.
   - **Questions hold the review for you.** While any question waits for you, the review can be
     handed only to you. LANI refuses any other hand-off, whoever makes it: a session's to the
     other role, and yours, from the review page, to a role or to nobody.
@@ -888,7 +899,7 @@ role (§11.3).
 | `add_comment`           | `author`, `body`, `issue_id?`, `review_id?`, `ask_human?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). With `issue_id`, `ask_human: true` makes the comment a question for the human (§11.5). |
 | `hand_off`              | `review_id`, `author`, `to` (`reviewer`\|`implementer`\|`human`), `note?` | §11.5. Only on the session's turn, or while it is nobody's. While a question waits for the human, only to the human. The reply says how to wait with `lani wait`, or to tell the human. |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
-| `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
+| `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. An issue whose question waits for the human can be resolved only by the human (§11.5). |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
 | `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. In socket mode (§13.2) it opens no browser, and returns directions to pass on to the human: the `ssh -L` command, the page's address, and to run `lani socket` on the remote machine for a sign-in link. The token never appears in it. |
 
@@ -1901,6 +1912,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - **Questions hold the review for the human.** Every other hand-off is refused, the human's too,
     while redirects to them go through. Each refusal names every waiting issue, and the review
     page swaps its *Hand on* form for a note.
+  - **Only the human settles a question.** The reviewer's resolve is refused, keeping no comment,
+    and the human's own resolve answers. A resolved issue takes no question.
 - **Idle timer:** tested with an injected clock.
   - Requests reset it; health checks and live-update streams don't.
   - `never` disables it.

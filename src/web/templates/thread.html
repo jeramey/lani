@@ -7,7 +7,7 @@
       <span class="badge {{ thread.status_class }}">{{ thread.status_label }}</span>
       <span class="author {{ thread.opened_by.class }}">{{ thread.opened_by.label }}</span>
     </summary>
-    {% if let Some(question) = thread.question %}<p class="notice needs-you-notice">{{ question }}. Reply below, or resolve or reopen the issue, to answer.</p>{% endif %}
+    {% if let Some(question) = thread.question %}<p class="notice needs-you-notice">{{ question }}. Reply below, or resolve the issue, to answer.</p>{% endif %}
     <div class="thread-spans">{% for span in thread.spans %}{% include "span.html" %}{% endfor %}</div>
     {% for comment in thread.comments %}{% include "comment.html" %}{% endfor %}
     {% if editable %}
