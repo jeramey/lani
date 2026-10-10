@@ -2235,7 +2235,7 @@ fn while_a_question_waits_the_review_can_only_go_to_the_human() {
         .hand_off(Actor::Implementer, review_id, Some(Actor::Human), None)
         .unwrap();
 
-    // Resolving or reopening is an answer too; only once both are answered can it go on.
+    // Resolving is an answer too; only once both are answered can it go on.
     service
         .set_issue_status(Actor::Human, issue_id, IssueStatus::Resolved, None)
         .unwrap();

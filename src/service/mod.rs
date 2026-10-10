@@ -897,7 +897,9 @@ impl Service {
         };
         store::set_issue_status(&tx, issue_id, status, resolved_by, &now)?;
         if actor == Actor::Human {
-            // Resolving or reopening is the human's answer to any question about the issue.
+            // The human's resolve answers any question about the issue, acknowledging the outcome
+            // (§11.5). A question's issue is always open, so a reopen meets one only if it was
+            // left on a resolved issue from before that rule; acting on the issue answers it too.
             store::set_asked(&tx, issue_id, None, &now)?;
         }
         store::insert_event(

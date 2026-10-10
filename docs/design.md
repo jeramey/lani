@@ -796,8 +796,8 @@ Claude sessions can run the review loop on their own and bring you in when it ma
 - **Questions about one issue.** A session can ask you about a single issue in the middle of a
   pass, with `add_comment` and `ask_human: true`; the comment is the question. It can also ask as
   it files the issue, with `create_issue` and `ask_human: true`; the issue's body is then the
-  question. The issue shows as needing you until you comment on it, resolve it or reopen it, any
-  of which clears the question.
+  question. The issue shows as needing you until you reply on it or resolve it, either of which
+  clears the question.
   - **Only you settle it.** You decided this in review 7: a question must be answered or
     acknowledged by you before its issue is resolved.
     - The reviewer can't resolve the issue on your behalf. If you ask it to, the refusal tells it
