@@ -199,14 +199,18 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .toolbar details[open] { flex-basis: 100%; order: 1; }
 .toolbar form.inline { margin-left: auto; }
 
-details.inline-edit > summary {
+/* An inline-note looks like an inline-edit but holds no editor, so live updates replace it even
+   while it is open (lani.js protects only open inline-edits). */
+details.inline-edit > summary,
+details.inline-note > summary {
   cursor: pointer;
   color: var(--link);
   font-size: 14px;
   display: inline-block;
   padding: 3px 0;
 }
-details.inline-edit[open] {
+details.inline-edit[open],
+details.inline-note[open] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

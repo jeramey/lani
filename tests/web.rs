@@ -1942,6 +1942,15 @@ async fn a_question_holds_the_review_until_the_human_answers(
         ) && !page.contains(&format!("action=\"{turn}\"")),
         "{page}"
     );
+    // Not an inline-edit, which lani.js keeps from live updates while it is open: it holds no
+    // editor.
+    let note = page.find("Answer the questions for you first.").unwrap();
+    let details = page[..note].rfind("<details class=\"").unwrap();
+    assert!(
+        page[details..note].starts_with("<details class=\"inline-note\">"),
+        "{}",
+        &page[details..note]
+    );
     let (status, _, refused) = send(&f.app, post(&turn, "to=implementer&note=Go+ahead.")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
     assert!(

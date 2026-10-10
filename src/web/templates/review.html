@@ -29,11 +29,15 @@
       <div class="form-actions"><button type="submit">Save base</button></div>
     </form>
   </details>
+  {% if !review.questions.is_empty() %}
+  {# Not inline-edit: it holds no editor, so live updates may replace it while it is open. #}
+  <details class="inline-note">
+    <summary>Hand on</summary>
+    <p class="hint">Answer the questions for you first. Until each one has your reply, or you resolve its issue, the review can only be handed to you.</p>
+  </details>
+  {% else %}
   <details class="inline-edit">
     <summary>Hand on</summary>
-    {% if !review.questions.is_empty() %}
-    <p class="hint">Answer the questions for you first. Until each one has your reply, or you resolve its issue, the review can only be handed to you.</p>
-    {% else %}
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
@@ -46,8 +50,8 @@
       <p class="hint">Handing the review to Claude starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
       <div class="form-actions"><button type="submit">Hand on</button></div>
     </form>
-    {% endif %}
   </details>
+  {% endif %}
   <form method="post" action="{{ review.url }}/close" class="inline"><input type="hidden" name="back" data-current-page>
     <button type="submit" class="secondary">Close review</button>
   </form>
