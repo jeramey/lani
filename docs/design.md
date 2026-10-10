@@ -867,9 +867,9 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
   `update_review_summary` without discarding what others wrote.
 - **Reviewer.** Call `start_review` (`base_mode: "auto"` unless the human names a base or asks for
   a whole-tree review), then `create_issue` once per finding: one issue with several spans when
-  the same problem appears in more than one place, with a title and a severity. Pass `commit` as the SHA that
-  `git rev-parse HEAD` prints, not `HEAD` itself (§10.1), and `worktree_path` as where the files
-  were read. Then call `open_web_ui`. Report uncommitted changes to the human.
+  the same problem appears in more than one place, with a title and a severity, and with the
+  review head as `commit`. The `create_issue` parameter descriptions say how to pass `commit` and
+  `worktree_path` (§10.1). Then call `open_web_ui`. Report uncommitted changes to the human.
 - **Implementer.** Call `list_reviews`, then `list_issues` with `status: "open"`. Validate each
   issue, fix and commit, and reply with `add_comment` citing the commit, or explain the
   disagreement. The implementer cannot resolve issues.
@@ -885,6 +885,10 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
   (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.
+
+Claude Code keeps only the first 4,096 characters of a server's instructions. Anything after that
+is dropped, with "… [truncated]" in its place. A unit test keeps `INSTRUCTIONS` under that limit,
+so a detail that concerns a single tool belongs in that tool's description instead.
 
 ### 12.3 Tools
 
