@@ -2152,6 +2152,96 @@ fn questions_for_the_human_are_cleared_by_the_humans_reply_or_status_change() {
 }
 
 #[test]
+fn while_a_question_waits_the_review_can_only_go_to_the_human() {
+    let (_home, repo, mut service, issue_id) = repo_with_issue(3, 3);
+    let review_id = service.get_issue(issue_id).unwrap().issue.review_id;
+    service
+        .ask_human(Actor::Reviewer, issue_id, "Should this stay public?")
+        .unwrap();
+
+    // The reviewer's first hand-off goes to the human anyway, so it goes through.
+    let handed = service
+        .hand_off(Actor::Reviewer, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+    assert_eq!(handed.review.turn, Some(Actor::Human));
+
+    // The human doesn't hand it on either, to a role or to nobody, before answering.
+    for to in [Some(Actor::Implementer), Some(Actor::Reviewer), None] {
+        let refused = expect_invalid(
+            service.hand_off(Actor::Human, review_id, to, None),
+            &format!("Issue {issue_id} is waiting for your answer."),
+        );
+        assert!(refused.contains("the review stays with you"), "{refused}");
+    }
+    assert_eq!(
+        service
+            .get_review(review_id, None)
+            .unwrap()
+            .view
+            .review
+            .turn,
+        Some(Actor::Human),
+        "nothing changed"
+    );
+    service
+        .add_comment(
+            Actor::Human,
+            CommentTarget::Issue(issue_id),
+            "Keep it public.",
+        )
+        .unwrap();
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Implementer), None)
+        .unwrap();
+
+    // A question from a Claude session holds both sessions to the human, naming every issue.
+    let second = service
+        .create_issue(&issue_request(
+            review_id,
+            &repo,
+            &repo.head(),
+            5,
+            5,
+            "line 5",
+        ))
+        .unwrap()
+        .issue
+        .id;
+    service
+        .ask_human(Actor::Implementer, issue_id, "Rename it?")
+        .unwrap();
+    service
+        .ask_human(Actor::Implementer, second, "And this one?")
+        .unwrap();
+    let refused = expect_invalid(
+        service.hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None),
+        &format!("Issues {issue_id} and {second} are waiting for the human's answer"),
+    );
+    assert!(
+        refused.contains("Call hand_off with to \"human\""),
+        "{refused}"
+    );
+    service
+        .hand_off(Actor::Implementer, review_id, Some(Actor::Human), None)
+        .unwrap();
+
+    // Resolving or reopening is an answer too; only once both are answered can it go on.
+    service
+        .set_issue_status(Actor::Human, issue_id, IssueStatus::Resolved, None)
+        .unwrap();
+    expect_invalid(
+        service.hand_off(Actor::Human, review_id, Some(Actor::Reviewer), None),
+        &format!("Issue {second} is waiting for your answer."),
+    );
+    service
+        .set_issue_status(Actor::Human, second, IssueStatus::Resolved, None)
+        .unwrap();
+    service
+        .hand_off(Actor::Human, review_id, Some(Actor::Reviewer), None)
+        .unwrap();
+}
+
+#[test]
 fn migrating_a_version_2_database_keeps_its_data_and_event_ids() {
     let home = TestHome::new();
     let path = home.db_path();

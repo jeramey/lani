@@ -33,7 +33,7 @@
 {% endif %}
 {% if !review.questions.is_empty() %}
 <div class="questions">
-  <p><strong>Questions for you</strong> <span class="muted small">— reply, resolve or reopen an issue to answer</span></p>
+  <p><strong>Questions for you</strong> <span class="muted small">— reply, resolve or reopen an issue to answer. Until you do, the review can only be handed to you.</span></p>
   <ul>
     {% for question in review.questions %}<li><span class="badge needs-you">Needs you</span> <a href="{{ question.url }}">#{{ question.id }} {{ question.title }}</a> <span class="muted small">asked by <span class="author {{ question.asked_by.class }}">{{ question.asked_by.label }}</span></span></li>{% endfor %}
   </ul>

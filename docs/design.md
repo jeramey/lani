@@ -770,6 +770,7 @@ Claude sessions can run the review loop on their own and bring you in when it ma
     only to the other role or to you.
   - You hand it to either role, or to nobody, from the review page. Handing it to a role starts
     the round count again.
+  - While a question waits for you (below), the review can be handed only to you, by anyone.
   - A closed review takes no hand-offs.
 - **The reviewer's first findings come to you.** The reviewer's first hand-off on a review goes
   to you, even when it names the implementer, so you read the first findings before the
@@ -792,11 +793,22 @@ Claude sessions can run the review loop on their own and bring you in when it ma
   needs your decision. The tool's reply tells it to tell you at once: in its reply, with a push
   notification where available, and by opening the review in your browser. It then waits for you
   to hand the review back.
-- **Questions about one issue.** A session can ask you about a single issue while the loop carries
-  on, with `add_comment` and `ask_human: true`; the comment is the question. It can also ask as it
-  files the issue, with `create_issue` and `ask_human: true`; the issue's body is then the
+- **Questions about one issue.** A session can ask you about a single issue in the middle of a
+  pass, with `add_comment` and `ask_human: true`; the comment is the question. It can also ask as
+  it files the issue, with `create_issue` and `ask_human: true`; the issue's body is then the
   question. The issue shows as needing you until you comment on it, resolve it or reopen it, any
   of which clears the question.
+  - **Questions hold the review for you.** While any question waits for you, the review can be
+    handed only to you. LANI refuses any other hand-off, whoever makes it: a session's to the
+    other role, and yours, from the review page, to a role or to nobody.
+    - A session finishes its pass and hands the review to you. The refusal names the waiting
+      issues and says to hand to you.
+    - On the review page, the *Hand on* form gives way to a note until you have answered each one.
+    - The check is on where the review would go. So a hand-off that LANI sends to you anyway
+      goes through: the reviewer's first findings, and a reached round limit.
+    - The rule was added at your request after a review in which the sessions went on handing the
+      review between themselves, around two questions still waiting for you. Before it, a
+      question let the loop carry on.
   - **Only the flag counts.** Writing in a comment that the human should decide flags nothing.
     A reviewer once did that, said it had marked the issue for you, and you saw no sign of it on
     the overview. The tool descriptions and the server instructions now say so.
@@ -853,7 +865,8 @@ is not repeated here so the two cannot drift apart. In outline, they cover:
 - **Taking turns.** Hand the review on with `hand_off` at the end of each pass, then wait with
   `lani wait` as a background command. The reviewer's first hand-off goes to the human. Hand it to
   the human when it has converged or needs a decision, and tell them. Ask the human about one
-  issue with `add_comment` and `ask_human: true` (§11.5).
+  issue with `add_comment` and `ask_human: true`; until they answer, hand the review only to them
+  (§11.5).
 - **Restraint.** Use `status: "all"` only when history is needed. Call `close_review` only when
   the human asks, and `open_web_ui` when the human asks to see a review or issue.
 
@@ -873,7 +886,7 @@ role (§11.3).
 | `get_issue`             | `issue_id` | One issue in `full` detail. |
 | `create_issue`          | `review_id`, `author`, `title`, `severity` (`high`\|`medium`\|`low`\|`nit`), `body`, `spans` (1–20 of `path`, `side` (`head`\|`base`), `start_line`, `end_line`, `start_line_text`), `commit`, `worktree_path`, `ask_human?` | §10.1. `title` is one line naming the problem, without the severity. List the main span first. `worktree_path` is a string or explicitly `null`. `ask_human: true` asks the human about the issue as it is filed, its body being the question (§11.5). |
 | `add_comment`           | `author`, `body`, `issue_id?`, `review_id?`, `ask_human?` | Exactly one of `issue_id` (reply on an issue) or `review_id` (comment on the summary). With `issue_id`, `ask_human: true` makes the comment a question for the human (§11.5). |
-| `hand_off`              | `review_id`, `author`, `to` (`reviewer`\|`implementer`\|`human`), `note?` | §11.5. Only on the session's turn, or while it is nobody's. The reply says how to wait with `lani wait`, or to tell the human. |
+| `hand_off`              | `review_id`, `author`, `to` (`reviewer`\|`implementer`\|`human`), `note?` | §11.5. Only on the session's turn, or while it is nobody's. While a question waits for the human, only to the human. The reply says how to wait with `lani wait`, or to tell the human. |
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
@@ -1885,6 +1898,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - **Turns (§11.5):** hand-off permissions, the round limit and the human resetting it, questions
   cleared by the human's reply or status change, the migration from version 2 keeping data and
   event ids, two MCP sessions taking turns, and `lani wait`'s three exits in a real process.
+  - **Questions hold the review for the human.** Every other hand-off is refused, the human's too,
+    while redirects to them go through. Each refusal names every waiting issue, and the review
+    page swaps its *Hand on* form for a note.
 - **Idle timer:** tested with an injected clock.
   - Requests reset it; health checks and live-update streams don't.
   - `never` disables it.

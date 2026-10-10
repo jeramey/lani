@@ -31,6 +31,9 @@
   </details>
   <details class="inline-edit">
     <summary>Hand on</summary>
+    {% if !review.questions.is_empty() %}
+    <p class="hint">Answer the questions for you first. Until each one has your reply, or its issue is resolved or reopened by you, the review stays with you.</p>
+    {% else %}
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
@@ -43,6 +46,7 @@
       <p class="hint">Handing the review to Claude starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
       <div class="form-actions"><button type="submit">Hand on</button></div>
     </form>
+    {% endif %}
   </details>
   <form method="post" action="{{ review.url }}/close" class="inline"><input type="hidden" name="back" data-current-page>
     <button type="submit" class="secondary">Close review</button>

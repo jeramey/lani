@@ -74,10 +74,11 @@ on. Then wait by running `lani wait --review <id> --for <your role>` as a backgr
 exits when it is your turn again, or when the review is closed, and then you continue. Hand the \
 review to the human when every issue is resolved or you need their decision; then tell the human \
 (in your reply, and with a push notification if you can) and call open_web_ui. To ask the human \
-about one issue while the review carries on, call add_comment with ask_human: true, or pass \
-ask_human: true to create_issue to ask as you file it; their reply clears it. Writing that the \
-human should decide, without ask_human, flags nothing for them. After a set number of rounds \
-without the human, LANI hands the review to them for you.
+about one issue, call add_comment with ask_human: true, or pass ask_human: true to create_issue to \
+ask as you file it; their reply clears it. You can finish your pass meanwhile, but until every \
+question is answered, hand the review only to the human: a hand-off to anyone else is refused. \
+Writing that the human should decide, without ask_human, flags nothing for them. After a set \
+number of rounds without the human, LANI hands the review to them for you.
 
 Use status \"all\" only when history is needed. Never call close_review unless the human asks. When the \
 human asks to see a review or issue, call open_web_ui.";
@@ -329,8 +330,9 @@ pub struct CreateIssueParams {
     #[schemars(schema_with = "nullable_string")]
     pub worktree_path: Option<String>,
     /// true when the human must decide something about this issue: it then shows as a question
-    /// waiting for them, and the body is the question. Writing in the body that the human should
-    /// decide flags nothing; only this does.
+    /// waiting for them, and the body is the question. Until they answer, the review can be handed
+    /// only to the human. Writing in the body that the human should decide flags nothing; only
+    /// this does.
     #[serde(default)]
     pub ask_human: bool,
 }
@@ -366,7 +368,8 @@ pub struct AddCommentParams {
     #[serde(default)]
     pub review_id: Option<i64>,
     /// With `issue_id`: the comment is a question for the human, and the issue shows as waiting
-    /// for them until they reply, resolve or reopen it. The review carries on meanwhile.
+    /// for them until they reply, resolve or reopen it. Until then, the review can be handed only
+    /// to the human.
     #[serde(default)]
     pub ask_human: bool,
 }
@@ -384,8 +387,8 @@ pub struct HandOffParams {
     pub review_id: i64,
     /// Your role in this session.
     pub author: Role,
-    /// Who should act next: the other role, or "human" when every issue is resolved or you need a
-    /// decision.
+    /// Who should act next: the other role, or "human" when every issue is resolved, you need a
+    /// decision, or a question is waiting for the human.
     pub to: TurnParam,
     /// What you did and what the next party should do (Markdown). Optional.
     #[serde(default)]
@@ -919,7 +922,9 @@ impl LaniServer {
     #[tool(
         description = "Hand a review to who should act next: the other role, or the human. Only the \
                        role whose turn it is (or anyone, while it is nobody's) can hand it on. \
-                       Afterwards, wait for your turn with `lani wait` as the reply explains."
+                       While a question waits for the human (ask_human), only \"human\" is \
+                       accepted. Afterwards, wait for your turn with `lani wait` as the reply \
+                       explains."
     )]
     fn hand_off(&self, Parameters(p): Parameters<HandOffParams>) -> Result<String, ToolError> {
         let author = self.claim_role(p.author)?;

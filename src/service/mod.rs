@@ -975,6 +975,15 @@ impl Service {
             }
             (_, to) => (to, review.rounds, None),
         };
+        // While a question waits for the human, the review goes only to them: nobody hands it on,
+        // the human included, until each question has had their answer (§11.5). Checked on where
+        // the review would go, so a redirect to the human goes through.
+        if to != Some(Actor::Human) {
+            let questions = store::questions(&tx, review_id)?;
+            if !questions.is_empty() {
+                return Err(Error::Invalid(awaiting_answers(actor, &questions)));
+            }
+        }
         let now = time::now();
         store::change_turn(
             &tx,
@@ -1959,6 +1968,31 @@ fn round_limit(conn: &Connection) -> Result<u32> {
         Error::NotFound("the round_limit setting is missing from the database".to_string())
     })?;
     settings::parse_round_limit(&value)
+}
+
+/// Why `actor`'s hand-off to anyone but the human is refused while `questions` wait for the
+/// human's answer (§11.5), and what to do instead. Issue numbers only: titles would need quoting.
+fn awaiting_answers(actor: Actor, questions: &[store::Question]) -> String {
+    let numbers: Vec<String> = questions
+        .iter()
+        .map(|question| question.issue_id.to_string())
+        .collect();
+    let issues = match numbers.split_last() {
+        Some((only, [])) => format!("Issue {only} is"),
+        Some((last, rest)) => format!("Issues {} and {last} are", rest.join(", ")),
+        None => "No issue is".to_string(),
+    };
+    if actor == Actor::Human {
+        format!(
+            "{issues} waiting for your answer. Answer each one first: a comment, or resolving or \
+             reopening the issue, counts. Until then the review stays with you."
+        )
+    } else {
+        format!(
+            "{issues} waiting for the human's answer, so the review can only be handed to the \
+             human until they answer. Call hand_off with to \"human\", and tell them."
+        )
+    }
 }
 
 fn require_human(actor: Actor, what: &str) -> Result<()> {

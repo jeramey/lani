@@ -1901,17 +1901,7 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
         "{issue_page}"
     );
 
-    // Replying answers the question.
-    send(
-        &f.app,
-        post(
-            &format!("{review_url}/issues/{second}/comments"),
-            "body=Keep+it.",
-        ),
-    )
-    .await;
-    let (_, _, page) = send(&f.app, get(&review_url)).await;
-    assert!(!page.contains("Questions for you"), "{page}");
+    a_question_holds_the_review_until_the_human_answers(&f, &page, &review_url, second).await;
 
     // The human hands the review on.
     let turn = format!("{review_url}/turn");
@@ -1933,6 +1923,44 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     send(&f.app, post(&turn, "to=nobody")).await;
     let (_, _, page) = send(&f.app, get(&review_url)).await;
     assert!(!page.contains("Waiting for:"), "{page}");
+}
+
+/// Until the human answers a question, the review stays with them: the review page says so
+/// instead of offering to hand it on, and a hand-off is refused, keeping the note (§11.5). Their
+/// reply answers it.
+async fn a_question_holds_the_review_until_the_human_answers(
+    f: &Fixture,
+    page: &str,
+    review_url: &str,
+    question: i64,
+) {
+    let turn = format!("{review_url}/turn");
+    assert!(
+        page.contains("Answer the questions for you first.")
+            && !page.contains(&format!("action=\"{turn}\"")),
+        "{page}"
+    );
+    let (status, _, refused) = send(&f.app, post(&turn, "to=implementer&note=Go+ahead.")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(
+        refused.contains(&format!("Issue {question} is waiting for your answer."))
+            && refused.contains("Go ahead."),
+        "{refused}"
+    );
+
+    send(
+        &f.app,
+        post(
+            &format!("{review_url}/issues/{question}/comments"),
+            "body=Keep+it.",
+        ),
+    )
+    .await;
+    let (_, _, page) = send(&f.app, get(review_url)).await;
+    assert!(
+        !page.contains("Questions for you") && page.contains(&format!("action=\"{turn}\"")),
+        "answered, the review can be handed on again: {page}"
+    );
 }
 
 /// Add summary comments as the human until review `review_id` has `count` events; returns the

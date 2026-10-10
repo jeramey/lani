@@ -11,6 +11,18 @@ use lani::service::Service;
 use serde_json::{Value, json};
 
 /// The human hands review 1 to the implementer from the web UI, with `note`.
+/// The human's reply on `issue_id`, which answers a question about it (§11.5).
+fn human_answers(home: &TestHome, issue_id: i64) {
+    Service::open(&home.db_path())
+        .unwrap()
+        .add_comment(
+            Actor::Human,
+            lani::service::CommentTarget::Issue(issue_id),
+            "Answered.",
+        )
+        .unwrap();
+}
+
 fn human_hands_to_implementer(home: &TestHome, note: &str) {
     Service::open(&home.db_path())
         .unwrap()
@@ -655,10 +667,12 @@ fn planted_text_never_appears_as_lani_structure() {
             &mut implementer
         };
         outputs.push((tool, client.call(tool, arguments).1));
-        // The reviewer's first hand-off goes to the human (§11.5), who hands the review to the
-        // implementer with the planted note. `lani wait` shows the implementer the title and the
-        // note, and its output reaches Claude like a tool result.
+        // The reviewer's first hand-off goes to the human (§11.5), who answers the implementer's
+        // question and hands the review to the implementer with the planted note. `lani wait`
+        // shows the implementer the title and the note, and its output reaches Claude like a
+        // tool result.
         if tool == "hand_off" && as_reviewer {
+            human_answers(&home, 1);
             human_hands_to_implementer(&home, &f.block);
             outputs.push(("lani wait", lani_wait(&home.path, "implementer")));
         }
@@ -964,6 +978,22 @@ fn sessions_take_turns_and_ask_the_human() {
         summary_question.contains("ask_human needs issue_id"),
         "{summary_question}"
     );
+    let listed = implementer.ok("list_reviews", json!({"status": "open"}));
+    assert!(
+        listed.contains("· turn: implementer · 1 question for the human ·"),
+        "{listed}"
+    );
+    // Until the human answers, the review can only go to them.
+    let to_reviewer = implementer.err(
+        "hand_off",
+        json!({"review_id": 1, "author": "implementer", "to": "reviewer"}),
+    );
+    assert!(
+        to_reviewer.contains("Issue 1 is waiting for the human's answer")
+            && to_reviewer.contains("Call hand_off with to \"human\""),
+        "{to_reviewer}"
+    );
+    human_answers(&home, 1);
     the_sessions_loop_until_the_reviewer_hands_to_the_human(&mut reviewer, &mut implementer);
 }
 
@@ -1019,7 +1049,7 @@ fn the_sessions_loop_until_the_reviewer_hands_to_the_human(
     );
     let listed = implementer.ok("list_reviews", json!({"status": "open"}));
     assert!(
-        listed.contains("· turn: human · 1 question for the human ·"),
-        "{listed}"
+        listed.contains("· turn: human · started by"),
+        "the human answered the question: {listed}"
     );
 }
