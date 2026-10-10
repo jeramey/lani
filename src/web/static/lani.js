@@ -1,5 +1,5 @@
-// LANI: live updates on review pages (docs/design.md §13.5), and line selection with the
-// new-issue form in the code views (§13.4).
+// LANI: live updates on review pages (docs/design.md §13.5), line selection with the new-issue
+// form in the code views (§13.4), and the overview's Reviewer prompt panel (§13.9).
 //
 // Live updates: a review page listens to the review's event stream. When the review changes,
 // the page fetches itself again and replaces each part marked data-live whose HTML the server
@@ -10,10 +10,16 @@
 // or -B… in the changes), so a selection can be linked to. The page's <template> elements hold
 // the forms; this script only fills them in.
 //
+// Reviewer prompts: an Edited badge while a prompt differs from its default, Reset to default,
+// and Copy to clipboard, which copies the text and then saves it.
+//
 // The script adds no inline code or styles, so it runs under the CSP.
 "use strict";
 
 (function () {
+  // Controls that only work with this script, such as Copy to clipboard, show from now on.
+  document.documentElement.dataset.script = "";
+
   // Each live part's HTML as the server last sent it, by id. Taken before this script changes
   // anything on the page (a selection adds classes), so that only the server's changes count.
   const served = new Map();
@@ -200,6 +206,74 @@
   // Following a link to another selection on the same page changes only the hash. Our own
   // history.replaceState calls do not fire this event.
   window.addEventListener("hashchange", selectFromHashAndScroll);
+
+  // ── Reviewer prompts ──────────────────────────────────────────────────────────────────────
+
+  // The handlers are on the document, because live updates replace the toolbar the panel is in.
+  function showEdited(prompt) {
+    const textarea = prompt.querySelector("textarea");
+    const edited = textarea.value !== textarea.dataset.default;
+    prompt.querySelector(".prompt-edited").hidden = !edited;
+    prompt.querySelector("[data-prompt-reset]").disabled = !edited;
+  }
+
+  document.addEventListener("input", (event) => {
+    const prompt = event.target.closest(".prompt");
+    if (prompt && event.target.matches("textarea")) {
+      showEdited(prompt);
+      prompt.querySelector(".prompt-status").textContent = "";
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-prompt-reset], [data-prompt-copy]");
+    const prompt = button && button.closest(".prompt");
+    if (!prompt) {
+      return;
+    }
+    const textarea = prompt.querySelector("textarea");
+    if (button.matches("[data-prompt-reset]")) {
+      textarea.value = textarea.dataset.default;
+      showEdited(prompt);
+      prompt.querySelector(".prompt-status").textContent = "";
+      textarea.focus();
+    } else {
+      copyPrompt(prompt, textarea);
+    }
+  });
+
+  // Safari lets a page write to the clipboard only while it handles the click, so the copy comes
+  // first and the save after it.
+  async function copyPrompt(prompt, textarea) {
+    const status = prompt.querySelector(".prompt-status");
+    const text = textarea.value;
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      textarea.select();
+      copied = document.execCommand("copy");
+    }
+    status.textContent = copied ? "Copied." : "Select the text and copy it yourself.";
+    try {
+      const response = await fetch(prompt.closest(".prompt-panel").dataset.save, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ kind: prompt.dataset.kind, text }),
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        // An error page says why in its message.
+        const page = new DOMParser().parseFromString(await response.text(), "text/html");
+        const message = page.querySelector(".message-text");
+        throw new Error(message ? message.textContent : "HTTP " + response.status);
+      }
+      // The page now shows this text, so the panel no longer counts as being edited.
+      textarea.defaultValue = text;
+    } catch (error) {
+      status.textContent = (copied ? "Copied, but not saved: " : "Not saved: ") + error.message;
+    }
+  }
 
   // ── Live updates ──────────────────────────────────────────────────────────────────────────
 

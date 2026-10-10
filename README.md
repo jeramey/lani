@@ -73,8 +73,15 @@ implementer acts on them. After that, the review comes to you when every issue i
 session needs your decision, or after the round limit; the session that hands it to you tells
 you. You hand it on from the review page.
 
-[`docs/reviewer-prompt.md`](docs/reviewer-prompt.md) is a ready-made prompt for the reviewer
-session. It uses Claude Code's `/code-review` to find bugs and files each finding in LANI.
+To start a reviewer session, copy a ready-made prompt from the review page's *Reviewer prompt*
+button and paste it into the session.
+- **Two versions.** One is for Claude Code: it uses `/code-review` to find bugs and waits in the
+  background. The other is for other harnesses that can use MCP servers, such as OpenCode.
+- **Your edits.** You can edit a prompt before copying it. The page keeps the edit you copied
+  last for the next time.
+- **Project instructions.** Put review instructions for your project, such as which checks to
+  run, in `REVIEW.md` at the top of the repository. The prompts tell the reviewer to read it,
+  from the base branch.
 
 ### The web UI
 
@@ -85,6 +92,7 @@ There you can:
 - read and edit everything, comment, and resolve or reopen issues;
 - rename a review, change its base, and edit an issue's title or severity;
 - hand the review on;
+- copy a prompt to start a reviewer session with;
 - close the review when you're done.
 
 The settings page sets how long the server waits before stopping when idle (3 hours by default,

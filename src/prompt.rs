@@ -1,5 +1,5 @@
 //! The reviewer prompts that the review page copies to the clipboard, and the diffs that record
-//! the human's edits to them (docs/design.md §13.8).
+//! the human's edits to them (docs/design.md §13.9).
 //!
 //! The default texts are compiled in. They name the review, its branch and its base, but no free
 //! text such as the title or the summary: a pasted prompt reads as the human's own words, so it

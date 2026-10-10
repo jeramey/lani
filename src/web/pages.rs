@@ -16,8 +16,8 @@ use super::views::{
     SeverityView, SpanView, author, review_url,
 };
 use crate::daemon::{self, Health};
-use crate::model::{IssueStatus, ReviewStatus, short_ref};
-use crate::service::ReviewView;
+use crate::model::{IssueStatus, PromptKind, ReviewStatus, short_ref};
+use crate::service::{ReviewView, ReviewerPrompt};
 use crate::settings;
 use crate::time;
 
@@ -174,7 +174,34 @@ struct ReviewPage {
     base_options: Vec<BaseOption>,
     /// The role chosen in advance in the Hand over form: `reviewer` or `implementer`.
     hand_over_to: &'static str,
+    /// The Reviewer prompt panel's prompts; empty for a closed review.
+    prompts: Vec<PromptPanel>,
     activity: ActivityView,
+}
+
+/// A prompt in the Reviewer prompt panel (§13.9).
+struct PromptPanel {
+    /// The kind as the save action takes it, such as `claude_code`.
+    kind: &'static str,
+    label: &'static str,
+    text: String,
+    default: String,
+    edited: bool,
+}
+
+impl PromptPanel {
+    fn new(prompt: ReviewerPrompt) -> Self {
+        Self {
+            kind: prompt.kind.as_str(),
+            label: match prompt.kind {
+                PromptKind::ClaudeCode => "Claude Code",
+                PromptKind::Generic => "Other harness",
+            },
+            edited: prompt.edited(),
+            text: prompt.text,
+            default: prompt.default,
+        }
+    }
 }
 
 /// `GET /reviews/{id}`: summary, conversation, issues and activity.
@@ -198,20 +225,24 @@ pub async fn review(
         Some("all") => (None, "all", "No issues yet."),
         Some(other) => return Err(bad_filter(other)),
     };
-    let (events_after, detail, issues, activity, candidates) = state
+    let (events_after, detail, issues, activity, candidates, prompts) = state
         .call(move |service| {
             let events_after = service.latest_event_id(review_id)?;
             let detail = service.get_review(review_id, None)?;
             let issues = service.list_issues(review_id, status, None, false)?;
             let activity = service.activity(review_id, request)?;
-            let candidates = if detail.view.review.status == ReviewStatus::Open
-                && detail.view.repo_unavailable.is_none()
-            {
+            let open = detail.view.review.status == ReviewStatus::Open;
+            let candidates = if open && detail.view.repo_unavailable.is_none() {
                 service.base_candidates(review_id)?
             } else {
                 Vec::new()
             };
-            Ok((events_after, detail, issues, activity, candidates))
+            let prompts = if open {
+                service.reviewer_prompts(review_id)?
+            } else {
+                Vec::new()
+            };
+            Ok((events_after, detail, issues, activity, candidates, prompts))
         })
         .await?;
 
@@ -260,6 +291,7 @@ pub async fn review(
         issues_empty,
         base_options,
         hand_over_to: views::likely_next(review).as_str(),
+        prompts: prompts.into_iter().map(PromptPanel::new).collect(),
         activity: activity::view(review_id, active, request, &activity),
     };
     Ok(Html(page.render()?))

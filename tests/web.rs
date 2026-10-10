@@ -2227,12 +2227,13 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
         assert_eq!(page.matches(&rename).count(), 1, "{path}");
     }
 
-    // Change base and Hand over are buttons. Like the pencil, they share a details name, so only
-    // one of their panels is open at a time.
+    // Change base, Hand over and Reviewer prompt are buttons. Like the pencil, they share a
+    // details name, so only one of their panels is open at a time.
     let (_, _, overview) = send(&f.app, get(&review)).await;
     for summary in [
         "<summary class=\"button secondary\">Change base</summary>",
         "<summary class=\"button\">Hand over</summary>",
+        "<summary class=\"button secondary\">Reviewer prompt</summary>",
     ] {
         let details = details_of(&overview, summary);
         assert!(
@@ -2248,8 +2249,8 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
     );
     assert_eq!(
         overview.matches("name=\"review-edit\"").count(),
-        3,
-        "the pencil, Change base and Hand over: {overview}"
+        4,
+        "the pencil, Change base, Hand over and Reviewer prompt: {overview}"
     );
 
     // A closed review can't be renamed.
@@ -2258,6 +2259,120 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
     assert!(
         !closed.contains("Rename the review") && !closed.contains(&rename),
         "{closed}"
+    );
+}
+
+/// A reviewer prompt in the Reviewer prompt panel: the text its textarea shows, its default, and
+/// whether it is marked edited, with Reset to default enabled.
+fn prompt_panel(page: &str, kind: &str) -> (String, String, bool) {
+    let block = &page[page
+        .find(&format!("<div class=\"prompt\" data-kind=\"{kind}\">"))
+        .unwrap_or_else(|| panic!("no {kind} prompt in {page}"))..];
+    let block = &block[..block.find("</textarea>").unwrap() + "</textarea>".len()];
+    let tag = &block[block.find("<textarea").unwrap()..];
+    let default = tag
+        .split("data-default=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let text = textarea_values(block).pop().unwrap();
+    let marked = !block.contains("<span class=\"badge prompt-edited\" hidden>");
+    let after = &page[page
+        .find(&format!("<div class=\"prompt\" data-kind=\"{kind}\">"))
+        .unwrap()..];
+    let reset = &after[after.find("data-prompt-reset").unwrap()..];
+    let enabled = !reset[..reset.find('>').unwrap()].contains("disabled");
+    assert_eq!(marked, enabled, "the badge and Reset agree: {block}");
+    (text, decode_references(default), marked)
+}
+
+#[tokio::test]
+async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
+    let f = fixture();
+    let review = format!("/reviews/{}", f.review_id);
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    for kind in ["claude_code", "generic"] {
+        let (text, default, edited) = prompt_panel(&page, kind);
+        assert_eq!((text.as_str(), edited), (default.as_str(), false), "{kind}");
+        assert!(
+            default.contains(&format!(
+                "LANI review {}: branch feature against main.",
+                f.review_id
+            )),
+            "{default}"
+        );
+    }
+    assert!(
+        page.contains("<input type=\"radio\" name=\"prompt-kind\" value=\"claude_code\" checked>"),
+        "Claude Code is chosen first: {page}"
+    );
+
+    // lani.js saves the text it copied, with the line endings a browser submits.
+    let (_, default, _) = prompt_panel(&page, "generic");
+    let edited = format!("{default}\n\nAlso read <docs/notes.md> & \"TODO\" lines.");
+    let (status, _, _) = send(
+        &f.app,
+        post(
+            &format!("{review}/prompts"),
+            &format!(
+                "kind=generic&text={}",
+                form_value(&edited.replace('\n', "\r\n"))
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(
+        prompt_panel(&page, "generic"),
+        (edited, default.clone(), true)
+    );
+    assert!(
+        !prompt_panel(&page, "claude_code").2,
+        "the other prompt is unchanged"
+    );
+
+    // Copying the default again goes back to it.
+    send(
+        &f.app,
+        post(
+            &format!("{review}/prompts"),
+            &format!("kind=generic&text={}", form_value(&default)),
+        ),
+    )
+    .await;
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert!(!prompt_panel(&page, "generic").2, "{page}");
+
+    let (status, _, refused) = send(
+        &f.app,
+        post(&format!("{review}/prompts"), "kind=implementer&text=x"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused.contains("is not a kind of reviewer prompt"),
+        "{refused}"
+    );
+
+    // A closed review has no panel, and refuses a save from a page opened before it closed.
+    send(&f.app, post(&format!("{review}/close"), "back=")).await;
+    let (_, _, closed) = send(&f.app, get(&review)).await;
+    assert!(
+        !closed.contains("Reviewer prompt") && !closed.contains("data-prompt-copy"),
+        "{closed}"
+    );
+    let (status, _, refused) = send(
+        &f.app,
+        post(&format!("{review}/prompts"), "kind=generic&text=x"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused.contains("<p class=\"message-text\">") && refused.contains("is closed"),
+        "{refused}"
     );
 }
 

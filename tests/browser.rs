@@ -700,6 +700,132 @@ fn reply_and_resolve_in_place(browser: &WebDriver, fixture: &Fixture, page: &str
 
 /// A diff review of `feature` against `main`, served by the real `lani` binary. On `feature`,
 /// line 5 of `src/lib.rs` is rewritten and line 20 removed.
+#[test]
+#[ignore = "needs Safari with remote automation enabled; run with --ignored"]
+fn the_reviewer_prompt_is_copied_and_its_edit_kept() {
+    let _turn = BROWSER.lock().unwrap_or_else(PoisonError::into_inner);
+    let fixture = Fixture::new();
+    let browser = WebDriver::safari();
+    let review_id = fixture.review_id;
+    let overview = format!("/reviews/{review_id}");
+    browser.sign_in(&fixture, &overview);
+    browser.watch_for_problems();
+    // Copying writes to the system clipboard; the text that was there goes back afterwards.
+    let _clipboard = Clipboard::save();
+
+    // Loopback pages are a secure context, so Copy to clipboard can use the clipboard API.
+    assert_eq!(
+        browser.run(
+            "return window.isSecureContext && typeof navigator.clipboard?.writeText === 'function';"
+        ),
+        json!(true)
+    );
+    browser.click("details:has(.prompt-panel) > summary");
+    assert_eq!(
+        browser.run("return document.querySelector('details:has(.prompt-panel)').open;"),
+        json!(true)
+    );
+    let shown = |kind: &str| {
+        browser.run(&format!(
+            "return getComputedStyle(document.querySelector('.prompt[data-kind={kind}]')).display !== 'none';"
+        ))
+    };
+    assert_eq!(
+        (shown("claude_code"), shown("generic")),
+        (json!(true), json!(false))
+    );
+    browser.click("input[name=prompt-kind][value=generic]");
+    assert_eq!(
+        (shown("claude_code"), shown("generic")),
+        (json!(false), json!(true))
+    );
+    assert_eq!(
+        browser.run(
+            "return getComputedStyle(document.querySelector('.prompt[data-kind=generic] .needs-script')).display;"
+        ),
+        json!("flex"),
+        "the buttons show once lani.js runs"
+    );
+
+    // Editing marks the prompt, and enables Reset to default.
+    let marked = "const prompt = document.querySelector('.prompt[data-kind=generic]');\
+                  return [!prompt.querySelector('.prompt-edited').hidden,\
+                          !prompt.querySelector('[data-prompt-reset]').disabled];";
+    assert_eq!(browser.run(marked), json!([false, false]));
+    // Safari types at the start of a textarea, not after its text.
+    browser.type_text("#prompt-generic", "Also check the README. ");
+    assert_eq!(browser.run(marked), json!([true, true]));
+
+    // Copy to clipboard copies the text, then saves it.
+    browser.click(".prompt[data-kind=generic] [data-prompt-copy]");
+    let edited = browser.text("return document.getElementById('prompt-generic').value;");
+    assert!(edited.contains("Also check the README. "), "{edited}");
+    let service = fixture.service();
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let prompts = service.reviewer_prompts(review_id).unwrap();
+        if prompts.iter().any(|prompt| prompt.text == edited) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the copied edit was not saved");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    browser.wait_for(
+        "const t = document.getElementById('prompt-generic'); return t.defaultValue === t.value;",
+        "the saved text to count as unedited",
+    );
+    assert_eq!(
+        browser.text("return document.querySelector('.prompt[data-kind=generic] .prompt-status').textContent;"),
+        "Copied."
+    );
+    assert_eq!(Clipboard::text(), edited);
+
+    // Reset to default puts the default back.
+    browser.click(".prompt[data-kind=generic] [data-prompt-reset]");
+    assert_eq!(
+        browser.run(
+            "const t = document.getElementById('prompt-generic'); return t.value === t.dataset.default;"
+        ),
+        json!(true)
+    );
+    assert_eq!(browser.run(marked), json!([false, false]));
+    browser.assert_no_problems("the reviewer prompt");
+
+    // Reset without copying saves nothing, so the page starts from the copied edit next time.
+    browser.navigate(&format!("{}{overview}", fixture.base));
+    browser.wait_for(
+        "return document.readyState === 'complete';",
+        "the reloaded page",
+    );
+    assert_eq!(
+        browser.text("return document.getElementById('prompt-generic').value;"),
+        edited
+    );
+    assert_eq!(browser.run(marked), json!([true, true]));
+}
+
+/// The text on the system clipboard when the test began, put back when it ends.
+struct Clipboard(Vec<u8>);
+
+impl Clipboard {
+    fn save() -> Self {
+        Self(Command::new("pbpaste").output().unwrap().stdout)
+    }
+
+    fn text() -> String {
+        String::from_utf8(Command::new("pbpaste").output().unwrap().stdout).unwrap()
+    }
+}
+
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        if let Ok(mut pbcopy) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+            let _ = pbcopy.stdin.take().unwrap().write_all(&self.0);
+            let _ = pbcopy.wait();
+        }
+    }
+}
+
 struct Fixture {
     home: TestHome,
     repo: TestRepo,

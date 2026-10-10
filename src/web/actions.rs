@@ -13,7 +13,7 @@ use super::{AppState, Stop, TimeoutSource};
 use crate::base::BaseMode;
 use crate::error::Error;
 use crate::markdown;
-use crate::model::{Actor, IssueStatus, Severity, Side};
+use crate::model::{Actor, IssueStatus, PromptKind, Severity, Side};
 use crate::service::{CommentTarget, CreateIssue, SpanRequest};
 use crate::settings::IdleTimeout;
 
@@ -118,6 +118,12 @@ pub struct RoundLimitForm {
 #[derive(Deserialize)]
 pub struct PreviewForm {
     body: String,
+}
+
+#[derive(Deserialize)]
+pub struct PromptForm {
+    kind: String,
+    text: String,
 }
 
 #[derive(Deserialize)]
@@ -462,6 +468,28 @@ pub async fn preview(Form(form): Form<PreviewForm>) -> Result<Html<String>, Page
         .await
         .map_err(|error| Error::Internal(format!("rendering the preview failed: {error}")))?;
     Ok(Html(html))
+}
+
+/// `POST /reviews/{id}/prompts`: record a reviewer prompt that the human copied (§13.9). lani.js
+/// sends it after copying, so the answer has no page to go back to.
+pub async fn save_prompt(
+    State(state): State<AppState>,
+    Path(review_id): Path<i64>,
+    Form(form): Form<PromptForm>,
+) -> Result<StatusCode, PageError> {
+    let Some(kind) = PromptKind::parse(&form.kind) else {
+        return Err(PageError::new(
+            StatusCode::BAD_REQUEST,
+            "Unknown prompt",
+            &format!("{:?} is not a kind of reviewer prompt.", form.kind),
+        ));
+    };
+    state
+        .call(move |service| {
+            service.save_reviewer_prompt(Actor::Human, review_id, kind, &form.text)
+        })
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn set_issue_status(

@@ -44,6 +44,34 @@
     </form>
   </details>
   {% endif %}
+  <details class="inline-edit toggle" name="review-edit">
+    <summary class="button secondary">Reviewer prompt</summary>
+    <div class="prompt-panel" data-save="{{ review.url }}/prompts">
+      <fieldset class="prompt-kinds">
+        <legend>A prompt to start a reviewer session in</legend>
+        {% for prompt in prompts %}
+        <label><input type="radio" name="prompt-kind" value="{{ prompt.kind }}"{% if loop.first %} checked{% endif %}> {{ prompt.label }}</label>
+        {% endfor %}
+      </fieldset>
+      {% for prompt in prompts %}
+      <div class="prompt" data-kind="{{ prompt.kind }}">
+        <div class="prompt-head">
+          <label for="prompt-{{ prompt.kind }}">Prompt for {{ prompt.label }}</label>
+          <span class="badge prompt-edited"{% if !prompt.edited %} hidden{% endif %}>Edited</span>
+        </div>
+        {# HTML parsers drop a newline right after <textarea>; this one keeps the text's own leading newline. #}
+        <textarea id="prompt-{{ prompt.kind }}" rows="12" spellcheck="false" data-default="{{ prompt.default }}">
+{{ prompt.text }}</textarea>
+        <div class="form-actions needs-script">
+          <button type="button" class="secondary" data-prompt-reset{% if !prompt.edited %} disabled{% endif %}>Reset to default</button>
+          <button type="button" data-prompt-copy>Copy to clipboard</button>
+          <span class="prompt-status" role="status"></span>
+        </div>
+      </div>
+      {% endfor %}
+      <p class="hint">Copying keeps your edits, and this panel starts from them next time. Put review instructions for the project in <code>REVIEW.md</code> at the top of the repository; the prompts tell the reviewer to read it.</p>
+    </div>
+  </details>
   <form method="post" action="{{ review.url }}/close" class="inline"><input type="hidden" name="back" data-current-page>
     <button type="submit" class="secondary">Close review</button>
   </form>

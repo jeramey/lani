@@ -352,6 +352,25 @@ CREATE TABLE setting (
 ) STRICT;
 -- Seeded: ('idle_timeout', '3h'), a duration or 'never' (§13.1); and by migration 3
 -- ('round_limit', '5'), a whole number from 1 to 50 (§11.5).
+
+-- Migration 5: the human's edits to the reviewer prompts (§13.9). Each distinct default text an
+-- edit was made from is stored once.
+CREATE TABLE prompt_default (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL UNIQUE
+) STRICT;
+
+-- One revision per copied prompt whose text differed from what the page showed.
+CREATE TABLE prompt_edit (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  review_id    INTEGER NOT NULL REFERENCES review(id),
+  kind         TEXT NOT NULL CHECK (kind IN ('claude_code', 'generic')),
+  default_id   INTEGER NOT NULL REFERENCES prompt_default(id),
+  patch        TEXT,                                -- unified diff from the default; NULL = the default
+  lani_version TEXT NOT NULL,
+  created_at   TEXT NOT NULL
+) STRICT;
+CREATE INDEX prompt_edit_by_review ON prompt_edit(review_id, kind, id);
 ```
 
 Notes:
@@ -389,6 +408,9 @@ every row and id.
 Migration 4 (`0004_hand_off_notes.sql`) adds `event.note`, so every hand-off keeps its note
 (§11.5). Until then only the latest note was kept, in `review.turn_note`, so the migration gives
 it to each review's latest `turn_changed` event; earlier hand-offs have no note.
+
+Migration 5 (`0005_prompt_edits.sql`) adds `prompt_default` and `prompt_edit`, the human's edits
+to the reviewer prompts (§13.9). It only adds tables.
 
 A binary that finds `user_version` higher than it knows refuses to open the database and asks you
 to upgrade. A process that is already running, such as the web server or a session's `lani mcp`,
@@ -1393,7 +1415,7 @@ In either mode, `lani serve` prints the sign-in link, in the foreground or with 
 | URL                                         | Page |
 | ------------------------------------------- | ---- |
 | `/`                                         | **Every open review across all repos (R17)**, grouped by repo, with issue counts. A toggle includes closed reviews. |
-| `/reviews/{id}`                             | **Overview.** Title; head, base with an *auto-detected* label when applicable, and a *Change base* button for the base picker (§9.5); merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21), each row giving the number of replies (comments after the description) and who wrote the last, and ending in three lights, reviewer, human and implementer, filled for each role that created or commented on the issue, with a tooltip naming the role and what it did; close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is and the questions waiting for you as links (§11.5); the overview adds the hand-off note and the earlier hand-offs, lists the issues that need you first, and has a *Hand over* button, whose form chooses the other role from the one that handed you the review (§11.5). On every review page, a pencil by the title renames the review while it is open. The pencil and the *Change base* and *Hand over* buttons stay where they are: each opens its form in a panel below its row, over the page, and looks pressed while open, with a ▾/▴ caret on the buttons. Only one of the three is open at a time. |
+| `/reviews/{id}`                             | **Overview.** Title; head, base with an *auto-detected* label when applicable, and a *Change base* button for the base picker (§9.5); merge-base and commit count; **summary** (rendered Markdown, editable, shows who last edited it); **summary comments** (linear thread with a comment box); issue list filtered by status (open/resolved; filters by author and file are deferred, §21), each row giving the number of replies (comments after the description) and who wrote the last, and ending in three lights, reviewer, human and implementer, filled for each role that created or commented on the issue, with a tooltip naming the role and what it did; close/reopen review; **activity timeline** in pages, newest first (below). Every review page also shows whose turn it is and the questions waiting for you as links (§11.5); the overview adds the hand-off note and the earlier hand-offs, lists the issues that need you first, and has a *Hand over* button, whose form chooses the other role from the one that handed you the review (§11.5), and a *Reviewer prompt* button, which copies a prompt to start a reviewer session with (§13.9). On every review page, a pencil by the title renames the review while it is open. The pencil and the *Change base*, *Hand over* and *Reviewer prompt* buttons stay where they are: each opens its form in a panel below its row, over the page, and looks pressed while open, with a ▾/▴ caret on the buttons. Only one of the four is open at a time. |
 | `/reviews/{id}/changes`                     | **Diff** from merge-base to head (diff reviews only). Changed-file sidebar with +/− stats and issue counts, then a unified diff per file with inline issue threads. |
 | `/reviews/{id}/files/{dir…}/`               | **Tree** at head. Directory listing that marks changed files (diff reviews) and files with issues. |
 | `/reviews/{id}/files/{path}#L42-L48`        | **File** at head with highlighting, inline threads and line-range selection. |
@@ -1623,6 +1645,70 @@ Comments and summaries are rendered with **comrak**:
 - **Forms work without JavaScript.** Every action is a plain form post that redirects back, and
   inline editors are `<details>` elements. Only line selection and live updates need `lani.js`;
   links that refresh in place (§13.5) work as plain links without it.
+
+### 13.9 Reviewer prompts
+
+The overview's *Reviewer prompt* button opens a panel with a prompt to paste into a reviewer
+session you start yourself. Starting sessions from the web UI is on hold (§20, M5). The panel
+shows while the review is open.
+
+- **Two prompts.** A choice at the top of the panel shows one of them. It works without
+  JavaScript, through CSS `:has()`.
+  - *Claude Code* relies on what Claude Code provides:
+    - The server instructions (§12.2), which Claude Code gives the model.
+    - The `code-review` skill, given the review's range, such as `xhigh main...feature/x`. It
+      gets neither `--fix`, since editing is the implementer's job, nor `--comment`, which posts
+      to a GitHub PR. `ultra`, the multi-agent cloud review, is billed and only you can start
+      it, so the prompt uses `xhigh`.
+    - Background commands, for `lani wait`.
+  - *Other harness* is for harnesses that can use MCP servers, such as OpenCode. It doesn't
+    assume the harness gives the model the server instructions, so it carries the steps itself:
+    read the change, look for problems, file issues, hand off, wait and follow up.
+    - It waits with `lani wait --timeout 10m` in the foreground, and runs it again on exit code
+      4, since such harnesses may not have background commands. A harness without a shell tool
+      is to say so.
+    - The server enforces its own rules, such as the first hand-off going to you and questions
+      holding the review, and its replies explain them.
+  - **Whole-tree reviews.** Their prompts ask for the files you list at the end, instead of a
+    diff.
+- **What a prompt contains.** The review's number, branch and base, and nothing that anyone wrote,
+  neither the title nor the summary.
+  - A pasted prompt reads as your own words, so text from Claude or a comment would carry your
+    authority. The session reads that text through `get_review`, where it is marked as quoted
+    (§12.4).
+  - Ref names may contain `$`, `;` or backquotes. So in commands, a ref with anything but
+    `[A-Za-z0-9._/:-]` is single-quoted for the shell.
+- **`REVIEW.md`.** Project-specific review instructions go in `REVIEW.md` at the top of the
+  repository. It is the file Anthropic's GitHub Code Review reads; no cross-tool convention
+  exists for review-only instructions. `AGENTS.md`, or `CLAUDE.md`, holds general instructions,
+  which harnesses load themselves.
+  - **How the prompts use it.** They tell the reviewer to read it. Claude Code's prompt also says
+    to apply it itself, because the `code-review` skill doesn't read it.
+  - **It comes from the base** (`git show main:REVIEW.md`), so the branch under review cannot
+    change its own review instructions; a change to the file is reviewed with the rest of the
+    diff. A whole-tree review reads it from the head.
+- **Compiled in.** The texts are templates in the binary, in `src/web/templates/prompts/`.
+  Overrides are deferred (§21) until the saved edits show what they should be.
+- **Editing and copying.**
+  - Each prompt is in an editable text box. An *Edited* badge shows while it differs from its
+    default, and *Reset to default* puts the default back.
+  - *Copy to clipboard* copies first, because Safari lets a page write to the clipboard only
+    while it handles the click. Then it posts the text to `POST /reviews/{id}/prompts`.
+  - **The clipboard.** Loopback pages are a secure context, so the clipboard API is available.
+    If writing fails, the panel selects the text and falls back to `document.execCommand("copy")`.
+  - **Without JavaScript,** the buttons are hidden and you copy the text yourself.
+- **Saving edits.** A save records a revision when the copied text differs from what the panel
+  showed. The panel then starts from your last copied edit next time, for each review and
+  prompt. Copying the default after an edit records a return to the default.
+  - **Kept for later analysis.** Each revision holds a unified diff from its default, without
+    context lines, since a line of a prompt is a whole paragraph. The default itself is stored
+    once, in `prompt_default` (§7.3).
+  - **Each revision stands alone.** Showing it applies one diff to its own default, so it stays
+    readable after the default changes, as with a new base or a new LANI version. Before it is
+    stored, the diff is checked to restore the text exactly.
+  - **Reading them.** Use `sqlite3`, for example
+    `SELECT kind, patch FROM prompt_edit WHERE review_id = 9`.
+  - **Who can save.** Only you, and only on an open review.
 
 ---
 
@@ -1921,6 +2007,10 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     Remote Automation", then `safaridriver --enable`.
   - A socket-mode server works through a forwarded port: creating an issue, replying and
     resolving, and live updates.
+  - **The Reviewer prompt panel.** Choosing a prompt, the *Edited* badge, *Reset to default*, and
+    *Copy to clipboard*: the test reads the clipboard back with `pbpaste` and checks the saved
+    revision. Copying replaces the system clipboard's text, so the test puts the earlier text
+    back afterwards.
   - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
     toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline
     script injected); both breaks fail the test.
@@ -2069,6 +2159,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 - Keeping reviewed commits reachable through `refs/lani/*`. This writes to the repo, so it would
   need an explicit opt-in.
 - A Claude Code plugin with slash commands (`/lani-review`, `/lani-fix`).
+- Overriding the compiled-in reviewer prompts (§13.9), for example in the configuration file or
+  on the Settings page. This waits until the saved edits show what an override should be.
 - CI, prebuilt release binaries, a Homebrew formula, and macOS code signing.
 
 ---

@@ -828,7 +828,7 @@ pub fn questions(conn: &Connection, review_id: i64) -> Result<Vec<Question>> {
 // ── prompt edits ─────────────────────────────────────────────────────────────────────────────
 
 /// A revision of a review's prompt: the default it was edited from, and the edit as a diff from
-/// it, or `None` when the text went back to the default (§13.8).
+/// it, or `None` when the text went back to the default (§13.9).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptRevision {
     pub default_text: String,

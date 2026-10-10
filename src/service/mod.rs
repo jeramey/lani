@@ -273,7 +273,7 @@ pub struct IssueList {
     pub not_shown: IssueCounts,
 }
 
-/// A reviewer prompt for the review page (§13.8): its default, and the text the page shows, which
+/// A reviewer prompt for the review page (§13.9): its default, and the text the page shows, which
 /// is the human's last copied edit when there is one.
 #[derive(Clone, Debug)]
 pub struct ReviewerPrompt {
@@ -1242,7 +1242,7 @@ impl Service {
         self.review_view(store::get_review(&self.conn, review_id)?, true)
     }
 
-    /// The review's reviewer prompts, one of each kind, for the review page (§13.8).
+    /// The review's reviewer prompts, one of each kind, for the review page (§13.9).
     pub fn reviewer_prompts(&self, review_id: i64) -> Result<Vec<ReviewerPrompt>> {
         let review = store::get_review(&self.conn, review_id)?;
         [PromptKind::ClaudeCode, PromptKind::Generic]
@@ -1260,7 +1260,7 @@ impl Service {
     }
 
     /// Record a reviewer prompt the human copied, when its text differs from what the review page
-    /// showed for it: as a diff from the default, or as a return to the default (§13.8). Returns
+    /// showed for it: as a diff from the default, or as a return to the default (§13.9). Returns
     /// whether a revision was recorded.
     pub fn save_reviewer_prompt(
         &mut self,

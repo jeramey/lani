@@ -1,5 +1,5 @@
 -- Schema version 5: the human's edits to the reviewer prompts that the review page copies. See
--- docs/design.md §13.8.
+-- docs/design.md §13.9.
 
 -- Each distinct default text that an edit was made from, stored once.
 CREATE TABLE prompt_default (

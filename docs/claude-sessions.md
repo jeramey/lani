@@ -41,9 +41,8 @@ There are two phases. Each is useful on its own.
 
 - **The buttons.** The review page gets *Start reviewer session* and *Start implementer session*
   buttons. Each opens a form that shows two things:
-  - The prompt, prefilled and editable. The reviewer's comes from `docs/reviewer-prompt.md`, and
-    the implementer's from a new, matching template. Both have the review number, branch, base
-    and head filled in.
+  - The prompt, prefilled and editable. The reviewer's is the one the Reviewer prompt panel
+    copies (design §13.9), and the implementer's would come from a new, matching template.
   - The directory the session will run in. The two roles need different things:
     - **Implementer:** it edits and commits, so it runs in the worktree where the review's
       branch is checked out, found with `git worktree list --porcelain`.
@@ -178,8 +177,8 @@ Before shipping, then:
    `acceptEdits` for the implementer, so it can edit files without asking but still asks before
    running commands?
 5. **Closing a review.** Should closing it stop the review's sessions, offer to, or leave them?
-6. **The prompts.** Compiled into the binary, or editable, for example in the configuration file
-   or on the Settings page?
+6. **The prompts.** Settled for the reviewer prompts: compiled in, with the edits you copy saved
+   for later analysis, and overrides deferred (design §13.9, §21).
 
 ## To check before building
 
