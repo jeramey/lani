@@ -138,7 +138,7 @@ pub struct SettingsForm {
 struct ConflictPage {
     what: String,
     current_html: String,
-    /// Who saved the newer version, e.g. "Claude · reviewer" or "You (in another tab or window)".
+    /// Who saved the newer version, e.g. "The reviewer" or "You (in another tab or window)".
     current_editor: String,
     action: String,
     field: &'static str,
@@ -152,7 +152,7 @@ struct ConflictPage {
 fn editor_label(editor: Option<Actor>) -> String {
     match editor {
         Some(Actor::Human) => "You (in another tab or window)".to_string(),
-        Some(actor) => author(actor).label.to_string(),
+        Some(actor) => author(actor).subject(),
         None => "Someone".to_string(),
     }
 }

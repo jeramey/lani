@@ -85,7 +85,8 @@ pub async fn index(
         None | Some("open") => (
             Some(ReviewStatus::Open),
             "open",
-            "No open reviews. Ask Claude to start one with “Start a lani review of this branch.”",
+            "No open reviews. Ask an agent session to start one with “Start a lani review of this \
+             branch.”",
         ),
         Some("closed") => (Some(ReviewStatus::Closed), "closed", "No closed reviews."),
         Some("all") => (None, "all", "No reviews yet."),
@@ -276,7 +277,7 @@ pub async fn review(
     let summary_edited = match (review.summary_updated_by, &review.summary_updated_at) {
         (Some(editor), Some(at)) => Some(format!(
             "Last edited by {} · {}",
-            author(editor).label,
+            author(editor).phrase,
             time::to_local(at)
         )),
         _ => None,
@@ -402,14 +403,9 @@ pub async fn issue(
         id: issue.id,
         title: issue.title.clone(),
         severity: views::severity(issue.severity),
-        details_edited: issue.edited_by.map(|editor| {
-            let who = if editor == crate::model::Actor::Human {
-                "you"
-            } else {
-                author(editor).label
-            };
-            format!("title or severity edited by {who}")
-        }),
+        details_edited: issue
+            .edited_by
+            .map(|editor| format!("title or severity edited by {}", author(editor).phrase)),
         version: issue.version,
         severity_options: views::severity_options(Some(issue.severity)),
         details_action: format!("{}/details", views::issue_url(review_id, issue_id)),

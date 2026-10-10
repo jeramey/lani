@@ -440,8 +440,8 @@ fn socket(port: Option<u16>) -> anyhow::Result<()> {
     match Config::load() {
         Ok(config) if config.listen == Some(Listen::Socket) => {}
         Ok(_) => eprintln!(
-            "Note: servers that `lani open` or Claude start, for example after this one stops when \
-             idle, listen on a TCP port unless {} sets listen = \"socket\".",
+            "Note: servers that `lani open` or an agent session starts, for example after this one \
+             stops when idle, listen on a TCP port unless {} sets listen = \"socket\".",
             paths::shown_config_path()
         ),
         Err(error) => eprintln!("Warning: {error}"),

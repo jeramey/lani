@@ -131,7 +131,7 @@ impl Endpoint {
     #[must_use]
     pub fn open_hint(&self) -> String {
         match self {
-            Self::Tcp { .. } => "Run lani open, or ask Claude to open LANI.".to_string(),
+            Self::Tcp { .. } => "Run lani open, or ask an agent session to open LANI.".to_string(),
             Self::Socket { .. } => format!(
                 "Run lani socket on {}, which starts LANI if needed, and open the sign-in link it \
                  prints.",
@@ -464,8 +464,8 @@ fn executable_to_run(current: &Path) -> Result<PathBuf> {
     }
     Err(Error::Unavailable(format!(
         "cannot start the LANI server: the lani binary this process was started from, {}, has been \
-         removed or replaced. Restart this process (for `lani mcp`, reconnect LANI with /mcp in \
-         Claude Code), or start the server with `lani open`.",
+         removed or replaced. Restart this process (for `lani mcp`, reconnect LANI's MCP server, \
+         as with /mcp in Claude Code), or start the server with `lani open`.",
         quoted(&current.display().to_string())
     )))
 }

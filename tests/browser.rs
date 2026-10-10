@@ -265,7 +265,7 @@ fn changes_arrive_in_place(browser: &WebDriver, service: &mut Service, review_id
         &format!(
             "return {IN_PLACE} \
              && document.querySelector('#conversation').textContent.includes('From another session.') \
-             && document.querySelector('#review-head .turn').textContent.includes('Claude · reviewer');"
+             && document.querySelector('#review-head .turn').textContent.includes('Reviewer');"
         ),
         "the comment and the turn, in place",
     );
@@ -576,7 +576,7 @@ fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
     let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
     assert!(killed.status.success());
     browser.wait_for_unreachable_notice(
-        "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open LANI.",
+        "LANI cannot be reached; it may have stopped. Run lani open, or ask an agent session to open LANI.",
     );
 }
 

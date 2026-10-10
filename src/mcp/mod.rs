@@ -135,7 +135,7 @@ fn socket_directions(url: &str, endpoint: &Endpoint) -> Option<String> {
 
 // ── parameter types ──────────────────────────────────────────────────────────────────────────
 
-/// The role a Claude Code session acts in.
+/// The role an agent session acts in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -480,8 +480,8 @@ answer, a hand-off to anyone else is refused. Mention the question when you tell
 /// database (§12.5).
 const UPDATE_NOTICE: &str = "Note: lani has been reinstalled since this session's LANI MCP server \
 started, so this session is still running the older LANI. Tell the human, and ask them to \
-reconnect LANI in Claude Code (run /mcp, select lani, choose Reconnect); that starts the installed \
-version without restarting the session.";
+reconnect LANI's MCP server (in Claude Code: run /mcp, select lani, choose Reconnect); that starts \
+the installed version without restarting the session.";
 
 #[derive(Clone)]
 pub struct LaniServer {
@@ -529,8 +529,8 @@ impl LaniServer {
             }
             Some(current) if current == wanted => Ok(wanted),
             Some(current) => Err(format!(
-                "This session is acting as the {}, so it cannot act as the {}. A Claude Code session keeps \
-                 one role; use a separate session for the other role.",
+                "This session is acting as the {}, so it cannot act as the {}. A session keeps one \
+                 role; use a separate session for the other role.",
                 current.as_str(),
                 wanted.as_str()
             )),

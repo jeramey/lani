@@ -33,13 +33,13 @@
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>
       <select id="turn-to" name="to" required>
-        <option value="reviewer"{% if hand_over_to == "reviewer" %} selected{% endif %}>Claude · reviewer</option>
-        <option value="implementer"{% if hand_over_to == "implementer" %} selected{% endif %}>Claude · implementer</option>
+        <option value="reviewer"{% if hand_over_to == "reviewer" %} selected{% endif %}>Reviewer</option>
+        <option value="implementer"{% if hand_over_to == "implementer" %} selected{% endif %}>Implementer</option>
         <option value="nobody">Nobody</option>
       </select>
       <label for="turn-note">Note (optional)</label>
       <textarea id="turn-note" name="note" rows="3" placeholder="What should happen next? Markdown is supported"></textarea>
-      <p class="hint">Handing the review to Claude starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
+      <p class="hint">Handing the review to the reviewer or the implementer starts the round count again. A session waiting with <code>lani wait</code> wakes up when it is its turn.</p>
       <div class="form-actions"><button type="submit">Hand over</button></div>
     </form>
   </details>

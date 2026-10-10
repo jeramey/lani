@@ -505,7 +505,7 @@ async fn pages_render_with_security_headers() {
         "summary comments are shown"
     );
     assert!(
-        body.contains("Claude · implementer"),
+        body.contains(">Implementer</span>") && !body.contains("Claude ·"),
         "authors are labelled"
     );
     assert!(body.contains("auto-detected"), "the base's origin is shown");
@@ -1867,7 +1867,7 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     let review_url = format!("/reviews/{review_id}");
     let (_, _, page) = send(&f.app, get(&review_url)).await;
     assert!(
-        page.contains("<strong>Waiting for:</strong> <span class=\"author author-human\">You</span> <span class=\"muted small\">· handed over by Claude · reviewer"),
+        page.contains("<strong>Waiting for:</strong> <span class=\"author author-human\">You</span> <span class=\"muted small\">· handed over by the reviewer"),
         "the reviewer's first findings come to the human: {page}"
     );
     assert!(
@@ -1897,7 +1897,7 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     );
     let (_, _, issue_page) = send(&f.app, get(&format!("{review_url}/issues/{second}"))).await;
     assert!(
-        issue_page.contains("Claude · reviewer asked you about this issue"),
+        issue_page.contains("The reviewer asked you about this issue"),
         "{issue_page}"
     );
 
@@ -1910,7 +1910,12 @@ async fn turns_and_questions_for_the_human_are_shown_and_the_human_hands_on() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(location(&headers), review_url);
     let (_, _, page) = send(&f.app, get(&review_url)).await;
-    assert!(page.contains("author-reviewer\">Claude · reviewer</span> <span class=\"muted small\">· handed over by you"), "{page}");
+    assert!(
+        page.contains(
+            "author-reviewer\">Reviewer</span> <span class=\"muted small\">· handed over by you"
+        ),
+        "{page}"
+    );
     // The reviewer's note stays readable, compactly, under the new one.
     let history = &page[page.find("<details class=\"hand-offs\"").expect(&page)..];
     assert!(
@@ -2572,9 +2577,9 @@ async fn issue_rows_count_replies_and_light_up_for_each_role_that_created_or_com
     assert_eq!(
         role_lights(&overview),
         [
-            "author-reviewer lit | Claude · reviewer: created this issue",
+            "author-reviewer lit | Reviewer: created this issue",
             "author-human | You: no comments",
-            "author-implementer | Claude · implementer: no comments",
+            "author-implementer | Implementer: no comments",
         ],
         "{overview}"
     );
@@ -2598,16 +2603,16 @@ async fn issue_rows_count_replies_and_light_up_for_each_role_that_created_or_com
     assert!(
         overview.contains(
             "<p class=\"meta\">4 replies · last by \
-             <span class=\"author author-reviewer\">Claude · reviewer</span></p>"
+             <span class=\"author author-reviewer\">Reviewer</span></p>"
         ),
         "{overview}"
     );
     assert_eq!(
         role_lights(&overview),
         [
-            "author-reviewer lit | Claude · reviewer: created this issue and added 2 comments",
+            "author-reviewer lit | Reviewer: created this issue and added 2 comments",
             "author-human lit | You: added 1 comment",
-            "author-implementer lit | Claude · implementer: added 1 comment",
+            "author-implementer lit | Implementer: added 1 comment",
         ],
         "{overview}"
     );
@@ -2702,7 +2707,9 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
         assert!(
             page.contains(&format!("data-events=\"{review}/events\""))
-                && page.contains("data-reopen=\"Run lani open, or ask Claude to open LANI.\"")
+                && page.contains(
+                    "data-reopen=\"Run lani open, or ask an agent session to open LANI.\""
+                )
                 && page.contains("<script src=\"/static/lani.js\" defer></script>")
                 && page.contains("id=\"review-title\" data-live")
                 && page.contains("id=\"review-head\" data-live"),
@@ -2756,8 +2763,9 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
         let event = stream.next().await.unwrap();
         assert!(
             event.starts_with("event: stopping\n")
-                && event
-                    .contains("data: LANI was stopped. Run lani open, or ask Claude to open LANI."),
+                && event.contains(
+                    "data: LANI was stopped. Run lani open, or ask an agent session to open LANI."
+                ),
             "{event}"
         );
         assert_eq!(stream.next().await, None, "the stream ends");

@@ -170,12 +170,27 @@ pub fn repo_location(git_dir: &str) -> String {
 
 // ── shared pieces ────────────────────────────────────────────────────────────────────────────
 
-/// How an author is shown: "You" for the human, "Claude · <role>" otherwise.
+/// How an author is shown: "You" for the human, the role's name otherwise. The name doesn't say
+/// which harness plays the role, since a session in any harness can.
 #[derive(Clone, Copy, Debug)]
 pub struct AuthorView {
     pub label: &'static str,
+    /// The author inside a sentence, as in "edited by the reviewer".
+    pub phrase: &'static str,
     /// CSS class giving each kind of author a distinct accent.
     pub class: &'static str,
+}
+
+impl AuthorView {
+    /// The author at the start of a sentence, as in "The reviewer asked you…".
+    #[must_use]
+    pub fn subject(&self) -> String {
+        let mut chars = self.phrase.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
+    }
 }
 
 #[must_use]
@@ -183,14 +198,17 @@ pub fn author(actor: Actor) -> AuthorView {
     match actor {
         Actor::Human => AuthorView {
             label: "You",
+            phrase: "you",
             class: "author-human",
         },
         Actor::Reviewer => AuthorView {
-            label: "Claude · reviewer",
+            label: "Reviewer",
+            phrase: "the reviewer",
             class: "author-reviewer",
         },
         Actor::Implementer => AuthorView {
-            label: "Claude · implementer",
+            label: "Implementer",
+            phrase: "the implementer",
             class: "author-implementer",
         },
     }
@@ -215,10 +233,8 @@ pub fn comment(comment: &Comment) -> CommentView {
     let edited = comment.edited_by.map(|editor| {
         if editor == comment.author {
             "edited".to_string()
-        } else if editor == Actor::Human {
-            "edited by you".to_string()
         } else {
-            format!("edited by {}", author(editor).label)
+            format!("edited by {}", author(editor).phrase)
         }
     });
     CommentView {
@@ -294,12 +310,12 @@ pub struct Live {
 
 /// Whose turn a review is, as review pages show it.
 pub struct TurnView {
-    /// "You", or "Claude · reviewer" / "Claude · implementer".
+    /// "You", "Reviewer" or "Implementer".
     pub label: &'static str,
     pub class: &'static str,
     /// Whether it is the human's turn.
     pub yours: bool,
-    /// E.g. "handed over by Claude · reviewer · 2026-10-08 10:30 · 2 rounds without you".
+    /// E.g. "handed over by the reviewer · 2026-10-08 10:30 · 2 rounds without you".
     pub detail: Option<String>,
     /// The hand-off note, rendered.
     pub note_html: Option<String>,
@@ -362,11 +378,7 @@ pub fn turn(review: &crate::model::Review) -> Option<TurnView> {
     let who = author(holder);
     let detail = match (review.turn_by, &review.turn_at) {
         (Some(by), Some(at)) => {
-            let by = if by == Actor::Human {
-                "you"
-            } else {
-                author(by).label
-            };
+            let by = author(by).phrase;
             let rounds = match review.rounds {
                 0 => String::new(),
                 1 => " · 1 round without you".to_string(),
@@ -402,14 +414,14 @@ pub fn question_links(view: &ReviewView) -> Vec<QuestionLink> {
         .collect()
 }
 
-/// What an issue's question for the human says, while it is open: e.g. "Claude · implementer
-/// asked you about this issue · 2026-10-08 10:30".
+/// What an issue's question for the human says, while it is open: e.g. "The implementer asked
+/// you about this issue · 2026-10-08 10:30".
 #[must_use]
 pub fn question_notice(issue: &crate::model::Issue) -> Option<String> {
     let (asker, at) = (issue.asked_by?, issue.asked_at.as_deref()?);
     Some(format!(
         "{} asked you about this issue · {}",
-        author(asker).label,
+        author(asker).subject(),
         time::to_local(at)
     ))
 }
@@ -508,7 +520,7 @@ pub struct RoleLight {
     /// The role's author class, giving the light its colour.
     pub class: &'static str,
     pub lit: bool,
-    /// E.g. "Claude · reviewer: created this issue and added 2 comments".
+    /// E.g. "Reviewer: created this issue and added 2 comments".
     pub tooltip: String,
 }
 
@@ -645,12 +657,7 @@ pub fn severity_options(current: Option<Severity>) -> Vec<SeverityOption> {
 pub fn issue_status(status: IssueStatus, resolved_by: Option<Actor>) -> (String, &'static str) {
     match (status, resolved_by) {
         (IssueStatus::Resolved, Some(actor)) => {
-            let who = if actor == Actor::Human {
-                "you"
-            } else {
-                author(actor).label
-            };
-            (format!("Resolved by {who}"), "resolved")
+            (format!("Resolved by {}", author(actor).phrase), "resolved")
         }
         (IssueStatus::Resolved, None) => ("Resolved".to_string(), "resolved"),
         (IssueStatus::Open, _) => ("Open".to_string(), "open"),
@@ -910,7 +917,7 @@ pub fn event(event: &Event) -> EventView {
         EventKind::CommentAdded => "commented on the summary".to_string(),
         EventKind::TurnChanged => match event.turn_to {
             Some(Actor::Human) => "handed the review to you".to_string(),
-            Some(role) => format!("handed the review to {}", author(role).label),
+            Some(role) => format!("handed the review to {}", author(role).phrase),
             None => "cleared the turn".to_string(),
         },
         EventKind::HumanAsked => format!("asked you about {issue}"),

@@ -713,8 +713,10 @@ object database, the issue is treated as outdated.
 ### 11.1 Authorship and edits (R11)
 
 - **Everything is attributed.** Every issue, comment and summary carries its author. In the web UI
-  this shows as **You** or **Claude · reviewer** / **Claude · implementer**, with a distinct badge
-  and accent colour, so the originator is obvious at a glance.
+  this shows as **You**, **Reviewer** or **Implementer**, with a distinct badge and accent colour,
+  so the originator is obvious at a glance. The roles are named without a harness, since a Claude
+  Code or an OpenCode session can play them. Inside a sentence they read *the reviewer* and *the
+  implementer*, as in *Resolved by the reviewer*.
 - **Authorship never changes.** Editing someone else's text records `edited_by` and `edited_at`:
   - The web UI shows *edited by you* on a Claude comment you changed.
   - MCP output shows *edited by human*, so Claude knows the text is no longer purely its own.
@@ -1213,7 +1215,7 @@ warning saying to restart it: run `lani stop`, then `lani open`, or `lani socket
     value and where it came from (saved setting or command-line flag).
 - **Before stopping.** Whatever stops it, the server sends a final `stopping` message on open
   live-update streams (§13.5). Pages then show *"LANI stopped after 3h idle. Run lani open, or
-  ask Claude to open LANI."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
+  ask an agent session to open LANI."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
   it. A page that had no stream open, because it was hidden (§13.5), or whose server died without
   a word, shows *"LANI cannot be reached; it may have stopped. …"* once it finds the server gone.
   In socket mode, these notices end *"Run lani socket on devbox, which starts LANI if needed, and
@@ -1315,9 +1317,9 @@ ssh -o ExitOnForwardFailure=yes -L 5264:/home/you/.local/share/lani/run/web.sock
   forward command, and the sign-in link for your own machine.
 - **A server on a TCP port** is refused, with the suggestion to stop it first. Giving its link
   would quietly undo what you asked for.
-- **The configuration file.** A server that `lani open` or Claude starts, for example after this
-  one stops when idle, takes its mode from that file. So `lani socket` adds a note when the file
-  doesn't set `listen = "socket"`.
+- **The configuration file.** A server that `lani open` or an agent session starts, for example
+  after this one stops when idle, takes its mode from that file. So `lani socket` adds a note when
+  the file doesn't set `listen = "socket"`.
 - **`--port N`** sets the local port in the printed command and link of a server it starts.
   - A server's port is set when it starts. So with a server already running on another port,
     `lani socket --port N` prints no link, and says to run `lani stop` first.
@@ -1569,7 +1571,7 @@ work on the review.
 - **Losing the server.** A hidden page never hears `stopping`. When it is shown again, or when a
   stream drops without a final message, the browser keeps trying to reconnect. After two failed
   attempts in a row the page shows *"LANI cannot be reached; it may have stopped. Run lani open,
-  or ask Claude to open LANI."* (in socket mode, §13.1's ending), and a successful reconnect
+  or ask an agent session to open LANI."* (in socket mode, §13.1's ending), and a successful reconnect
   removes it. If the server answers
   the stream request with an error page instead (it cannot watch the review), the browser gives
   up and the page says live updates could not start.
