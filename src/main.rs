@@ -390,28 +390,34 @@ fn socket(port: Option<u16>) -> anyhow::Result<()> {
     let home = home()?;
     // Checked at once, like `lani serve --port`.
     port.map(PortChoice::flag).transpose()?;
-    let server = if let Some(server) = daemon::find_running(&home) {
-        if let Endpoint::Tcp { port } = server.file.endpoint {
-            anyhow::bail!(
-                "A LANI server is already running on port {port}, not on a Unix socket. Stop it \
-                 with `lani stop`, then run `lani socket` again."
-            );
-        }
-        eprintln!(
-            "A LANI server is already running (pid {}, {}); its settings were not changed.",
-            server.health.pid,
-            server.health.endpoint.describe()
+    let (server, started) = match daemon::find_running(&home) {
+        Some(server) => (server, false),
+        None => (
+            daemon::start_detached(&home, port, Some(Listen::Socket), None)?,
+            true,
+        ),
+    };
+    // Checked on whichever server answered: when another command starts one at the same moment,
+    // `start_detached` returns that one, which may be on a TCP port.
+    if let Endpoint::Tcp { port } = server.file.endpoint {
+        anyhow::bail!(
+            "A LANI server is already running on port {port}, not on a Unix socket. Stop it with \
+             `lani stop`, then run `lani socket` again."
         );
-        server
-    } else {
-        let server = daemon::start_detached(&home, port, Some(Listen::Socket), None)?;
+    }
+    if started {
         eprintln!(
             "LANI server running on {} (pid {}).",
             server.health.endpoint.describe(),
             server.health.pid
         );
-        server
-    };
+    } else {
+        eprintln!(
+            "A LANI server is already running (pid {}, {}); its settings were not changed.",
+            server.health.pid,
+            server.health.endpoint.describe()
+        );
+    }
     // A server that `lani open` or Claude starts, for example after this one stops when idle,
     // takes its mode from the configuration file.
     match Config::load() {

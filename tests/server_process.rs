@@ -969,6 +969,41 @@ fn socket_starts_or_finds_a_socket_mode_server_and_says_how_to_reach_it() {
 }
 
 #[test]
+fn socket_refuses_a_tcp_server_that_another_command_starts_meanwhile() {
+    let home = TestHome::new();
+    lani::daemon::ensure_dirs(&home.path).unwrap();
+    // Another command's server, still starting: it holds the lock, so the server `lani socket`
+    // starts exits at once, and it answers only once `lani socket` is waiting for a server.
+    let lock = lani::daemon::ServerLock::try_acquire(&home.path)
+        .unwrap()
+        .unwrap();
+    let home_path = home.path.clone();
+    let other = std::thread::spawn(move || {
+        // `start_detached` creates the server's log just before starting it.
+        let log = home_path.join("logs/server.log");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !log.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "lani socket never started a server"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        FakeServer::start(&home_path, "tcp").serve_for(std::time::Duration::from_secs(2));
+        drop(lock);
+    });
+    let refused = error_of(&lani(
+        &home,
+        &["socket", "--port", &common::LINK_PORT.to_string()],
+    ));
+    assert!(
+        refused.contains("is already running on port") && refused.contains("not on a Unix socket"),
+        "{refused}"
+    );
+    other.join().unwrap();
+}
+
+#[test]
 fn a_dead_servers_socket_is_replaced_but_nothing_else_is() {
     let home = socket_mode_home(lani::port::DEFAULT_PORT.get());
     let _stop = StopOnDrop(&home);
