@@ -1,5 +1,8 @@
 <div id="live-source" hidden data-events="{{ review.events_url }}" data-after="{{ review.events_after }}" data-reopen="{{ review.reopen }}"></div>
-<div id="review-head" data-live>
+{# The title and its pencil are a live part of their own, so an open rename, or a draft in it,
+   holds back only the title row, never the turn and questions below (lani.js protects a part
+   that is being edited). #}
+<div id="review-title" data-live>
 <div class="page-head">
   <div>
     <p class="crumbs"><a href="/">Reviews</a> / {{ review.repo }}</p>
@@ -19,6 +22,8 @@
   </div>
   <span class="badge {{ review.status_class }}">{{ review.status_label }}</span>
 </div>
+</div>
+<div id="review-head" data-live>
 <dl class="facts">
   <dt>Head</dt><dd><code>{{ review.head }}</code></dd>
   <dt>Base</dt><dd><code>{{ review.base }}</code>{% if let Some(note) = review.base_note %} <span class="note">{{ note }}</span>{% endif %}</dd>

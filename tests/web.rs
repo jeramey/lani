@@ -2208,6 +2208,12 @@ async fn a_pencil_by_the_title_renames_and_the_toolbar_has_buttons() {
             pencil < form && form < facts,
             "the rename form opens from the pencil by the title: {path}"
         );
+        // In a live part of its own: a rename in progress holds back only the title row, not
+        // the turn and questions in #review-head.
+        let title_part = page.find("<div id=\"review-title\" data-live>").unwrap();
+        let head_part = page.find("<div id=\"review-head\" data-live>").unwrap();
+        let form_at = page.find(&rename).unwrap();
+        assert!(title_part < form_at && form_at < head_part, "{path}");
         assert_eq!(page.matches(&rename).count(), 1, "{path}");
     }
 
@@ -2492,6 +2498,7 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
             page.contains(&format!("data-events=\"{review}/events\""))
                 && page.contains("data-reopen=\"Run lani open, or ask Claude to open LANI.\"")
                 && page.contains("<script src=\"/static/lani.js\" defer></script>")
+                && page.contains("id=\"review-title\" data-live")
                 && page.contains("id=\"review-head\" data-live"),
             "{path}: {page}"
         );

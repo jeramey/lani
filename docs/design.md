@@ -1510,6 +1510,9 @@ work on the review.
   differ are replaced, and a code view's line selection is restored from the URL afterwards. A
   `<details>` with an id that the reader opened, such as the earlier hand-offs, stays open in the
   replacement. If the fetch fails, a notice says so until a later refresh succeeds.
+  - A part being edited is held back, with a notice. So an editor sits in a part with as little
+    else as possible: the title and its rename pencil are a part of their own, apart from the
+    turn and the questions below them.
 - **Links that refresh in place.** A link marked `data-in-place`, such as *Next* in the activity
   timeline (§13.3), changes only what the page shows.
   - `lani.js` puts the link's path and query in the address bar with `history.replaceState`. It
