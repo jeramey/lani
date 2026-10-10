@@ -128,6 +128,14 @@ fn check_socket_path(path: &Path) -> Result<()> {
                  couldn't be reached through a forward; set LANI_HOME to a directory without it"
             )));
         }
+        // ssh needs such a path in brackets, and no `]` can be named inside them.
+        Some(text) if text.contains(']') && text.contains([':', '\\']) => {
+            return Err(Error::Invalid(format!(
+                "the socket path {text} contains \"]\" as well as \":\" or \"\\\", which ssh can't \
+                 take together in a forwarded path, so the server couldn't be reached through a \
+                 forward; set LANI_HOME to a directory without them"
+            )));
+        }
         Some(_) => {}
     }
     if std::os::unix::net::SocketAddr::from_pathname(path).is_err() {
@@ -226,6 +234,17 @@ mod tests {
         let expanded = directory.path().join("${HOME}").join("web.sock");
         let refused = check_socket_path(&expanded).unwrap_err().to_string();
         assert!(refused.contains("which ssh would expand"), "{refused}");
+        for unnameable in ["a]b:c", r"a]b\c"] {
+            let path = directory.path().join(unnameable).join("web.sock");
+            let refused = check_socket_path(&path).unwrap_err().to_string();
+            assert!(
+                refused.contains("which ssh can't take together"),
+                "{refused}"
+            );
+        }
+        for nameable in ["a]b", "a:b", r"a\b"] {
+            check_socket_path(&directory.path().join(nameable).join("web.sock")).unwrap();
+        }
         let not_utf8 = directory
             .path()
             .join(std::ffi::OsStr::from_bytes(b"caf\xe9"))

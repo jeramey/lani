@@ -1100,6 +1100,8 @@ routine:
   - **Paths a forward can't name** are refused the same way.
     - A path containing `${` is refused because ssh expands `${…}` in socket paths, with no way
       to escape it (§13.2).
+    - A path containing `]` together with `:` or `\` is refused because ssh needs it in brackets,
+      and no `]` can be named inside them.
     - A path that isn't UTF-8 is refused because the command is printed as text.
   - **`port` is not bound.** It is the local port that the printed command and links suggest you
     forward from, so nothing counts up, and 0 is refused.
@@ -1275,7 +1277,8 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   shell and then ssh read back exactly the socket's path. Each of these cases was checked with
   `ssh -G` through `sh` and `zsh`:
   - `%` is written `%%`, because ssh expands `%` tokens in socket paths, on the command line too.
-  - A path with a `:` goes in brackets, because ssh's parser would otherwise split it there.
+  - A path with a `:` or a `\` goes in brackets. Outside them, ssh's parser would split it at the
+    `:`, and drop the `\` as an escape.
   - Anything but letters, digits and `._/:-` puts the whole argument in single quotes, with `'`
     written `'\''`.
   - **The host name** is this machine's name as `uname -n` prints it, the same as `hostname`. The

@@ -155,11 +155,13 @@ impl Endpoint {
 /// ssh read back exactly that path (§13.2):
 /// - `%` is written `%%`, because ssh expands `%` tokens in socket paths. It also expands `${…}`,
 ///   which can't be escaped, so [`crate::listen::Binding`] refuses a path containing it.
-/// - A path with a `:` goes in brackets, since ssh's parser otherwise splits the argument there.
+/// - A path with a `:` or a `\` goes in brackets: outside them, ssh splits the argument at a `:`
+///   and takes a `\` as an escape. Inside them a `]` can't be named, so `Binding` refuses a path
+///   that has a `]` as well.
 /// - Anything but letters, digits and `._/:-` puts the whole argument in single quotes.
 fn forward_argument(browser_port: u16, socket: &Path) -> String {
     let path = socket.to_string_lossy().replace('%', "%%");
-    let path = if path.contains(':') {
+    let path = if path.contains([':', '\\']) {
         format!("[{path}]")
     } else {
         path
@@ -890,6 +892,16 @@ mod tests {
         assert_eq!(
             argument("/home/50%/run/web.sock"),
             "'5264:/home/50%%/run/web.sock'"
+        );
+        assert_eq!(
+            argument(r"/home/a\b/run/web.sock"),
+            r"'5264:[/home/a\b/run/web.sock]'",
+            "ssh drops a backslash outside brackets"
+        );
+        assert_eq!(
+            argument("/home/a[b]/run/web.sock"),
+            "'5264:/home/a[b]/run/web.sock'",
+            "brackets read back outside brackets"
         );
         assert_eq!(
             argument("/x/$(id)`id`;/web.sock"),
