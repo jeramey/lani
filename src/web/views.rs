@@ -465,7 +465,7 @@ pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
         files_url: files_url(review.id, "", true),
         changes_url: review.base_ref.is_some().then(|| changes_url(review.id)),
         tab: "overview",
-        editable: review.status == ReviewStatus::Open,
+        editable: open,
         turn: turn(review),
         hand_offs: Vec::new(),
         questions: if review.status == ReviewStatus::Open {
