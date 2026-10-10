@@ -88,9 +88,10 @@ pub enum Stop {
 }
 
 impl Stop {
+    /// The notice for open pages, ending in `reopen`, how to get LANI back
+    /// ([`AppState::reopen_hint`]).
     #[must_use]
-    pub fn message(self) -> String {
-        let reopen = "Run lani open, or ask Claude to open it again.";
+    pub fn message(self, reopen: &str) -> String {
         match self {
             Self::Idle(timeout) => format!("LANI stopped after {timeout} idle. {reopen}"),
             Self::Requested => format!("LANI was stopped. {reopen}"),
@@ -162,6 +163,30 @@ impl AppState {
     #[must_use]
     pub fn instance(&self) -> &Instance {
         &self.inner.instance
+    }
+
+    /// How to get LANI back once this server has stopped, for the notices pages show (§13.1). In
+    /// socket mode that is `lani socket` on its machine, which also gives the new sign-in link
+    /// that a restarted server needs (§13.2).
+    #[must_use]
+    pub fn reopen_hint(&self) -> String {
+        match &self.instance().endpoint {
+            Endpoint::Tcp { .. } => "Run lani open, or ask Claude to open it again.".to_string(),
+            socket @ Endpoint::Socket { .. } => format!(
+                "Run lani socket on {} to start it again and get a new sign-in link.",
+                socket.machine()
+            ),
+        }
+    }
+
+    /// What a review page rendered now needs for live updates, given the latest event it reflects.
+    #[must_use]
+    pub fn live(&self, events_after: i64) -> views::Live {
+        views::Live {
+            events_after,
+            outdated: self.outdated(),
+            reopen: self.reopen_hint(),
+        }
     }
 
     /// Run a service operation on the blocking thread pool; SQLite and git calls block.

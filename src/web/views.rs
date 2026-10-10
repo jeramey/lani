@@ -270,6 +270,9 @@ pub struct ReviewHeader {
     pub events_after: i64,
     /// Whether a newer lani has been installed over this server's executable.
     pub outdated: bool,
+    /// How to get LANI back once the server has stopped, for the notice lani.js shows when it
+    /// can't reach the server.
+    pub reopen: String,
 }
 
 /// What a review page needs for live updates (§13.5).
@@ -279,6 +282,8 @@ pub struct Live {
     pub events_after: i64,
     /// Whether to show the update banner.
     pub outdated: bool,
+    /// How to get LANI back once the server has stopped, for the page's notices.
+    pub reopen: String,
 }
 
 /// Whose turn a review is, as review pages show it.
@@ -451,6 +456,7 @@ pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
         events_url: format!("{}/events", review_url(review.id)),
         events_after: live.events_after,
         outdated: live.outdated,
+        reopen: live.reopen.clone(),
     }
 }
 

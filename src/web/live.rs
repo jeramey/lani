@@ -94,7 +94,7 @@ impl Watch {
             tokio::select! {
                 stop = self.state.shutdown_requested() => {
                     self.ended = true;
-                    return Event::default().event("stopping").data(notice(&stop.message()));
+                    return Event::default().event("stopping").data(notice(&stop.message(&self.state.reopen_hint())));
                 }
                 _ = self.ticker.tick() => {}
             }

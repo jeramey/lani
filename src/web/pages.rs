@@ -12,8 +12,8 @@ use serde::Deserialize;
 use super::AppState;
 use super::activity::{self, ActivityView};
 use super::views::{
-    self, AuthorView, CommentView, FilterLink, IssueRow, Live, PageError, ReviewHeader,
-    SeverityOption, SeverityView, SpanView, author, review_url,
+    self, AuthorView, CommentView, FilterLink, IssueRow, PageError, ReviewHeader, SeverityOption,
+    SeverityView, SpanView, author, review_url,
 };
 use crate::daemon::{self, Health};
 use crate::model::{IssueStatus, ReviewStatus, short_ref};
@@ -233,10 +233,7 @@ pub async fn review(
         )),
         _ => None,
     };
-    let live = Live {
-        events_after,
-        outdated: state.outdated(),
-    };
+    let live = state.live(events_after);
     let mut header = views::review_header(&detail.view, &live);
     header.hand_offs = views::hand_off_history(review, &detail.hand_offs);
     let page = ReviewPage {
@@ -345,10 +342,7 @@ pub async fn issue(
         .await?;
     let issue = &view.issue;
     let (status_label, status_class) = views::issue_status(issue.status, issue.resolved_by);
-    let live = Live {
-        events_after,
-        outdated: state.outdated(),
-    };
+    let live = state.live(events_after);
     let page = IssuePage {
         review: views::ReviewHeader {
             tab: "issue",

@@ -575,10 +575,8 @@ fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
     let server = lani::daemon::ServerFile::read(&fixture.home.path).unwrap();
     let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
     assert!(killed.status.success());
-    browser.wait_for(
-        "return [...document.querySelectorAll('.live-notice')]\
-           .some(notice => notice.textContent.startsWith('LANI cannot be reached'));",
-        "the unreachable notice",
+    browser.wait_for_unreachable_notice(
+        "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open it again.",
     );
 }
 
@@ -614,6 +612,16 @@ fn a_socket_mode_server_works_through_a_forwarded_port() {
     browser.run("window.laniSamePage = true; return true;");
     changes_arrive_in_place(&browser, &mut fixture.service(), review_id);
     browser.assert_no_problems("live updates through the forward");
+
+    // Getting back in takes `lani socket` on the remote machine, which gives a new sign-in link.
+    let server = lani::daemon::ServerFile::read(&fixture.home.path).unwrap();
+    let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
+    assert!(killed.status.success());
+    browser.wait_for_unreachable_notice(&format!(
+        "LANI cannot be reached; it may have stopped. Run lani socket on {} to start it again and \
+         get a new sign-in link.",
+        common::machine_name()
+    ));
 }
 
 #[test]
@@ -1044,6 +1052,17 @@ impl WebDriver {
                window.laniProblems.push('CSP ' + event.violatedDirective + ' ' + event.blockedURI));\
              window.addEventListener('error', event => window.laniProblems.push('error ' + event.message));\
              return true;",
+        );
+    }
+
+    /// Wait for the notice a page shows once it can't reach its server, reading exactly `text`.
+    fn wait_for_unreachable_notice(&self, text: &str) {
+        self.wait_for(
+            &format!(
+                "return document.getElementById('live-notice-unreachable')?.textContent === {};",
+                json!(text)
+            ),
+            "the unreachable notice",
         );
     }
 

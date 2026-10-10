@@ -8,7 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use super::AppState;
-use super::views::{self, Crumb, Live, MarkerView, PageError, ReviewHeader, ThreadView, plural};
+use super::views::{self, Crumb, MarkerView, PageError, ReviewHeader, ThreadView, plural};
 use serde::Deserialize;
 
 use crate::git::{DiffHunk, EntryKind, FileChange, RowKind};
@@ -126,10 +126,7 @@ async fn browse(
             Redirect::to(&views::files_url(review_id, &view.path, is_directory)).into_response(),
         );
     }
-    let live = Live {
-        events_after,
-        outdated: state.outdated(),
-    };
+    let live = state.live(events_after);
     let mut header = views::review_header(&view.view, &live);
     header.tab = "files";
     let page = if is_directory {
@@ -438,10 +435,7 @@ pub async fn changes(
         (&view.head, &view.merge_base),
         &back,
     );
-    let live = Live {
-        events_after,
-        outdated: state.outdated(),
-    };
+    let live = state.live(events_after);
     let mut header = views::review_header(&view.view, &live);
     header.tab = "changes";
     let page = ChangesPage {

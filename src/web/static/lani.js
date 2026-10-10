@@ -251,10 +251,7 @@
       // The browser keeps trying to reconnect.
       failures += 1;
       if (failures >= UNREACHABLE_AFTER) {
-        showNotice(
-          "unreachable",
-          "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open it again."
-        );
+        showNotice("unreachable", "LANI cannot be reached; it may have stopped. " + source.dataset.reopen);
       }
     });
   }

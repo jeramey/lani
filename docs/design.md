@@ -1157,6 +1157,9 @@ warning suggesting `lani stop && lani open`. The MCP tool includes the same warn
   ask Claude to open it again."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
   it. A page that had no stream open, because it was hidden (§13.5), or whose server died without
   a word, shows *"LANI cannot be reached; it may have stopped. …"* once it finds the server gone.
+  In socket mode, these notices end *"Run lani socket on devbox to start it again and get a new
+  sign-in link."* instead (§13.2). The server gives lani.js that ending in the page, as
+  `data-reopen`.
 - **Status.** `lani status` shows the effective timeout and the time remaining.
 
 ### 13.2 Authentication and browser security (R10)
@@ -1302,7 +1305,8 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   - `lani serve` prints the forward command and the sign-in link. `lani status` prints the
     forward command, and `lani status --print-url` the link.
 - **Pages.** The *Not signed in* and *Link expired* pages say to run `lani socket` on the remote
-  machine, by name.
+  machine, by name. So do the notices a page shows once its server has stopped or can't be reached
+  (§13.1).
 - **Restarts.** The forward keeps working across server restarts, since the path stays the same.
   Only signing in again is needed, because each start has a new token.
 - **What ssh needs.** OpenSSH 6.7 or later at both ends, and sshd allowing Unix-socket forwarding.

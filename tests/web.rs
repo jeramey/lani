@@ -268,6 +268,25 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
     assert_eq!(health["socket"], "/home/you/.local/share/lani/run/web.sock");
     assert_eq!(health["browser_port"], PORT);
     assert!(health.get("port").is_none(), "{health}");
+
+    // Getting back in after a stop takes a new sign-in link, which `lani socket` gives.
+    let review = format!("/reviews/{}", f.review_id);
+    let reopen = "Run lani socket on devbox to start it again and get a new sign-in link.";
+    let (_, _, page) = send(&f.app, get(&review)).await;
+    assert!(
+        page.contains(&format!("data-reopen=\"{reopen}\"")),
+        "{page}"
+    );
+    let after = events_after(&page);
+    let mut stream =
+        EventStream::open(&f.app, get(&format!("{review}/events?after={after}"))).await;
+    f.state.request_shutdown(Stop::Requested);
+    let event = stream.next().await.unwrap();
+    assert!(
+        event.starts_with("event: stopping\n")
+            && event.contains(&format!("data: LANI was stopped. {reopen}")),
+        "{event}"
+    );
 }
 
 #[tokio::test]
@@ -2304,6 +2323,7 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
         assert!(
             page.contains(&format!("data-events=\"{review}/events\""))
+                && page.contains("data-reopen=\"Run lani open, or ask Claude to open it again.\"")
                 && page.contains("<script src=\"/static/lani.js\" defer></script>")
                 && page.contains("id=\"review-head\" data-live"),
             "{path}: {page}"
