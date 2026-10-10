@@ -925,25 +925,33 @@ mod tests {
     fn a_full_listen_queue_fails_a_connection_at_once() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("web.sock");
-        // A server that never accepts, so connections queue up until the queue is full.
-        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        // A server that never accepts, with room for one waiting connection, so its queue is full
+        // after a couple. std's listener takes the system's maximum, 4096 on Linux, which would
+        // run out of file descriptors first.
+        let listener =
+            socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        listener
+            .bind(&socket2::SockAddr::unix(&path).unwrap())
+            .unwrap();
+        listener.listen(1).unwrap();
         let (outcome, outcome_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut queued = Vec::new();
             let refused = loop {
                 match connect_without_waiting(&path) {
+                    Ok(_) if queued.len() >= 100 => break Err("the queue never filled"),
                     Ok(stream) => queued.push(stream),
-                    Err(error) => break error,
+                    Err(error) => break Ok(error.kind()),
                 }
-                assert!(queued.len() < 100_000, "the queue never filled");
             };
-            let _ = outcome.send(refused.kind());
+            let _ = outcome.send(refused);
         });
         // On Linux a blocking connect would wait here for room in the queue, for good. macOS
         // refuses a connection to a full queue either way.
         let kind = outcome_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("a connection waited for room in the full queue");
+            .expect("a connection waited for room in the full queue")
+            .unwrap_or_else(|problem| panic!("{problem}"));
         assert!(
             matches!(
                 kind,
