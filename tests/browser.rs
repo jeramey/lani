@@ -750,10 +750,12 @@ impl Fixture {
             .view
             .review
             .id;
+        // The forward listens before the server starts, which it can, as it connects only when
+        // a connection arrives; the server's links then name its port.
         let forward = through_a_forward.then(|| {
-            let port = common::free_port();
-            home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
-            Forward::new(port, &home.path.join("run/web.sock"))
+            let forward = Forward::new(0, &home.path.join("run/web.sock"));
+            home.write_config(&format!("listen = \"socket\"\nport = {}\n", forward.port));
+            forward
         });
         let output = lani(&home.path, &["open", "--no-browser", "--print-url"]);
         assert!(

@@ -399,13 +399,9 @@ fn relay(client: TcpStream, socket: &Path) {
     let _ = upstream.join();
 }
 
-/// A free port on 127.0.0.1, for a forward to listen on later.
-pub fn free_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|listener| listener.local_addr())
-        .expect("find a free port")
-        .port()
-}
+/// The local port in socket mode's printed command and links, for tests in which nothing listens
+/// on it. A forward that is used listens on a port of its own choosing ([`Forward::new`] with 0).
+pub const LINK_PORT: u16 = 5390;
 
 /// This machine's name, as `uname -n` prints it, and as LANI's printed `ssh` command gives it.
 pub fn machine_name() -> String {

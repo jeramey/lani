@@ -262,7 +262,7 @@ fn open_web_ui_starts_the_server_and_opens_the_browser() {
 #[test]
 fn open_web_ui_in_socket_mode_gives_directions_to_pass_on_instead_of_a_browser() {
     let home = TestHome::new();
-    let port = common::free_port();
+    let port = common::LINK_PORT;
     home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
     let repo = feature_repo();
     let (browser, browser_ran) = common::recording_browser(&home.path);

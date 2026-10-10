@@ -790,11 +790,14 @@ fn server_json(home: &TestHome) -> serde_json::Value {
 #[test]
 fn socket_mode_serves_on_a_private_socket_that_a_forwarded_port_reaches() {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-    let port = common::free_port();
-    let home = socket_mode_home(port);
+    let home = TestHome::new();
     let _stop = StopOnDrop(&home);
     let socket = home.path.join("run/web.sock");
     let host = common::machine_name();
+    // Listening before the server starts, as ssh can: it connects only when a connection arrives.
+    let forward = Forward::new(0, &socket);
+    let port = forward.port;
+    home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
 
     let printed = stdout(&lani(&home, &["serve", "--detach"]));
     let lines: Vec<&str> = printed.lines().collect();
@@ -827,8 +830,6 @@ fn socket_mode_serves_on_a_private_socket_that_a_forwarded_port_reaches() {
     assert_eq!(file["socket"], socket.display().to_string());
     assert_eq!(file["browser_port"], port);
 
-    // The port is your own machine's: the server left it free, so the forward can listen on it.
-    let forward = Forward::new(port, &socket);
     let path = link.split_once(&format!(":{port}")).unwrap().1;
     let signed_in = http_get(forward.port, path);
     assert!(signed_in.starts_with("HTTP/1.1 200"), "{signed_in}");
@@ -881,7 +882,7 @@ fn socket_mode_serves_on_a_private_socket_that_a_forwarded_port_reaches() {
 
 #[test]
 fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
-    let port = common::free_port();
+    let port = common::LINK_PORT;
     let home = socket_mode_home(port);
     let _stop = StopOnDrop(&home);
     let (browser, browser_ran) = common::recording_browser(&home.path);
@@ -924,8 +925,7 @@ fn socket_starts_or_finds_a_socket_mode_server_and_says_how_to_reach_it() {
     let home = TestHome::new();
     let _stop = StopOnDrop(&home);
     let socket = home.path.join("run/web.sock");
-    // Only in the printed command and links: nothing listens on it here.
-    let port = common::free_port();
+    let port = common::LINK_PORT;
 
     let started = lani(&home, &["socket", "--port", &port.to_string()]);
     let printed = stdout(&started);
