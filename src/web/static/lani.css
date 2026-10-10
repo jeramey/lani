@@ -297,7 +297,8 @@ details.toggle > :not(summary) {
 .title-row > details.toggle > :not(summary) {
   top: 100%;
   left: 0;
-  width: min(36rem, calc(100vw - 32px));
+  /* main's 24px padding on each side. */
+  width: min(36rem, calc(100vw - 48px));
 }
 
 /* The pencil lines up with the title's first line, however many lines the title takes. */
