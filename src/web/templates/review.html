@@ -32,7 +32,7 @@
   <details class="inline-edit">
     <summary>Hand on</summary>
     {% if !review.questions.is_empty() %}
-    <p class="hint">Answer the questions for you first. Until each one has your reply, or its issue is resolved or reopened by you, the review stays with you.</p>
+    <p class="hint">Answer the questions for you first. Until each one has your reply, or you resolve its issue, the review can only be handed to you.</p>
     {% else %}
     <form method="post" action="{{ review.url }}/turn"><input type="hidden" name="back" data-current-page>
       <label for="turn-to">Whose turn is it?</label>

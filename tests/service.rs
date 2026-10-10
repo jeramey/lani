@@ -2171,7 +2171,10 @@ fn while_a_question_waits_the_review_can_only_go_to_the_human() {
             service.hand_off(Actor::Human, review_id, to, None),
             &format!("Issue {issue_id} is waiting for your answer."),
         );
-        assert!(refused.contains("the review stays with you"), "{refused}");
+        assert!(
+            refused.contains("the review can only be handed to you: reply on each issue"),
+            "{refused}"
+        );
     }
     assert_eq!(
         service
@@ -2217,6 +2220,13 @@ fn while_a_question_waits_the_review_can_only_go_to_the_human() {
         service.hand_off(Actor::Implementer, review_id, Some(Actor::Reviewer), None),
         &format!("Issues {issue_id} and {second} are waiting for the human's answer"),
     );
+    // Nor can the human take the review from a session, to nobody; what they're told holds
+    // whoever has the turn.
+    let to_nobody = expect_invalid(
+        service.hand_off(Actor::Human, review_id, None, None),
+        "Until you answer, the review can only be handed to you",
+    );
+    assert!(!to_nobody.contains("stays with you"), "{to_nobody}");
     assert!(
         refused.contains("Call hand_off with to \"human\""),
         "{refused}"

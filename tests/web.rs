@@ -1936,8 +1936,10 @@ async fn a_question_holds_the_review_until_the_human_answers(
 ) {
     let turn = format!("{review_url}/turn");
     assert!(
-        page.contains("Answer the questions for you first.")
-            && !page.contains(&format!("action=\"{turn}\"")),
+        page.contains(
+            "Answer the questions for you first. Until each one has your reply, or you resolve \
+             its issue, the review can only be handed to you."
+        ) && !page.contains(&format!("action=\"{turn}\"")),
         "{page}"
     );
     let (status, _, refused) = send(&f.app, post(&turn, "to=implementer&note=Go+ahead.")).await;

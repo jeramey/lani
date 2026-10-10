@@ -2013,8 +2013,8 @@ fn awaiting_answers(actor: Actor, questions: &[store::Question]) -> Option<Strin
     };
     Some(if actor == Actor::Human {
         format!(
-            "{issues} waiting for your answer. Answer each one first: a comment, or resolving or \
-             reopening the issue, counts. Until then the review stays with you."
+            "{issues} waiting for your answer. Until you answer, the review can only be handed to \
+             you: reply on each issue, or resolve it."
         )
     } else {
         format!(
