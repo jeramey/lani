@@ -268,8 +268,10 @@ summary.button, summary.icon-button { list-style: none; user-select: none; }
 summary.button::-webkit-details-marker,
 summary.icon-button::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-summary.button::after { content: "\25BE"; margin-left: 6px; font-size: 0.85em; }
-details[open] > summary.button::after { content: "\25B4"; }
+/* The caret has empty alternative text, so it stays out of the toggle's accessible name: the
+   open state is announced from the details already. A browser without the syntax shows none. */
+summary.button::after { content: "\25BE" / ""; margin-left: 6px; font-size: 0.85em; }
+details[open] > summary.button::after { content: "\25B4" / ""; }
 details[open] > summary.button {
   box-shadow: inset 0 2px 5px rgb(0 0 0 / 0.3);
   filter: brightness(0.85);
