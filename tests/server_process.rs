@@ -904,7 +904,7 @@ fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
         directions.contains("LANI listens on a Unix socket, so no browser was opened.")
             && directions.contains(&format!("ssh -L {port}:{} ", socket.display()))
             && directions.contains(&format!("Then open http://127.0.0.1:{port}/reviews/3\n"))
-            && directions.contains("run this command again with --print-url"),
+            && directions.contains("first run `lani socket` and open the sign-in link it prints."),
         "{directions}"
     );
     let token = server_json(&home)["token"].as_str().unwrap().to_string();
@@ -917,6 +917,55 @@ fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
         format!("http://127.0.0.1:{port}/login?token={token}&next=/reviews/3")
     );
     assert!(!browser_ran.exists(), "no browser was started");
+}
+
+#[test]
+fn socket_starts_or_finds_a_socket_mode_server_and_says_how_to_reach_it() {
+    let home = TestHome::new();
+    let _stop = StopOnDrop(&home);
+    let socket = home.path.join("run/web.sock");
+    // Only in the printed command and links: nothing listens on it here.
+    let port = common::free_port();
+
+    let started = lani(&home, &["socket", "--port", &port.to_string()]);
+    let printed = stdout(&started);
+    assert!(
+        printed.starts_with("To reach LANI from your own machine, forward a local port")
+            && printed.contains(&format!("\nssh -L {port}:{} ", socket.display()))
+            && printed.contains(&format!("\nhttp://127.0.0.1:{port}/login?token=")),
+        "{printed}"
+    );
+    let told = String::from_utf8_lossy(&started.stderr);
+    assert!(
+        told.contains(&format!(
+            "LANI server running on socket {}",
+            socket.display()
+        )) && told.contains("listen on a TCP port unless")
+            && told.contains("sets listen = \"socket\"."),
+        "without listen in the file, a later server would be on a TCP port: {told}"
+    );
+
+    let again = lani(&home, &["socket"]);
+    assert_eq!(
+        stdout(&again),
+        printed,
+        "the running server's directions and link"
+    );
+    let told = String::from_utf8_lossy(&again.stderr);
+    assert!(told.contains("already running"), "{told}");
+    home.write_config(&format!("listen = \"socket\"\nport = {port}\n"));
+    let told = String::from_utf8_lossy(&lani(&home, &["socket"]).stderr).to_string();
+    assert!(!told.contains("Note:"), "{told}");
+
+    // A server on a TCP port is not passed off as one on a socket.
+    stdout(&lani(&home, &["stop"]));
+    home.write_config("port = 0\n");
+    stdout(&lani(&home, &["open", "--no-browser"]));
+    let refused = error_of(&lani(&home, &["socket"]));
+    assert!(
+        refused.contains("is already running on port") && refused.contains("not on a Unix socket"),
+        "{refused}"
+    );
 }
 
 #[test]

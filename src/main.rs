@@ -4,7 +4,8 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand, ValueEnum};
 use rmcp::ServiceExt as _;
 
-use lani::daemon::{self, RunningServer};
+use lani::config::Config;
+use lani::daemon::{self, Endpoint, RunningServer};
 use lani::listen::Listen;
 use lani::mcp::LaniServer;
 use lani::mcp::render;
@@ -67,6 +68,15 @@ enum Command {
         /// `lani serve` prints the sign-in link to stdout.
         #[arg(long)]
         detach: bool,
+    },
+    /// Start the web server on a Unix socket, for use over SSH, or find the running one. Prints
+    /// the `ssh -L` command that reaches it from your own machine, and its sign-in link, which
+    /// contains the access token, so keep it private.
+    Socket {
+        /// The local port to forward from, on your own machine. Without it, `port` from the
+        /// configuration file, or 5264.
+        #[arg(long)]
+        port: Option<u16>,
     },
     /// Show whether the web server is running.
     Status {
@@ -149,6 +159,7 @@ fn main() -> anyhow::Result<()> {
             idle_timeout.as_deref(),
             detach,
         ),
+        Command::Socket { port } => socket(port),
         Command::Status { print_url } => status(print_url),
         Command::Stop => stop(),
         Command::Wait {
@@ -315,8 +326,8 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
         if !print_url {
             eprintln!("Then open {}", server.file.public_url(&path));
             eprintln!(
-                "If your browser isn't signed in to this server yet, run this command again with \
-                 --print-url and open the link it prints instead."
+                "If your browser isn't signed in to this server yet, first run `lani socket` and \
+                 open the sign-in link it prints."
             );
         }
         return Ok(());
@@ -370,6 +381,50 @@ fn serve(
         listen,
         idle_timeout,
     })?;
+    Ok(())
+}
+
+/// `lani socket`: the command you run on a remote machine to reach LANI over SSH (§13.2). Claude's
+/// directions name it for you, so the token never passes through Claude.
+fn socket(port: Option<u16>) -> anyhow::Result<()> {
+    let home = home()?;
+    // Checked at once, like `lani serve --port`.
+    port.map(PortChoice::flag).transpose()?;
+    let server = if let Some(server) = daemon::find_running(&home) {
+        if let Endpoint::Tcp { port } = server.file.endpoint {
+            anyhow::bail!(
+                "A LANI server is already running on port {port}, not on a Unix socket. Stop it \
+                 with `lani stop`, then run `lani socket` again."
+            );
+        }
+        eprintln!(
+            "A LANI server is already running (pid {}, {}); its settings were not changed.",
+            server.health.pid,
+            server.health.endpoint.describe()
+        );
+        server
+    } else {
+        let server = daemon::start_detached(&home, port, Some(Listen::Socket), None)?;
+        eprintln!(
+            "LANI server running on {} (pid {}).",
+            server.health.endpoint.describe(),
+            server.health.pid
+        );
+        server
+    };
+    // A server that `lani open` or Claude starts, for example after this one stops when idle,
+    // takes its mode from the configuration file.
+    match Config::load() {
+        Ok(config) if config.listen == Some(Listen::Socket) => {}
+        Ok(_) => eprintln!(
+            "Note: servers that `lani open` or Claude start, for example after this one stops when \
+             idle, listen on a TCP port unless {} sets listen = \"socket\".",
+            paths::shown_config_path()
+        ),
+        Err(error) => eprintln!("Warning: {error}"),
+    }
+    print!("{}", server.file.sign_in_text());
+    warn_on_version_mismatch(&server);
     Ok(())
 }
 

@@ -243,7 +243,7 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
         .unwrap();
     let (status, _, body) = send(&f.app, anonymous).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let hint = "Run `lani open --print-url` on devbox and open the link it prints.";
+    let hint = "Run `lani socket` on devbox and open the sign-in link it prints.";
     assert!(body.contains(hint), "{body}");
 
     let expired = Request::builder()
@@ -254,7 +254,7 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
     let (status, _, body) = send(&f.app, expired).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(
-        body.contains("(it may have restarted). Run `lani open --print-url` on devbox"),
+        body.contains("(it may have restarted). Run `lani socket` on devbox"),
         "{body}"
     );
 

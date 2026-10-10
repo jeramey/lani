@@ -83,29 +83,9 @@ Use status \"all\" only when history is needed. Never call close_review unless t
 human asks to see a review or issue, call open_web_ui.";
 
 /// How the human can reach the page without a browser being launched: a `lani open … --print-url`
-/// command.
+/// command. A repository path goes into the command only if it is plain enough to be safe in a
+/// shell; otherwise the human is pointed at the page's address after signing in.
 fn open_command_hint(p: &OpenWebUiParams, url: &str) -> String {
-    let (command, then) = print_url_command(p, url);
-    format!("Ask the human to run `{command}` in a terminal and open the printed URL.{then}")
-}
-
-/// What to pass on to the human for a server listening on a Unix socket, which their browser
-/// reaches through an SSH forward, so no browser is opened (§13.2). `None` for a TCP server.
-fn socket_directions(p: &OpenWebUiParams, url: &str, endpoint: &Endpoint) -> Option<String> {
-    let directions = endpoint.forward_directions()?;
-    let (command, then) = print_url_command(p, url);
-    Some(format!(
-        "No browser was opened, because LANI listens on a Unix socket for use over SSH. Pass this \
-         on to the human:\n{directions}Then open {url}\nIf your browser isn't signed in to this \
-         server yet, run `{command}` on {} and open the link it prints instead.{then}",
-        endpoint.machine()
-    ))
-}
-
-/// The `lani open … --print-url` command that prints a sign-in link to the page, and what to do
-/// after following it. A repository path goes into the command only if it is plain enough to be
-/// safe in a shell; otherwise the human is pointed at the page's address after signing in.
-fn print_url_command(p: &OpenWebUiParams, url: &str) -> (String, String) {
     let mut flags = String::new();
     match (p.review_id, p.issue_id) {
         (Some(review_id), _) => {
@@ -138,7 +118,22 @@ fn print_url_command(p: &OpenWebUiParams, url: &str) -> (String, String) {
             then = format!(" Then go to {url}.");
         }
     }
-    (format!("lani open{flags} --print-url"), then)
+    format!(
+        "Ask the human to run `lani open{flags} --print-url` in a terminal and open the printed URL.{then}"
+    )
+}
+
+/// What to pass on to the human for a server listening on a Unix socket, which their browser
+/// reaches through an SSH forward, so no browser is opened (§13.2). `None` for a TCP server. It
+/// never holds the token: for a sign-in link, the human runs `lani socket` on that machine.
+fn socket_directions(url: &str, endpoint: &Endpoint) -> Option<String> {
+    let directions = endpoint.forward_directions()?;
+    Some(format!(
+        "No browser was opened, because LANI listens on a Unix socket for use over SSH. Pass this \
+         on to the human:\n{directions}Then open {url}\nIf your browser isn't signed in to this \
+         server yet, first run `lani socket` on {} and open the sign-in link it prints.",
+        endpoint.machine()
+    ))
 }
 
 // ── parameter types ──────────────────────────────────────────────────────────────────────────
@@ -1041,18 +1036,17 @@ impl LaniServer {
         let (server, started) =
             daemon::ensure_running(&self.home).map_err(|error| error.to_string())?;
         let url = server.file.public_url(&path);
-        let mut message =
-            if let Some(directions) = socket_directions(&p, &url, &server.file.endpoint) {
-                directions
-            } else {
-                match daemon::open_in_browser(&self.home, &server.file, &path) {
-                    Ok(()) => format!("Opened {url} in the human's browser."),
-                    Err(error) => format!(
-                        "Could not open a browser ({error}). {}",
-                        open_command_hint(&p, &url)
-                    ),
-                }
-            };
+        let mut message = if let Some(directions) = socket_directions(&url, &server.file.endpoint) {
+            directions
+        } else {
+            match daemon::open_in_browser(&self.home, &server.file, &path) {
+                Ok(()) => format!("Opened {url} in the human's browser."),
+                Err(error) => format!(
+                    "Could not open a browser ({error}). {}",
+                    open_command_hint(&p, &url)
+                ),
+            }
+        };
         if started {
             message.push_str(" Started the LANI web server.");
         }

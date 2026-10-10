@@ -64,7 +64,7 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Response {
                 "Open LANI with `lani open`, or ask Claude to open it, to get a fresh link."
                     .to_string()
             }
-            socket @ Endpoint::Socket { .. } => print_url_on(socket),
+            socket @ Endpoint::Socket { .. } => sign_in_on(socket),
         };
         return PageError::new(StatusCode::UNAUTHORIZED, "Not signed in", &message).into_response();
     };
@@ -215,7 +215,7 @@ pub async fn login(
             Endpoint::Tcp { .. } => {
                 "Run `lani open`, or ask Claude to open LANI, to get a fresh link.".to_string()
             }
-            socket @ Endpoint::Socket { .. } => print_url_on(socket),
+            socket @ Endpoint::Socket { .. } => sign_in_on(socket),
         };
         return PageError::new(
             StatusCode::UNAUTHORIZED,
@@ -264,11 +264,11 @@ pub async fn login(
     }
 }
 
-/// How to get a sign-in link for a socket-mode server, which only a command on its own machine
-/// prints: neither `lani open` nor Claude opens a browser for it (§13.2).
-fn print_url_on(endpoint: &Endpoint) -> String {
+/// How to get a sign-in link for a socket-mode server: `lani socket`, run on its own machine.
+/// Nothing opens a browser for such a server, and Claude never passes the token on (§13.2).
+fn sign_in_on(endpoint: &Endpoint) -> String {
     format!(
-        "Run `lani open --print-url` on {} and open the link it prints.",
+        "Run `lani socket` on {} and open the sign-in link it prints.",
         endpoint.machine()
     )
 }

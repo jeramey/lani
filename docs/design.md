@@ -877,7 +877,7 @@ role (§11.3).
 | `edit_comment`          | `comment_id`, `author`, `body`, `expected_version` | Only comments written by the same role. |
 | `set_issue_status`      | `issue_id`, `author`, `status` (`open`\|`resolved`), `comment?` | Reviewer only. The comment is published with the change and is required when reopening. |
 | `close_review`          | `review_id`, `author` | Reviewer only, and only when you ask. |
-| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. In socket mode (§13.2) it opens no browser, and returns directions to pass on to the human: the `ssh -L` command, the page's address, and that `lani open … --print-url` command to run on the remote machine for a sign-in link. |
+| `open_web_ui`           | `review_id?`, `issue_id?`, `view?` (`overview`\|`changes`\|`files`), `path?`, `line?` | **R9.** Ensures the server is running (§13.1) and opens your browser at that page; with no arguments, the review list. `view`, `path` and `line` need `review_id`. `path` alone means the Files view, and `line` needs `path`. A line opens selected: in the Files view, or on the head side of the file's diff. The Changes view is refused for a whole-tree review. Returns the URL *without* the token. If no browser can be launched (e.g. over SSH), it says to run `lani open … --print-url`. A path goes into that command only if it is plain enough to be safe in a shell; otherwise the message gives the page's address to visit after signing in. In socket mode (§13.2) it opens no browser, and returns directions to pass on to the human: the `ssh -L` command, the page's address, and to run `lani socket` on the remote machine for a sign-in link. The token never appears in it. |
 
 ### 12.4 Output format
 
@@ -1235,6 +1235,19 @@ forward a local port to it:
 ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
 ```
 
+**`lani socket`** is the command you run on the remote machine to reach LANI this way.
+
+- **What it does.** It starts a server on the socket, or finds the running one. Then it prints the
+  forward command, and the sign-in link for your own machine.
+- **A server on a TCP port** is refused, with the suggestion to stop it first. Giving its link
+  would quietly undo what you asked for.
+- **The configuration file.** A server that `lani open` or Claude starts, for example after this
+  one stops when idle, takes its mode from that file. So `lani socket` adds a note when the file
+  doesn't set `listen = "socket"`.
+- **`--port N`** sets the local port in the printed command and link, for that run.
+- **For you, not Claude.** Claude's directions name `lani socket` for you to run. Nothing tells
+  Claude to run it, so the token stays out of Claude's context.
+
 - **Why.** On a TCP port, every user of the remote machine can connect to LANI, and only the token
   keeps them out. Nothing checks the other direction: which server your tunnel reaches.
   - Another user can bind 5264 before LANI does, or after LANI's idle stop frees it.
@@ -1263,12 +1276,13 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
 - **No browser on the remote machine.** A browser there could not reach a Unix socket, so
   `lani open` and `open_web_ui` never open one in socket mode.
   - They give directions instead: the forward command, the page's address without the token, and
-    the `lani open … --print-url` command to run on the remote machine for a sign-in link.
+    `lani socket` to run on the remote machine for a sign-in link. `lani open --print-url` still
+    prints a sign-in link when asked.
   - The token stays out of Claude's output, which is stored on disk and sent to the API.
   - `lani serve` prints the forward command and the sign-in link. `lani status` prints the
     forward command, and `lani status --print-url` the link.
-- **Pages.** The *Not signed in* and *Link expired* pages say to run `lani open --print-url` on
-  the remote machine, by name.
+- **Pages.** The *Not signed in* and *Link expired* pages say to run `lani socket` on the remote
+  machine, by name.
 - **Restarts.** The forward keeps working across server restarts, since the path stays the same.
   Only signing in again is needed, because each start has a new token.
 - **What ssh needs.** OpenSSH 6.7 or later at both ends, and sshd allowing Unix-socket forwarding.
@@ -1537,6 +1551,9 @@ lani serve [--port N] [--listen tcp|socket] [--idle-timeout DURATION|never] [--d
                                             run the web server (foreground unless --detach);
                                             --port N uses exactly N (§13.1); --listen socket
                                             listens on a Unix socket for use over SSH (§13.2)
+lani socket [--port N]                      start the web server on a Unix socket, or find the
+                                            running one, and print the ssh -L command and the
+                                            sign-in link (§13.2)
 lani status [--print-url]                   server pid, port, version, uptime, idle timeout and
                                             time left; --print-url prints only the running
                                             server's sign-in URL
@@ -1855,6 +1872,9 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
     - `status` and `stop` over the socket, and the server removing its socket on SIGTERM.
     - `open` and `open_web_ui` giving directions without the token. A `BROWSER` that records
       being run shows that neither starts a browser.
+    - `lani socket` starting a socket-mode server, or giving the running one's directions and
+      link. It refuses a server on a TCP port, and notes a configuration file without
+      `listen = "socket"`.
     - A killed server's socket is replaced, and anything else at the path is left alone.
     - A path too long for the OS is refused.
 - **Concurrency:** two processes writing simultaneously, with no `SQLITE_BUSY` surfacing.

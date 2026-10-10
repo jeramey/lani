@@ -105,15 +105,17 @@ browser reaching it over SSH port forwarding.
 - **How it works.** The server listens on a Unix socket in your private LANI directory instead of a
   TCP port, and you forward a local port to that socket.
 - **Why it is safer.** Nobody else on the remote machine can connect to LANI. Nobody can take the
-  port your forward points at, either, which would hand them your sign-in token. Set it in
-  `~/.config/lani/config.toml` on the remote machine:
+  port your forward points at, either, which would hand them your sign-in token.
+- **Turning it on.** Set it in `~/.config/lani/config.toml` on the remote machine, so that every
+  server started there uses it, including those Claude starts:
 
   ```toml
   listen = "socket"
   ```
 
-- **Starting it.** `lani serve --detach` then prints the `ssh -L` command to run on your own
-  machine, and the sign-in link to open there:
+- **Starting it.** Run `lani socket` on the remote machine. It starts the server on the socket,
+  or finds the running one. Then it prints the `ssh -L` command to run on your own machine, and
+  the sign-in link to open there:
 
   ```
   To reach LANI from your own machine, forward a local port to it over SSH (devbox is this
@@ -126,8 +128,8 @@ browser reaching it over SSH port forwarding.
 - **A forward set up once.** The socket's path never changes, so the forward can go in your
   `~/.ssh/config`, as `LocalForward 5264 /home/you/.local/share/lani/run/web.sock`.
 - **No browser on the remote machine.** In socket mode, `lani open` and Claude's `open_web_ui`
-  never open one. They print the forward command and the page's address. To sign in, run
-  `lani open --print-url` or `lani status --print-url` on the remote machine.
+  never open one. They print the forward command and the page's address, and Claude never sees
+  your token. To sign in, run `lani socket` on the remote machine.
 - **What ssh needs.** It needs OpenSSH 6.7 or later at both ends. The remote sshd must allow
   Unix-socket forwarding, which it does by default (`AllowStreamLocalForwarding`).
 
@@ -155,6 +157,8 @@ lani open [--review ID [--view overview|changes|files] [--file PATH[:LINE]] | --
 lani serve [--port N] [--listen tcp|socket] [--idle-timeout DURATION|never] [--detach]
                                  run the web server; --port N uses exactly port N;
                                  --listen socket listens on a Unix socket, for SSH
+lani socket [--port N]           start the server on a Unix socket for use over SSH, or find
+                                 it, and print the ssh -L command and the sign-in link
 lani status [--print-url]        whether the server is running, and its idle timeout;
                                  --print-url prints only its sign-in URL
 lani stop                        stop the server
