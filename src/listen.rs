@@ -74,6 +74,7 @@ impl Binding {
         listen: Option<Listen>,
         config: &Config,
     ) -> Result<Self> {
+        let from_flag = port.is_some();
         let port = match port {
             Some(choice) => choice,
             None => PortChoice::configured(config)?,
@@ -84,10 +85,18 @@ impl Binding {
                 let browser_port = match port {
                     PortChoice::Exact(port) | PortChoice::From(port) => port,
                     PortChoice::Any => {
+                        // Like `change_port` for a TCP server: what to change is whatever said 0.
+                        let instead = if from_flag {
+                            "pass another --port".to_string()
+                        } else {
+                            format!(
+                                "set another port in {}, or pass --port",
+                                paths::shown_config_path()
+                            )
+                        };
                         return Err(Error::Invalid(format!(
                             "in socket mode the port is the one your browser uses through an SSH \
-                             forward, so it cannot be 0; set another port in {}, or pass --port",
-                            paths::shown_config_path()
+                             forward, so it cannot be 0; {instead}"
                         )));
                     }
                 };
@@ -188,14 +197,18 @@ mod tests {
             browser_port(Some(PortChoice::Exact(port(7100))), Some(7000)),
             Ok(7100)
         );
-        for (flag, file) in [(None, Some(0)), (Some(PortChoice::Any), None)] {
-            let refused = browser_port(flag, file).unwrap_err();
-            assert!(
-                refused.contains("in socket mode the port is the one your browser uses")
-                    && refused.contains("cannot be 0"),
-                "{refused}"
-            );
-        }
+        let from_file = browser_port(None, Some(0)).unwrap_err();
+        assert!(
+            from_file.contains("in socket mode the port is the one your browser uses")
+                && from_file.contains("cannot be 0; set another port in /")
+                && from_file.ends_with("config.toml, or pass --port"),
+            "{from_file}"
+        );
+        let from_flag = browser_port(Some(PortChoice::Any), Some(7000)).unwrap_err();
+        assert!(
+            from_flag.ends_with("cannot be 0; pass another --port"),
+            "{from_flag}"
+        );
     }
 
     #[test]
