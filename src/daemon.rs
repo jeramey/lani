@@ -124,6 +124,36 @@ impl Endpoint {
         }
     }
 
+    /// How to open LANI, signed in, starting a server if none is running: one sentence for the
+    /// pages, notices and directions that turn someone away or lose the server (§13.2). For a TCP
+    /// server that is `lani open`, which signs a browser in. In socket mode it is `lani socket`, run
+    /// on this machine, which prints a sign-in link for your own.
+    #[must_use]
+    pub fn open_hint(&self) -> String {
+        match self {
+            Self::Tcp { .. } => "Run lani open, or ask Claude to open LANI.".to_string(),
+            Self::Socket { .. } => format!(
+                "Run lani socket on {}, which starts LANI if needed, and open the sign-in link it \
+                 prints.",
+                self.machine()
+            ),
+        }
+    }
+
+    /// How to restart the server, for example to use a newer lani: a clause that can follow
+    /// "Restart it: " or "to restart it, ", without a full stop. In socket mode the restarted
+    /// server needs a new sign-in, which `lani socket` gives.
+    #[must_use]
+    pub fn restart_hint(&self) -> String {
+        match self {
+            Self::Tcp { .. } => "run lani stop, then lani open".to_string(),
+            Self::Socket { .. } => format!(
+                "run lani stop, then lani socket on {}, and open the sign-in link it prints",
+                self.machine()
+            ),
+        }
+    }
+
     /// How to forward a local port to a socket-mode server, ending in a line break; `None` for
     /// a TCP server, which needs no directions.
     #[must_use]
@@ -337,9 +367,10 @@ impl RunningServer {
     pub fn version_warning(&self) -> Option<String> {
         (self.health.version != VERSION).then(|| {
             format!(
-                "The running LANI server is version {} but this lani is version {VERSION}; \
-                 run `lani stop && lani open` to restart it.",
-                self.health.version
+                "The running LANI server is version {} but this lani is version {VERSION}; to \
+                 restart it, {}.",
+                self.health.version,
+                self.file.endpoint.restart_hint()
             )
         })
     }
@@ -958,6 +989,51 @@ mod tests {
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ConnectionRefused
             ),
             "{kind:?}"
+        );
+    }
+
+    #[test]
+    fn the_version_warning_says_how_to_restart_in_either_mode() {
+        let warning = |endpoint: Endpoint| {
+            RunningServer {
+                file: ServerFile {
+                    pid: 1,
+                    endpoint: endpoint.clone(),
+                    token: "t".into(),
+                    instance_id: "i".into(),
+                    version: "0.0.1".into(),
+                    started_at: "s".into(),
+                },
+                health: Health {
+                    instance_id: "i".into(),
+                    version: "0.0.1".into(),
+                    pid: 1,
+                    endpoint,
+                    started_at: "s".into(),
+                    idle_timeout: "3h".into(),
+                    idle_timeout_source: "saved setting".into(),
+                    idle_remaining_secs: None,
+                },
+            }
+            .version_warning()
+            .unwrap()
+        };
+        let tcp = warning(Endpoint::Tcp { port: 5264 });
+        assert!(
+            tcp.ends_with("; to restart it, run lani stop, then lani open."),
+            "{tcp}"
+        );
+        let socket = warning(Endpoint::Socket {
+            socket: "/s".into(),
+            browser_port: 5264,
+            ssh_host: Some("devbox".into()),
+        });
+        assert!(
+            socket.ends_with(
+                "; to restart it, run lani stop, then lani socket on devbox, and open the sign-in \
+                 link it prints."
+            ),
+            "{socket}"
         );
     }
 

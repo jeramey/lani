@@ -576,7 +576,7 @@ fn a_page_that_loses_its_server_says_it_cannot_be_reached() {
     let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
     assert!(killed.status.success());
     browser.wait_for_unreachable_notice(
-        "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open it again.",
+        "LANI cannot be reached; it may have stopped. Run lani open, or ask Claude to open LANI.",
     );
 }
 
@@ -618,8 +618,8 @@ fn a_socket_mode_server_works_through_a_forwarded_port() {
     let killed = common::output(Command::new("kill").args(["-9", &server.pid.to_string()]));
     assert!(killed.status.success());
     browser.wait_for_unreachable_notice(&format!(
-        "LANI cannot be reached; it may have stopped. Run lani socket on {} to start it again and \
-         get a new sign-in link.",
+        "LANI cannot be reached; it may have stopped. Run lani socket on {}, which starts LANI if \
+         needed, and open the sign-in link it prints.",
         common::machine_name()
     ));
 }

@@ -89,7 +89,7 @@ pub enum Stop {
 
 impl Stop {
     /// The notice for open pages, ending in `reopen`, how to get LANI back
-    /// ([`AppState::reopen_hint`]).
+    /// ([`Endpoint::open_hint`]).
     #[must_use]
     pub fn message(self, reopen: &str) -> String {
         match self {
@@ -165,31 +165,21 @@ impl AppState {
         &self.inner.instance
     }
 
-    /// How to get LANI back once this server has stopped, for the notices pages show (§13.1). In
-    /// socket mode that is `lani socket` on its machine, which also gives the new sign-in link
-    /// that a restarted server needs (§13.2).
-    #[must_use]
-    pub fn reopen_hint(&self) -> String {
-        match &self.instance().endpoint {
-            Endpoint::Tcp { .. } => "Run lani open, or ask Claude to open it again.".to_string(),
-            socket @ Endpoint::Socket { .. } => format!(
-                "Run lani socket on {} to start it again and get a new sign-in link.",
-                socket.machine()
-            ),
-        }
-    }
-
     /// What a review page rendered now needs for live updates, given the latest event it reflects.
     #[must_use]
     pub fn live(&self, events_after: i64) -> views::Live {
+        let endpoint = &self.instance().endpoint;
         views::Live {
             events_after,
             outdated: self.outdated(),
-            reopen: self.reopen_hint(),
+            reopen: endpoint.open_hint(),
+            restart: endpoint.restart_hint(),
         }
     }
 
-    /// Run a service operation on the blocking thread pool; SQLite and git calls block.
+    /// Run a service operation on the blocking thread pool; SQLite and git calls block. A database
+    /// that a newer lani has upgraded comes back as [`Error::Outdated`] with the whole message the
+    /// web UI shows, including how to restart this server (§7.4).
     pub async fn call<T, F>(&self, operation: F) -> Result<T>
     where
         F: FnOnce(&mut Service) -> Result<T> + Send + 'static,
@@ -203,6 +193,13 @@ impl AppState {
         })
         .await
         .map_err(|error| Error::Internal(format!("a request handler failed: {error}")))?
+        .map_err(|error| match error {
+            Error::Outdated(message) => Error::Outdated(views::outdated_server_message(
+                &message,
+                &self.instance().endpoint.restart_hint(),
+            )),
+            other => other,
+        })
     }
 
     #[must_use]

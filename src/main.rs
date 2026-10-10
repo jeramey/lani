@@ -326,8 +326,8 @@ fn open(path: &str, print_url: bool, no_browser: bool) -> anyhow::Result<()> {
         if !print_url {
             eprintln!("Then open {}", server.file.public_url(&path));
             eprintln!(
-                "If your browser isn't signed in to this server yet, first run `lani socket` and \
-                 open the sign-in link it prints."
+                "If your browser isn't signed in to this server yet, sign in first. {}",
+                server.file.endpoint.open_hint()
             );
         }
         return Ok(());

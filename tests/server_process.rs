@@ -905,7 +905,11 @@ fn open_in_socket_mode_gives_directions_and_never_starts_a_browser() {
         directions.contains("LANI listens on a Unix socket, so no browser was opened.")
             && directions.contains(&format!("ssh -L {port}:{} ", socket.display()))
             && directions.contains(&format!("Then open http://127.0.0.1:{port}/reviews/3\n"))
-            && directions.contains("first run `lani socket` and open the sign-in link it prints."),
+            && directions.contains(&format!(
+                "If your browser isn't signed in to this server yet, sign in first. Run lani socket \
+                 on {}, which starts LANI if needed, and open the sign-in link it prints.\n",
+                common::machine_name()
+            )),
         "{directions}"
     );
     let token = server_json(&home)["token"].as_str().unwrap().to_string();

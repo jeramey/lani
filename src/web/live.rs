@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tokio::time::{Interval, MissedTickBehavior};
 
 use super::AppState;
-use super::views::{self, PageError};
+use super::views::PageError;
 use crate::error::Error;
 use crate::text;
 
@@ -94,7 +94,7 @@ impl Watch {
             tokio::select! {
                 stop = self.state.shutdown_requested() => {
                     self.ended = true;
-                    return Event::default().event("stopping").data(notice(&stop.message(&self.state.reopen_hint())));
+                    return Event::default().event("stopping").data(notice(&stop.message(&self.state.instance().endpoint.open_hint())));
                 }
                 _ = self.ticker.tick() => {}
             }
@@ -147,7 +147,8 @@ fn give_up(error: &Error, failures: u32) -> bool {
 /// What a page shows when its stream fails.
 fn failure(error: &Error) -> String {
     match error {
-        Error::Outdated(message) => views::outdated_server_message(message),
+        // Already the whole message, with how to restart (`AppState::call`).
+        Error::Outdated(message) => message.clone(),
         _ => format!("Live updates stopped: {error}. Reload the page to start them again."),
     }
 }

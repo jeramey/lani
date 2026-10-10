@@ -273,6 +273,8 @@ pub struct ReviewHeader {
     /// How to get LANI back once the server has stopped, for the notice lani.js shows when it
     /// can't reach the server.
     pub reopen: String,
+    /// How to restart the server, for the update banner.
+    pub restart: String,
 }
 
 /// What a review page needs for live updates (§13.5).
@@ -284,6 +286,8 @@ pub struct Live {
     pub outdated: bool,
     /// How to get LANI back once the server has stopped, for the page's notices.
     pub reopen: String,
+    /// How to restart the server, for the update banner.
+    pub restart: String,
 }
 
 /// Whose turn a review is, as review pages show it.
@@ -457,6 +461,7 @@ pub fn review_header(view: &ReviewView, live: &Live) -> ReviewHeader {
         events_after: live.events_after,
         outdated: live.outdated,
         reopen: live.reopen.clone(),
+        restart: live.restart.clone(),
     }
 }
 
@@ -1051,18 +1056,16 @@ impl From<Error> for PageError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong")
             }
         };
-        let message = match &error {
-            Error::Outdated(message) => outdated_server_message(message),
-            _ => error.to_string(),
-        };
-        Self::new(status, title, &message)
+        // An `Outdated` error from `AppState::call` already says how to restart.
+        Self::new(status, title, &error.to_string())
     }
 }
 
-/// What the web UI shows once a newer lani has upgraded the database (§7.4).
+/// What the web UI shows once a newer lani has upgraded the database (§7.4), given how to restart
+/// this server ([`crate::daemon::Endpoint::restart_hint`]).
 #[must_use]
-pub fn outdated_server_message(message: &str) -> String {
-    format!("This web server is out of date: {message}. Restart it: run lani stop, then lani open.")
+pub fn outdated_server_message(message: &str, restart: &str) -> String {
+    format!("This web server is out of date: {message}. Restart it: {restart}.")
 }
 
 impl From<askama::Error> for PageError {

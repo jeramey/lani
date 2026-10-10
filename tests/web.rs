@@ -47,15 +47,21 @@ fn fixture_with(executable: Option<Executable>) -> Fixture {
 /// Like [`fixture`], for a server in socket mode on the machine "devbox", whose socket is
 /// forwarded to `PORT` (§13.2).
 fn socket_fixture() -> Fixture {
-    fixture_reached_at(
-        None,
-        Endpoint::Socket {
-            socket: "/home/you/.local/share/lani/run/web.sock".into(),
-            browser_port: PORT,
-            ssh_host: Some("devbox".to_string()),
-        },
-    )
+    fixture_reached_at(None, devbox())
 }
+
+/// A server in socket mode on the machine "devbox", whose socket is forwarded to `PORT` (§13.2).
+fn devbox() -> Endpoint {
+    Endpoint::Socket {
+        socket: "/home/you/.local/share/lani/run/web.sock".into(),
+        browser_port: PORT,
+        ssh_host: Some("devbox".to_string()),
+    }
+}
+
+/// How to open LANI in socket mode on "devbox", as every page and notice says it.
+const DEVBOX_OPEN_HINT: &str =
+    "Run lani socket on devbox, which starts LANI if needed, and open the sign-in link it prints.";
 
 /// Like [`fixture`], for a server started from `executable` that browsers reach at `endpoint`.
 fn fixture_reached_at(executable: Option<Executable>, endpoint: Endpoint) -> Fixture {
@@ -243,8 +249,7 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
         .unwrap();
     let (status, _, body) = send(&f.app, anonymous).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let hint = "Run `lani socket` on devbox and open the sign-in link it prints.";
-    assert!(body.contains(hint), "{body}");
+    assert!(body.contains(DEVBOX_OPEN_HINT), "{body}");
 
     let expired = Request::builder()
         .uri("/login?token=stale&next=/")
@@ -254,13 +259,14 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
     let (status, _, body) = send(&f.app, expired).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(
-        body.contains("(it may have restarted). Run `lani socket` on devbox"),
+        body.contains(&format!("(it may have restarted). {DEVBOX_OPEN_HINT}")),
         "{body}"
     );
 
     let (_, _, settings) = send(&f.app, get("/settings")).await;
     assert!(
-        settings.contains("pid 1 · socket /home/you/.local/share/lani/run/web.sock"),
+        settings.contains("pid 1 · socket /home/you/.local/share/lani/run/web.sock")
+            && settings.contains(&format!("without activity. {DEVBOX_OPEN_HINT}")),
         "{settings}"
     );
     let (_, _, health) = send(&f.app, get("/api/health")).await;
@@ -271,10 +277,9 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
 
     // Getting back in after a stop takes a new sign-in link, which `lani socket` gives.
     let review = format!("/reviews/{}", f.review_id);
-    let reopen = "Run lani socket on devbox to start it again and get a new sign-in link.";
     let (_, _, page) = send(&f.app, get(&review)).await;
     assert!(
-        page.contains(&format!("data-reopen=\"{reopen}\"")),
+        page.contains(&format!("data-reopen=\"{DEVBOX_OPEN_HINT}\"")),
         "{page}"
     );
     let after = events_after(&page);
@@ -284,7 +289,7 @@ async fn socket_mode_pages_say_where_to_get_a_sign_in_link() {
     let event = stream.next().await.unwrap();
     assert!(
         event.starts_with("event: stopping\n")
-            && event.contains(&format!("data: LANI was stopped. {reopen}")),
+            && event.contains(&format!("data: LANI was stopped. {DEVBOX_OPEN_HINT}")),
         "{event}"
     );
 }
@@ -1449,6 +1454,35 @@ async fn an_outdated_server_asks_to_be_restarted() {
 }
 
 #[tokio::test]
+async fn socket_mode_restart_hints_say_to_run_lani_socket() {
+    let bin = tempfile::tempdir().unwrap();
+    let installed = bin.path().join("lani");
+    std::fs::write(&installed, "old").unwrap();
+    let f = fixture_reached_at(Some(Executable::at(&installed).unwrap()), devbox());
+    // Replaced the way `cargo install` replaces the installed binary.
+    std::fs::write(bin.path().join("lani.new"), "new").unwrap();
+    std::fs::rename(bin.path().join("lani.new"), &installed).unwrap();
+    let restart = "run lani stop, then lani socket on devbox, and open the sign-in link it prints";
+    let review = format!("/reviews/{}", f.review_id);
+    for path in ["/", "/settings", &review, &format!("{review}/files/")] {
+        let (_, _, page) = send(&f.app, get(path)).await;
+        assert!(
+            page.contains(&format!("To use the new one, {restart}.")),
+            "{path}: {page}"
+        );
+    }
+
+    let conn = rusqlite::Connection::open(f.home.db_path()).unwrap();
+    conn.pragma_update(None, "user_version", 99).unwrap();
+    let (status, _, page) = send(&f.app, get(&review)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert!(
+        page.contains("schema version 99") && page.contains(&format!("Restart it: {restart}.")),
+        "{page}"
+    );
+}
+
+#[tokio::test]
 async fn a_whole_tree_review_has_no_changes_view() {
     let f = fixture();
     let review_id = f.review_id;
@@ -2323,7 +2357,7 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
         assert_eq!(status, StatusCode::OK, "{path}: {page}");
         assert!(
             page.contains(&format!("data-events=\"{review}/events\""))
-                && page.contains("data-reopen=\"Run lani open, or ask Claude to open it again.\"")
+                && page.contains("data-reopen=\"Run lani open, or ask Claude to open LANI.\"")
                 && page.contains("<script src=\"/static/lani.js\" defer></script>")
                 && page.contains("id=\"review-head\" data-live"),
             "{path}: {page}"
@@ -2376,9 +2410,8 @@ async fn review_pages_follow_the_live_update_stream_until_the_server_stops() {
         let event = stream.next().await.unwrap();
         assert!(
             event.starts_with("event: stopping\n")
-                && event.contains(
-                    "data: LANI was stopped. Run lani open, or ask Claude to open it again."
-                ),
+                && event
+                    .contains("data: LANI was stopped. Run lani open, or ask Claude to open LANI."),
             "{event}"
         );
         assert_eq!(stream.next().await, None, "the stream ends");
@@ -2420,7 +2453,8 @@ async fn a_server_older_than_the_installed_lani_says_so() {
     ] {
         let (_, _, page) = send(&f.app, get(&path)).await;
         assert!(
-            page.contains(banner) && page.contains("run <code>lani stop</code>"),
+            page.contains(banner)
+                && page.contains("To use the new one, run lani stop, then lani open."),
             "{path}: {page}"
         );
     }

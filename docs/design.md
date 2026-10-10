@@ -1141,7 +1141,8 @@ lock held and exits at once. `lani open` then keeps waiting, and if the lock com
 server running, it starts the server again.
 
 **Version mismatch.** If the running server's version differs from the caller's, `open` prints a
-warning suggesting `lani stop && lani open`. The MCP tool includes the same warning in its result.
+warning saying to restart it: run `lani stop`, then `lani open`, or `lani socket` in socket mode
+(§13.2). The MCP tool includes the same warning in its result.
 
 **Idle shutdown.**
 
@@ -1157,12 +1158,20 @@ warning suggesting `lani stop && lani open`. The MCP tool includes the same warn
     value and where it came from (saved setting or command-line flag).
 - **Before stopping.** Whatever stops it, the server sends a final `stopping` message on open
   live-update streams (§13.5). Pages then show *"LANI stopped after 3h idle. Run lani open, or
-  ask Claude to open it again."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
+  ask Claude to open LANI."*, or *"LANI was stopped. …"* when `lani stop` or a signal stopped
   it. A page that had no stream open, because it was hidden (§13.5), or whose server died without
   a word, shows *"LANI cannot be reached; it may have stopped. …"* once it finds the server gone.
-  In socket mode, these notices end *"Run lani socket on devbox to start it again and get a new
-  sign-in link."* instead (§13.2). The server gives lani.js that ending in the page, as
-  `data-reopen`.
+  In socket mode, these notices end *"Run lani socket on devbox, which starts LANI if needed, and
+  open the sign-in link it prints."* instead (§13.2). The server gives lani.js that ending in the
+  page, as `data-reopen`.
+- **One wording for each mode.** Every page, notice and message that says how to get LANI back
+  takes its wording from the server's endpoint, so the two modes can't drift apart.
+  - `Endpoint::open_hint` says how to open LANI signed in. It is used by the *Not signed in* and
+    *Link expired* pages, the notices above, the Settings page's note, and the socket-mode
+    directions of `lani open` and `open_web_ui`.
+  - `Endpoint::restart_hint` says how to restart the server. It is used by the version warning,
+    the update banner (§13.5), and the page for a database a newer lani has upgraded (§7.4).
+  - The hints are plain text, because the pages and notices show backticks as they are.
 - **Status.** `lani status` shows the effective timeout and the time remaining.
 
 ### 13.2 Authentication and browser security (R10)
@@ -1316,8 +1325,8 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
   - `lani serve` prints the forward command and the sign-in link. `lani status` prints the
     forward command, and `lani status --print-url` the link.
 - **Pages.** The *Not signed in* and *Link expired* pages say to run `lani socket` on the remote
-  machine, by name. So do the notices a page shows once its server has stopped or can't be reached
-  (§13.1).
+  machine, by name. So do the notices a page shows once its server has stopped or can't be reached,
+  the Settings page's note, the update banner, and the version warning (§13.1).
 - **Restarts.** The forward keeps working across server restarts, since the path stays the same.
   Only signing in again is needed, because each start has a new token.
 - **What ssh needs.** OpenSSH 6.7 or later at both ends, and sshd allowing Unix-socket forwarding.
@@ -1496,13 +1505,15 @@ work on the review.
 - **Losing the server.** A hidden page never hears `stopping`. When it is shown again, or when a
   stream drops without a final message, the browser keeps trying to reconnect. After two failed
   attempts in a row the page shows *"LANI cannot be reached; it may have stopped. Run lani open,
-  or ask Claude to open it again."*, and a successful reconnect removes it. If the server answers
+  or ask Claude to open LANI."* (in socket mode, §13.1's ending), and a successful reconnect
+  removes it. If the server answers
   the stream request with an error page instead (it cannot watch the review), the browser gives
   up and the page says live updates could not start.
 - **Idle timer.** Streams do not count as activity (§13.1). The page fetches that follow a change
   do, since something did change.
 - **Update banner.** The server records the executable it started from (§12.5). Once a newer lani
-  replaces it, every page shows a banner asking you to run `lani stop`, then `lani open`. Open
+  replaces it, every page shows a banner asking you to run `lani stop`, then `lani open`, or
+  `lani socket` in socket mode (§13.1). Open
   review pages get the banner through `changed`; the review list and the settings page show it
   when loaded.
 

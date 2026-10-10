@@ -295,8 +295,8 @@ fn open_web_ui_in_socket_mode_gives_directions_to_pass_on_instead_of_a_browser()
     assert!(
         opened.contains(&format!(
             "\nssh -L {port}:{}/run/web.sock {host}\nThen open http://127.0.0.1:{port}/reviews/1\n\
-             If your browser isn't signed in to this server yet, first run `lani socket` on \
-             {host} and open the sign-in link it prints.",
+             If your browser isn't signed in to this server yet, sign in first. Run lani socket on \
+             {host}, which starts LANI if needed, and open the sign-in link it prints.",
             home.path.display()
         )),
         "{opened}"

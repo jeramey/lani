@@ -131,8 +131,8 @@ fn socket_directions(url: &str, endpoint: &Endpoint) -> Option<String> {
     Some(format!(
         "No browser was opened, because LANI listens on a Unix socket for use over SSH. Pass this \
          on to the human:\n{directions}Then open {url}\nIf your browser isn't signed in to this \
-         server yet, first run `lani socket` on {} and open the sign-in link it prints.",
-        endpoint.machine()
+         server yet, sign in first. {}",
+        endpoint.open_hint()
     ))
 }
 

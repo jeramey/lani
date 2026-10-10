@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Files · {{ review.title }} · LANI{% endblock %}
 {% block head %}<script src="/static/lani.js" defer></script>{% endblock %}
-{% block banner %}{% if review.outdated %}{% include "update_banner.html" %}{% endif %}{% endblock %}
+{% block banner %}{% if review.outdated %}{% let restart = review.restart.as_str() %}{% include "update_banner.html" %}{% endif %}{% endblock %}
 {% block content %}
 {% include "review_header.html" %}
 

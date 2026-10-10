@@ -69,6 +69,8 @@ struct RepoGroup {
 struct IndexPage {
     /// Whether to show the update banner (§13.5).
     outdated: bool,
+    /// How to restart the server, for the update banner.
+    restart: String,
     filters: Vec<FilterLink>,
     groups: Vec<RepoGroup>,
     empty_message: &'static str,
@@ -139,6 +141,7 @@ pub async fn index(
     Ok(Html(
         IndexPage {
             outdated: state.outdated(),
+            restart: state.instance().endpoint.restart_hint(),
             filters,
             groups,
             empty_message,
@@ -403,6 +406,10 @@ struct SettingsPage {
     pid: u32,
     /// `port 5264`, or `socket /…/run/web.sock` in socket mode.
     endpoint: String,
+    /// How to get LANI back once it has stopped itself.
+    reopen: String,
+    /// How to restart the server, for the update banner.
+    restart: String,
     started: String,
     round_limit: u32,
 }
@@ -423,6 +430,8 @@ pub async fn settings(State(state): State<AppState>) -> Result<Html<String>, Pag
         version: daemon::VERSION,
         pid: instance.pid,
         endpoint: instance.endpoint.describe(),
+        reopen: instance.endpoint.open_hint(),
+        restart: instance.endpoint.restart_hint(),
         started: time::to_local(&instance.started_at),
         round_limit,
     };

@@ -11,7 +11,6 @@ use subtle::ConstantTimeEq;
 
 use super::AppState;
 use super::views::PageError;
-use crate::daemon::Endpoint;
 
 const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
      img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -59,14 +58,12 @@ async fn check(state: &AppState, mut request: Request, next: Next) -> Response {
         return next.run(request).await;
     }
     let Some(credential) = credential(request.headers(), &instance.token, port) else {
-        let message = match &instance.endpoint {
-            Endpoint::Tcp { .. } => {
-                "Open LANI with `lani open`, or ask Claude to open it, to get a fresh link."
-                    .to_string()
-            }
-            socket @ Endpoint::Socket { .. } => sign_in_on(socket),
-        };
-        return PageError::new(StatusCode::UNAUTHORIZED, "Not signed in", &message).into_response();
+        return PageError::new(
+            StatusCode::UNAUTHORIZED,
+            "Not signed in",
+            &instance.endpoint.open_hint(),
+        )
+        .into_response();
     };
     let changes_state = !matches!(*request.method(), Method::GET | Method::HEAD);
     if credential == Credential::Cookie && changes_state && !same_origin(request.headers(), host) {
@@ -211,18 +208,13 @@ pub async fn login(
 ) -> Response {
     let instance = state.instance();
     if !token_matches(&query.token, &instance.token) {
-        let fresh_link = match &instance.endpoint {
-            Endpoint::Tcp { .. } => {
-                "Run `lani open`, or ask Claude to open LANI, to get a fresh link.".to_string()
-            }
-            socket @ Endpoint::Socket { .. } => sign_in_on(socket),
-        };
         return PageError::new(
             StatusCode::UNAUTHORIZED,
             "Link expired",
             &format!(
                 "This sign-in link is not valid for the running LANI server (it may have \
-                 restarted). {fresh_link}"
+                 restarted). {}",
+                instance.endpoint.open_hint()
             ),
         )
         .into_response();
@@ -262,15 +254,6 @@ pub async fn login(
         .into_response(),
         (_, Err(error)) => PageError::from(error).into_response(),
     }
-}
-
-/// How to get a sign-in link for a socket-mode server: `lani socket`, run on its own machine.
-/// Nothing opens a browser for such a server, and Claude never passes the token on (§13.2).
-fn sign_in_on(endpoint: &Endpoint) -> String {
-    format!(
-        "Run `lani socket` on {} and open the sign-in link it prints.",
-        endpoint.machine()
-    )
 }
 
 /// Sent by `/login` with the session cookie; continues to `next` with a same-site navigation.

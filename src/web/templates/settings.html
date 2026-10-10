@@ -6,7 +6,7 @@
 
 <section class="panel">
   <h2>Idle shutdown</h2>
-  <p>The LANI server stops itself after this long without activity. Open it again with <code>lani open</code>, or by asking Claude.</p>
+  <p>The LANI server stops itself after this long without activity. {{ reopen }}</p>
   <form method="post" action="/settings" class="settings">
     <label for="idle-timeout">Stop after</label>
     <input id="idle-timeout" type="text" name="idle_timeout" value="{{ saved }}" required>
