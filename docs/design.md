@@ -1715,8 +1715,13 @@ Accepted residual risks:
     local processes.
   - **Who cannot gain from it:** on a single-user machine without such sandboxes, anything that
     can listen on loopback can already read `server.json`, so this adds no exposure there.
-  - **Limits:** the cookie stops working when the server stops. Jupyter has the same exposure.
-    Hardening is deferred (§21).
+  - **Limits:** the cookie stops working when the server stops. Jupyter has the same exposure,
+    and more of it: its cookie has no `SameSite`, so one cross-site navigation carries it, and it
+    lasts 30 days across restarts. Hardening was declined (§22, D12).
+- **The token lets someone steer your Claude sessions.** Whoever holds it acts as you: they can
+  comment, edit text and hand the review on as the human. Claude sessions working on the review
+  act on what the human writes there, so a stolen token can get them to edit and run code. What
+  stands in the way is Claude's judgement and your Claude Code permission rules.
 - **Token in browser history.** The `/login?token=…` URL may be recorded in your browser history,
   which is private to your OS user.
 
@@ -2000,10 +2005,12 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 4. **M4 — Live updates and polish.**
    - Scope: SSE, editor protection, the web server's update banner, benchmarks against §16,
      README.
-5. **M5 — Claude Code sessions from the web UI (proposed).**
+5. **M5 — Claude Code sessions from the web UI (on hold since 2026-10-10).**
    - Starting a reviewer or implementer session from a review page, and working with it in a
      browser tab. The proposal and its open questions are in
      [`claude-sessions.md`](claude-sessions.md); nothing is built yet.
+   - For now, the review page copies a reviewer prompt to the clipboard instead, for you to paste
+     into a session you start yourself.
 
 ---
 
@@ -2034,14 +2041,23 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   multi-span ones.
 - A rich pop-over with the issue's text for span markers; they show the number and title as a
   tooltip for now.
-- Keeping the session cookie away from other loopback ports, for shared machines (§15). Two
-  candidates; neither is tested:
-  - A per-server secret hostname (`http://lani-<random>.localhost:<port>/`) with a host-only
-    cookie. This depends on the browser resolving `*.localhost` to loopback, which is unconfirmed
-    for Safari.
-  - A per-server secret path prefix (`/s/<random>/…`) with the cookie's `Path` set to it. This
-    should work in every browser, because a hostile page cannot request a path it does not know.
-    The cost is a secret segment in every LANI URL.
+- A desktop app in place of the browser, considered for M5 on 2026-10-10.
+  - **The design.** Tauri would suit LANI better than Electron. Tauri is Rust and uses the
+    system's WebKit, the same engine as Safari. Electron needs a Node toolchain and ships its own
+    Chromium.
+  - **The transport.** The app would reach the server over socket mode's Unix socket (§13.2). A
+    remote server would be reached through ssh's Unix-socket forwarding
+    (`ssh -L <local.sock>:<remote.sock>`), or through a stdio bridge such as
+    `ssh host lani bridge`. One pipe carries only one HTTP/1.1 connection at a time, so the
+    bridge needs HTTP/2.
+  - **What it gains.** Without a browser there is no token, cookie or loopback port, so the
+    cookie risks in §15 go away. That holds only if the browser UI is retired; while both exist,
+    the server keeps all of its browser security.
+  - **What it costs.** It is larger than M5 itself. You lose the browser's tabs, bookmarks and
+    find, and need the app on whatever machine you use. `open_web_ui` would need a registered
+    URL scheme.
+  - **Unchecked.** Whether EventSource works over a custom URL scheme in WebKit (WebSockets need
+    `ws:` or `wss:`). Whether Tauri's WebDriver testing supports macOS.
 - Relocating a repo (re-pointing `git_dir` after the repo moves on disk).
 - Live updates for repository changes (§13.5): the stream could also compare the head and base
   SHAs every few seconds. The M4 benchmarks put one `git rev-parse` at about 3 ms, so checking
@@ -2070,6 +2086,7 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
 | D9  | Anchor commit                  | Claude passes the commit it read plus its worktree path, and LANI verifies the file on disk matches (§10.1). |
 | D10 | Branch with a closed review    | `start_review` creates a new review; closed reviews remain as history (§4). |
 | D11 | Role enforcement               | The per-session role lock is enough. Separate per-role MCP configurations were considered and rejected because they make setup harder (§11.3). |
+| D12 | Cookie reaching other loopback ports | Accepted as a residual risk (§15), decided 2026-10-10. Two hardenings were considered: a per-server secret path prefix (`/s/<random>/…`) with the cookie's `Path` set to it, and a per-server secret hostname (`lani-<random>.localhost`). Both were declined, because random URL segments would complicate the UX in the future. |
 
 ### Open questions
 

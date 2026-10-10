@@ -1,7 +1,8 @@
 # Claude Code sessions from the web UI (M5 proposal)
 
-**Status: a proposal for review. Nothing here is built.** Once the open questions are settled, the
-decided design moves into `docs/design.md`, and this file is removed.
+**Status: on hold since 2026-10-10. Nothing here is built.** For now, the review page copies a
+reviewer prompt to the clipboard instead. If this work resumes, then once the open questions are
+settled, the decided design moves into `docs/design.md`, and this file is removed.
 
 ## Goal
 
@@ -128,9 +129,21 @@ Where that adds exposure depends on where LANI and your browser run:
 
 Before shipping, then:
 
-1. **Harden the cookie.** Build the hardening deferred in design §21, the per-server secret path
-   prefix with the cookie's `Path` set to it. It should work in every browser. A remote LANI needs
-   it too, even reached from a single-user machine.
+1. **A second token for the session endpoints.** Hardening the cookie was declined (design §22,
+   D12). Instead, the endpoints that start, stop or attach to sessions take only a second token,
+   never the cookie's.
+   - **Delivery.** The sign-in link carries the token in its fragment:
+     `/login?token=A#session=B`. A server never receives a fragment.
+   - **Storage.** A small script on the sign-in page saves B in `localStorage`. Unlike cookies,
+     `localStorage` is scoped to the origin, port included.
+   - **Use.** lani.js sends B as `Authorization: Bearer`, and as the first WebSocket message,
+     since a browser can't add headers to the handshake.
+   - **What it closes.** A stolen cookie can't start or drive a session. It can still write as
+     you, which steers sessions already running (design §15).
+   - **What remains.** In socket mode, the laptop's forwarded port goes free when ssh drops, while
+     the remote LANI keeps running. A process that grabs that port before a tab reloads could
+     read B.
+   - **A larger alternative.** A desktop app instead of the browser is deferred (design §21).
 2. **Check `Origin` on the WebSocket upgrade.** The upgrade is a GET, which the current guard
    doesn't check for origin, and WebSockets aren't covered by CORS. A page served from another
    loopback port counts as same-site, so the browser sends the `SameSite=Strict` cookie with that
