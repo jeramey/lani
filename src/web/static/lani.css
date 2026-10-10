@@ -306,7 +306,8 @@ details.toggle > :not(summary) {
 .prompt-head { display: flex; gap: 8px; align-items: baseline; }
 .badge.prompt-edited { background: var(--outdated); }
 .badge[hidden] { display: none; }
-.prompt-status { color: var(--muted); font-size: 13px; }
+.prompt-status, .prompt-copied { color: var(--muted); font-size: 13px; }
+.prompt-copied { align-self: center; }
 html:not([data-script]) .needs-script { display: none; }
 button:disabled { opacity: 0.5; cursor: default; }
 .title-row > details.toggle > :not(summary) {

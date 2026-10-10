@@ -243,9 +243,13 @@
   });
 
   // Safari lets a page write to the clipboard only while it handles the click, so the copy comes
-  // first and the save after it.
+  // first and the save after it. A copied prompt is done with, so its panel closes and the
+  // toolbar says so beside the panel's button, which gets the focus back. If the copy fails, the
+  // panel stays open with the text selected, to copy by hand.
   async function copyPrompt(prompt, textarea) {
     const status = prompt.querySelector(".prompt-status");
+    const details = prompt.closest("details");
+    const copiedStatus = details.parentElement.querySelector(".prompt-copied");
     const text = textarea.value;
     let copied = true;
     try {
@@ -254,7 +258,18 @@
       textarea.select();
       copied = document.execCommand("copy");
     }
-    status.textContent = copied ? "Copied." : "Select the text and copy it yourself.";
+    if (copied) {
+      details.open = false;
+      details.querySelector("summary").focus();
+      copiedStatus.textContent = "Prompt copied.";
+      setTimeout(() => {
+        if (copiedStatus.textContent === "Prompt copied.") {
+          copiedStatus.textContent = "";
+        }
+      }, 4000);
+    } else {
+      status.textContent = "Select the text and copy it yourself.";
+    }
     try {
       const response = await fetch(prompt.closest(".prompt-panel").dataset.save, {
         method: "POST",
@@ -271,7 +286,11 @@
       // The page now shows this text, so the panel no longer counts as being edited.
       textarea.defaultValue = text;
     } catch (error) {
-      status.textContent = (copied ? "Copied, but not saved: " : "Not saved: ") + error.message;
+      if (copied) {
+        copiedStatus.textContent = "Prompt copied, but not saved: " + error.message;
+      } else {
+        status.textContent = "Not saved: " + error.message;
+      }
     }
   }
 

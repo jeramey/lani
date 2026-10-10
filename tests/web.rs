@@ -2308,6 +2308,15 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
         page.contains("<input type=\"radio\" name=\"prompt-kind\" value=\"claude_code\" checked>"),
         "Claude Code is chosen first: {page}"
     );
+    let toolbar = &page[page
+        .find("<div class=\"toolbar\" id=\"toolbar\" data-live>")
+        .unwrap()..];
+    let panel_end =
+        toolbar.find("</details>\n  <span class=\"prompt-copied\" role=\"status\"></span>");
+    assert!(
+        panel_end.is_some_and(|end| toolbar[..end].contains("data-prompt-copy")),
+        "after copying, the toolbar says so beside the panel's button: {toolbar}"
+    );
 
     // lani.js saves the text it copied, with the line endings a browser submits.
     let (_, default, _) = prompt_panel(&page, "generic");

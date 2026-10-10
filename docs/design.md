@@ -1695,6 +1695,10 @@ shows while the review is open.
     default, and *Reset to default* puts the default back.
   - *Copy to clipboard* copies first, because Safari lets a page write to the clipboard only
     while it handles the click. Then it posts the text to `POST /reviews/{id}/prompts`.
+  - **After copying.** A copied prompt is done with, so its panel closes. "Prompt copied." shows
+    beside the *Reviewer prompt* button in a status region, which screen readers announce, and
+    the button gets the focus back. A failed save is reported in the same place. If the copy
+    itself fails, the panel stays open with the text selected, to copy by hand.
   - **The clipboard.** Loopback pages are a secure context, so the clipboard API is available.
     If writing fails, the panel selects the text and falls back to `document.execCommand("copy")`.
   - **Without JavaScript,** the buttons are hidden and you copy the text yourself.
@@ -2009,8 +2013,8 @@ Dependency versions are pinned in `Cargo.lock` when implementation starts.
   - A socket-mode server works through a forwarded port: creating an issue, replying and
     resolving, and live updates.
   - **The Reviewer prompt panel.** Choosing a prompt, the *Edited* badge, *Reset to default*, and
-    *Copy to clipboard*: the test reads the clipboard back with `pbpaste` and checks the saved
-    revision. Copying replaces the system clipboard's text, so the test puts the earlier text
+    *Copy to clipboard*: the test reads the clipboard back with `pbpaste`, checks that the panel
+    closed and the saved revision. Copying replaces the system clipboard's text, so the test puts the earlier text
     back afterwards.
   - The WebDriver client is plain HTTP and JSON over `std`, so it adds no dependency and no Node
     toolchain. It was checked by breaking `lani.js` on purpose (shift-click ignored, an inline

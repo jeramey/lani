@@ -756,8 +756,20 @@ fn the_reviewer_prompt_is_copied_and_its_edit_kept() {
     browser.type_text("#prompt-generic", "Also check the README. ");
     assert_eq!(browser.run(marked), json!([true, true]));
 
-    // Copy to clipboard copies the text, then saves it.
+    // Copy to clipboard copies the text, closes the panel and says so beside its button, which
+    // gets the focus back; then it saves the text.
     browser.click(".prompt[data-kind=generic] [data-prompt-copy]");
+    browser.wait_for(
+        "return !document.querySelector('details:has(.prompt-panel)').open \
+           && document.querySelector('.prompt-copied').textContent === 'Prompt copied.';",
+        "the panel to close after copying",
+    );
+    assert_eq!(
+        browser.run(
+            "return document.activeElement === document.querySelector('details:has(.prompt-panel) > summary');"
+        ),
+        json!(true)
+    );
     let edited = browser.text("return document.getElementById('prompt-generic').value;");
     assert!(edited.contains("Also check the README. "), "{edited}");
     let service = fixture.service();
@@ -774,13 +786,10 @@ fn the_reviewer_prompt_is_copied_and_its_edit_kept() {
         "const t = document.getElementById('prompt-generic'); return t.defaultValue === t.value;",
         "the saved text to count as unedited",
     );
-    assert_eq!(
-        browser.text("return document.querySelector('.prompt[data-kind=generic] .prompt-status').textContent;"),
-        "Copied."
-    );
     assert_eq!(Clipboard::text(), edited);
 
     // Reset to default puts the default back.
+    browser.click("details:has(.prompt-panel) > summary");
     browser.click(".prompt[data-kind=generic] [data-prompt-reset]");
     assert_eq!(
         browser.run(
