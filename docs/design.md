@@ -1690,9 +1690,15 @@ shows while the review is open.
   linter and tests, the Safari suite, and the design matching the code.
   - **How the prompts use it.** They tell the reviewer to read it. Claude Code's prompt also says
     to apply it itself, because the `code-review` skill doesn't read it.
-  - **It comes from the base** (`git show main:REVIEW.md`), so the branch under review cannot
-    change its own review instructions; a change to the file is reviewed with the rest of the
-    diff. A whole-tree review reads it from the head.
+  - **It comes from the base** (`git show refs/heads/main:REVIEW.md`), so the branch under review
+    cannot change REVIEW.md for its own review; a change to the file is reviewed with the rest of
+    the diff. A whole-tree review reads it from the head.
+  - **What that doesn't cover.** Instructions the harness loads by itself, such as `CLAUDE.md`,
+    `AGENTS.md` or `.claude/` settings and hooks, come from the checkout the session runs in.
+    A reviewer run in the branch's own checkout gets the branch's versions, which the
+    implementer may have changed. A reviewer run in another checkout, such as one of the base,
+    avoids that. It then reads the branch's files from git, and passes `worktree_path: null` to
+    `create_issue` (§10.1).
 - **Compiled in.** The texts are templates in the binary, in `src/web/templates/prompts/`.
   Overrides are deferred (§21) until the saved edits show what they should be.
 - **Editing and copying.**

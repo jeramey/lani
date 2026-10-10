@@ -80,8 +80,9 @@ button and paste it into the session.
 - **Your edits.** You can edit a prompt before copying it. The page keeps the edit you copied
   last for the next time.
 - **Project instructions.** Put review instructions for your project, such as which checks to
-  run, in `REVIEW.md` at the top of the repository. The prompts tell the reviewer to read it,
-  from the base branch.
+  run, in `REVIEW.md` at the top of the repository. The prompts tell the reviewer to read it
+  from the base branch, so the branch under review can't change it. Instructions your harness
+  loads itself, such as `CLAUDE.md`, come from the checkout the reviewer runs in.
 
 ### The web UI
 

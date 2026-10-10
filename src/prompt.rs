@@ -31,7 +31,9 @@ struct Fields<'a> {
     head: &'a str,
     base: Option<&'a str>,
     /// The `git show` argument for REVIEW.md. It comes from the base, so that the branch under
-    /// review cannot change its own review instructions; a whole-tree review has only the head.
+    /// review cannot change REVIEW.md for its own review; a whole-tree review has only the head.
+    /// Instructions the harness loads itself, such as CLAUDE.md, still come from the checkout the
+    /// session runs in (design §13.9).
     instructions: String,
     /// The `git diff` argument for the change; `None` in a whole-tree review.
     range: Option<String>,
