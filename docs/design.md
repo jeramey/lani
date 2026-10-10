@@ -1681,7 +1681,8 @@ shows while the review is open.
 - **`REVIEW.md`.** Project-specific review instructions go in `REVIEW.md` at the top of the
   repository. It is the file Anthropic's GitHub Code Review reads; no cross-tool convention
   exists for review-only instructions. `AGENTS.md`, or `CLAUDE.md`, holds general instructions,
-  which harnesses load themselves.
+  which harnesses load themselves. LANI's own `REVIEW.md` lists its checks: cargo's formatter,
+  linter and tests, the Safari suite, and the design matching the code.
   - **How the prompts use it.** They tell the reviewer to read it. Claude Code's prompt also says
     to apply it itself, because the `code-review` skill doesn't read it.
   - **It comes from the base** (`git show main:REVIEW.md`), so the branch under review cannot
