@@ -1284,6 +1284,15 @@ ssh -L 5264:/home/you/.local/share/lani/run/web.sock devbox
     would take for an option.
   - **Why `uname -n`.** POSIX requires it, and calling `gethostname` would need unsafe code, which
     the crate forbids.
+- **The local port taken.** If `port` is in use on your own machine, for example by a local LANI,
+  ssh warns that it can't listen there but opens the session anyway (`ExitOnForwardFailure`
+  defaults to `no`).
+  - The printed link then reaches whatever does listen on that port. A local LANI shows *Link
+    expired*, and any other program gets the token.
+  - The fix is on the remote machine: set `port` in its configuration file, or pass
+    `lani socket --port N`, and the printed command and link follow it.
+  - Adding `-o ExitOnForwardFailure=yes` makes ssh stop instead of carrying on without the
+    forward.
 - **No browser on the remote machine.** A browser there could not reach a Unix socket, so
   `lani open` and `open_web_ui` never open one in socket mode.
   - They give directions instead: the forward command, the page's address without the token, and
