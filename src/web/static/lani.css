@@ -236,7 +236,8 @@ input[type="text"], select, textarea {
 }
 textarea { resize: vertical; line-height: 1.45; }
 textarea.submitted { margin: 8px 0; }
-input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
+input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible,
+summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -267,7 +268,6 @@ button.secondary, .button.secondary {
 summary.button, summary.icon-button { list-style: none; user-select: none; }
 summary.button::-webkit-details-marker,
 summary.icon-button::-webkit-details-marker { display: none; }
-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The caret has empty alternative text, so it stays out of the toggle's accessible name: the
    open state is announced from the details already. A browser without the syntax shows none. */
 summary.button::after { content: "\25BE" / ""; margin-left: 6px; font-size: 0.85em; }
