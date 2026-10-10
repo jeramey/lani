@@ -1051,7 +1051,8 @@ routine:
 
 1. Read `run/server.json`. If it exists, call `GET http://127.0.0.1:<port>/api/health`, or the
    same through the socket in socket mode (§13.2), with `Authorization: Bearer <token>` and a
-   500 ms timeout. The response must carry the same
+   500 ms timeout. The socket is connected without blocking, so a server whose listen queue is
+   full fails the check at once; a blocking connect would wait for room, on Linux without limit. The response must carry the same
    `instance_id`, which guards against another process reusing the port. On success, go to step 4.
 2. Otherwise, start the server: re-exec `current_exe()` as `lani serve --detach` in a new process
    group, with stdin from `/dev/null` and stdout and stderr going to `logs/server.log`. The server
@@ -1750,7 +1751,7 @@ clippy.toml          words doc comments may use without backticks, such as WebDr
 | MCP                | `rmcp` (official SDK; stdio transport, tool macros) + `schemars` |
 | Async runtime      | `tokio`: current-thread runtime for `mcp`, multi-thread for `serve` |
 | HTTP server        | `axum`, with LANI's own middleware for auth and security headers |
-| HTTP client        | A small blocking HTTP/1.1 client over `std::net::TcpStream` or, in socket mode, `UnixStream` (`daemon.rs`), used only for LANI's own fixed-length health and shutdown responses |
+| HTTP client        | A small blocking HTTP/1.1 client over `std::net::TcpStream` or, in socket mode, `UnixStream` connected without blocking through `socket2` (already a dependency of `tokio`) (`daemon.rs`), used only for LANI's own fixed-length health and shutdown responses |
 | Templates          | `askama` |
 | Highlighting       | `syntect` + `two-face` |
 | Markdown           | `comrak` |

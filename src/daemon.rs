@@ -655,15 +655,25 @@ fn http_call(
             exchange(stream, &request)?
         }
         Endpoint::Socket { socket, .. } => {
-            // std has no connect timeout for Unix sockets. The kernel completes the connection
-            // without the server's help, so this waits only while the listen queue is full.
-            let stream = UnixStream::connect(socket)?;
+            let stream = connect_without_waiting(socket)?;
             stream.set_read_timeout(Some(HTTP_TIMEOUT * 4))?;
             stream.set_write_timeout(Some(HTTP_TIMEOUT))?;
             exchange(stream, &request)?
         }
     };
     parse_http_response(&response)
+}
+
+/// Connect to the Unix socket at `path`, failing at once rather than waiting. A Unix-socket
+/// connection completes without the server's help, or not at all; but std's blocking connect
+/// waits, on Linux, for as long as the listen queue is full, which a wedged server can make
+/// forever. Without blocking, a full queue fails with `EAGAIN` instead (§13.1).
+fn connect_without_waiting(path: &Path) -> std::io::Result<UnixStream> {
+    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    socket.set_nonblocking(true)?;
+    socket.connect(&socket2::SockAddr::unix(path)?)?;
+    socket.set_nonblocking(false)?;
+    Ok(UnixStream::from(socket))
 }
 
 /// Send `request` and read the response until the server closes the connection.
@@ -897,6 +907,38 @@ mod tests {
         for unusable in ["", "-devbox", "a b", "a;b", "a$b", "naïve"] {
             assert_eq!(plain_host(unusable), None, "{unusable:?}");
         }
+    }
+
+    #[test]
+    fn a_full_listen_queue_fails_a_connection_at_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("web.sock");
+        // A server that never accepts, so connections queue up until the queue is full.
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (outcome, outcome_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut queued = Vec::new();
+            let refused = loop {
+                match connect_without_waiting(&path) {
+                    Ok(stream) => queued.push(stream),
+                    Err(error) => break error,
+                }
+                assert!(queued.len() < 100_000, "the queue never filled");
+            };
+            let _ = outcome.send(refused.kind());
+        });
+        // On Linux a blocking connect would wait here for room in the queue, for good. macOS
+        // refuses a connection to a full queue either way.
+        let kind = outcome_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a connection waited for room in the full queue");
+        assert!(
+            matches!(
+                kind,
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ConnectionRefused
+            ),
+            "{kind:?}"
+        );
     }
 
     #[test]
