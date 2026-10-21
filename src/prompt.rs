@@ -299,6 +299,7 @@ mod tests {
             "Exit 4: run the command again. Exit 3: stop; the review is closed. Exit 0: continue",
             "Use step 6's wait procedure instead of any advice to run a background wait.",
             "If the sandbox denies access to LANI's data directory, retry through the harness's approval mechanism",
+            "as an absolute path to `sandbox_workspace_write.writable_roots` in `~/.codex/config.toml`",
             "On each subsequent turn, refresh get_review",
         ] {
             assert!(
@@ -307,7 +308,7 @@ mod tests {
             );
         }
         assert!(
-            !text.contains("code-review") && !text.contains("xhigh"),
+            !text.contains("code-review") && !text.contains("xhigh") && !text.contains("README"),
             "{text}"
         );
     }
