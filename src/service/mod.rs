@@ -1258,23 +1258,20 @@ impl Service {
     /// The review's reviewer prompts, one of each kind, for the review page (§13.9).
     pub fn reviewer_prompts(&self, review_id: i64) -> Result<Vec<ReviewerPrompt>> {
         let review = store::get_review(&self.conn, review_id)?;
-        [
-            PromptKind::ClaudeCode,
-            PromptKind::Codex,
-            PromptKind::Generic,
-        ]
-        .into_iter()
-        .map(|kind| {
-            let default = prompt::default_text(kind, &review)?;
-            let Shown { text, notice } = shown_prompt(&self.conn, review_id, kind, &default)?;
-            Ok(ReviewerPrompt {
-                kind,
-                default,
-                text,
-                notice,
+        PromptKind::ALL
+            .iter()
+            .copied()
+            .map(|kind| {
+                let default = prompt::default_text(kind, &review)?;
+                let Shown { text, notice } = shown_prompt(&self.conn, review_id, kind, &default)?;
+                Ok(ReviewerPrompt {
+                    kind,
+                    default,
+                    text,
+                    notice,
+                })
             })
-        })
-        .collect()
+            .collect()
     }
 
     /// Record a reviewer prompt the human copied, when its text differs from what the review page

@@ -212,11 +212,7 @@ mod tests {
 
     #[test]
     fn a_whole_tree_prompt_reads_review_md_from_the_head_and_asks_for_files() {
-        for kind in [
-            PromptKind::ClaudeCode,
-            PromptKind::Codex,
-            PromptKind::Generic,
-        ] {
+        for &kind in PromptKind::ALL {
             let text = default_text(kind, &review("feature/x", None)).unwrap();
             assert!(
                 text.contains("a whole-tree review of branch feature/x."),
@@ -236,11 +232,7 @@ mod tests {
 
     #[test]
     fn prompts_leave_out_the_title_and_the_summary() {
-        for kind in [
-            PromptKind::ClaudeCode,
-            PromptKind::Codex,
-            PromptKind::Generic,
-        ] {
+        for &kind in PromptKind::ALL {
             for base in [Some("main"), None] {
                 let text = default_text(kind, &review("feature/x", base)).unwrap();
                 assert!(
@@ -278,11 +270,7 @@ mod tests {
         // git resolves a short name to refs/tags/<name> before refs/heads/<name>.
         let mut remote = review("release-1.2", Some("main"));
         remote.base_ref = Some("refs/remotes/origin/main".to_string());
-        for kind in [
-            PromptKind::ClaudeCode,
-            PromptKind::Codex,
-            PromptKind::Generic,
-        ] {
+        for &kind in PromptKind::ALL {
             let text = default_text(kind, &remote).unwrap();
             assert!(
                 text.contains("branch release-1.2 against origin/main."),
@@ -309,6 +297,8 @@ mod tests {
             "`lani wait --review 12 --for reviewer --timeout 1m` in the foreground",
             "resume that same process until it exits",
             "Exit 4: run the command again. Exit 3: stop; the review is closed. Exit 0: continue",
+            "Use step 6's wait procedure instead of any advice to run a background wait.",
+            "If the sandbox denies access to LANI's data directory, retry through the harness's approval mechanism",
             "On each subsequent turn, refresh get_review",
         ] {
             assert!(
@@ -320,6 +310,36 @@ mod tests {
             !text.contains("code-review") && !text.contains("xhigh"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_codex_findings_guidance_is_part_of_step_2_in_both_review_modes() {
+        for (base, scope) in [
+            (
+                Some("main"),
+                "Inspect `git diff refs/heads/main...refs/heads/feature/x` and enough surrounding \
+                 code, callers, and tests to assess the change. Focus on problems introduced or \
+                 exposed by the change, plus checks required by the review instructions and summary.",
+            ),
+            (
+                None,
+                "Review the files I list at the end of this prompt, applying the review instructions \
+                 and the focus requested in the summary.",
+            ),
+        ] {
+            let text = default_text(PromptKind::Codex, &review("feature/x", base)).unwrap();
+            let expected = format!(
+                "2. {scope} Verify findings against the source. Prefer concrete, actionable bugs, \
+                 regressions, meaningful testing gaps, and incorrect documentation. Avoid \
+                 speculative findings and unsolicited style preferences."
+            );
+            assert_eq!(
+                text.lines().find(|line| line.starts_with("2. ")),
+                Some(expected.as_str())
+            );
+            let first_step = text.lines().find(|line| line.starts_with("1. ")).unwrap();
+            assert!(!first_step.contains("wait"), "{first_step}");
+        }
     }
 
     #[test]

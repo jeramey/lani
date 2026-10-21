@@ -1671,21 +1671,18 @@ shows while the review is open.
       multi-agent cloud review, is billed and only you can start it, so the prompt uses `xhigh`.
     - Background commands, for `lani wait`.
   - *Codex* reviews the code directly, without assuming the Claude Code `code-review` skill.
-    It carries the LANI steps itself, keeps code changes and commits with the implementer,
-    checks existing issues to avoid duplicates, and files verified findings with precise
-    locations, the reviewed commit, and the appropriate worktree path (or NULL for git reads).
-    It runs required checks subject to their execution constraints and reports checks it could
-    not run. After each hand-off it waits with `lani wait --timeout 1m` in the foreground.
-    - When the shell tool yields a running process/session identifier, Codex resumes that same
-      process until it exits, rather than starting another wait or ending the task. Exit 4
-      repeats the command, exit 3 stops because the review is closed, and exit 0 starts another
-      pass. A shell tool that stops the command first needs a shorter timeout; other failures
-      or a missing shell tool are reported.
-    - Each pass refreshes the review's current committed head and open issues, verifies replies
-      against the code, resolves fixed findings, and replies on the rest before handing off.
-      Questions awaiting the human can be resolved only by the human. The prompt follows LANI's
-      hand-off routing and tells the human and opens the web UI when action is theirs; it never
-      closes the review without an explicit request.
+    Its shell tool can yield a running command with a process/session identifier before the
+    command exits. The generic prompt doesn't distinguish that yield from completion, so the
+    Codex prompt explicitly resumes the same wait and keeps the task alive until its turn.
+    - After a hand-off, it uses the generic prompt's foreground wait and one-minute timeout,
+      overriding the MCP reply's Claude-oriented background-wait advice. The reply still says
+      who received the review, including when LANI sends it to the human instead.
+    - Shell commands in Codex's workspace-write sandbox cannot normally write to LANI's data
+      directory. `lani wait` needs that access to open SQLite and its WAL files, independently
+      of MCP tool access. The README documents adding the actual data directory to Codex's
+      `sandbox_workspace_write.writable_roots`: `$LANI_HOME`, else `$XDG_DATA_HOME/lani`, else
+      `~/.local/share/lani`. The prompt requests approval on a sandbox denial and reports the
+      setup needed if access remains unavailable.
   - *Other harness* is for harnesses that can use MCP servers, such as OpenCode. It doesn't
     assume the harness gives the model the server instructions, so it carries the steps itself:
     read the change, look for problems, file issues, hand off, wait and follow up.

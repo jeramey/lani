@@ -12,6 +12,9 @@ macro_rules! db_enum {
         }
 
         impl $name {
+            /// Every variant in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
             #[must_use]
             pub fn as_str(self) -> &'static str {
                 match self {

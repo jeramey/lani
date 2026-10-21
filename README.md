@@ -75,15 +75,30 @@ you. You hand it on from the review page.
 
 To start a reviewer session, copy a ready-made prompt from the review page's *Reviewer prompt*
 button and paste it into the session.
-- **Three versions.** Claude Code uses `/code-review` to find bugs and waits in the background.
-  Codex reviews the code directly and resumes the same waiting command when its shell tool yields.
-  Other harness is for other harnesses that can use MCP servers, such as OpenCode.
+- **Three versions.** *Claude Code* uses `/code-review` to find bugs and waits in the background.
+  *Codex* reviews the code directly and resumes the same waiting command when its shell tool yields.
+  *Other harness* is for harnesses that can use MCP servers, such as OpenCode.
 - **Your edits.** You can edit a prompt before copying it. The page keeps the edit you copied
   last for the next time.
 - **Project instructions.** Put review instructions for your project, such as which checks to
   run, in `REVIEW.md` at the top of the repository. The prompts tell the reviewer to read it
   from the base branch, so the branch under review can't change it. Instructions your harness
   loads itself, such as `CLAUDE.md`, come from the checkout the reviewer runs in.
+
+For Codex's workspace-write sandbox, add LANI's data directory to
+`sandbox_workspace_write.writable_roots` in `~/.codex/config.toml`, keeping any existing roots:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = ["/absolute/path/to/lani-data"]
+```
+
+Replace the example with the absolute path of `$LANI_HOME`, else `$XDG_DATA_HOME/lani`, else
+`~/.local/share/lani`; expand `~` yourself in the TOML value. Restart Codex after changing its
+configuration. `lani wait` needs write access to open SQLite and its WAL files even while waiting;
+MCP tool access does not grant that access to shell commands. If a running session hits a sandbox
+denial, it can request approval for the wait command, or you can configure the writable root and
+restart. See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 ### The web UI
 
