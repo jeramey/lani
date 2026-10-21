@@ -75,8 +75,9 @@ you. You hand it on from the review page.
 
 To start a reviewer session, copy a ready-made prompt from the review page's *Reviewer prompt*
 button and paste it into the session.
-- **Two versions.** One is for Claude Code: it uses `/code-review` to find bugs and waits in the
-  background. The other is for other harnesses that can use MCP servers, such as OpenCode.
+- **Three versions.** Claude Code uses `/code-review` to find bugs and waits in the background.
+  Codex reviews the code directly and resumes the same waiting command when its shell tool yields.
+  Other harness is for other harnesses that can use MCP servers, such as OpenCode.
 - **Your edits.** You can edit a prompt before copying it. The page keeps the edit you copied
   last for the next time.
 - **Project instructions.** Put review instructions for your project, such as which checks to

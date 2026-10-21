@@ -198,6 +198,7 @@ impl PromptPanel {
             kind: prompt.kind.as_str(),
             label: match prompt.kind {
                 PromptKind::ClaudeCode => "Claude Code",
+                PromptKind::Codex => "Codex",
                 PromptKind::Generic => "Other harness",
             },
             edited: prompt.edited(),

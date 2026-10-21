@@ -364,7 +364,7 @@ CREATE TABLE prompt_default (
 CREATE TABLE prompt_edit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   review_id    INTEGER NOT NULL REFERENCES review(id),
-  kind         TEXT NOT NULL CHECK (kind IN ('claude_code', 'generic')),
+  kind         TEXT NOT NULL CHECK (kind IN ('claude_code', 'codex', 'generic')),  -- Codex: migration 6
   default_id   INTEGER NOT NULL REFERENCES prompt_default(id),
   patch        TEXT,                    -- unified diff from the default; NULL = the default
   lani_version TEXT NOT NULL,
@@ -411,6 +411,10 @@ it to each review's latest `turn_changed` event; earlier hand-offs have no note.
 
 Migration 5 (`0005_prompt_edits.sql`) adds `prompt_default` and `prompt_edit`, the human's edits
 to the reviewer prompts (§13.9). It only adds tables.
+
+Migration 6 (`0006_codex_prompt.sql`) admits `codex` as a prompt kind (§13.9). It rebuilds
+`prompt_edit` to widen its CHECK constraint, keeping every revision, id, and default reference,
+and recreates its index. Existing Claude Code and Other harness edits remain available.
 
 A binary that finds `user_version` higher than it knows refuses to open the database and asks you
 to upgrade. A process that is already running, such as the web server or a session's `lani mcp`,
@@ -1657,7 +1661,7 @@ The overview's *Reviewer prompt* button opens a panel with a prompt to paste int
 session you start yourself. Starting sessions from the web UI is on hold (§20, M5). The panel
 shows while the review is open.
 
-- **Two prompts.** A choice at the top of the panel shows one of them. It works without
+- **Three prompts.** A choice at the top of the panel shows one of them. It works without
   JavaScript, through CSS `:has()`.
   - *Claude Code* relies on what Claude Code provides:
     - The server instructions (§12.2), which Claude Code gives the model.
@@ -1666,6 +1670,22 @@ shows while the review is open.
       the implementer's job, nor `--comment`, which posts to a GitHub PR. `ultra`, the
       multi-agent cloud review, is billed and only you can start it, so the prompt uses `xhigh`.
     - Background commands, for `lani wait`.
+  - *Codex* reviews the code directly, without assuming the Claude Code `code-review` skill.
+    It carries the LANI steps itself, keeps code changes and commits with the implementer,
+    checks existing issues to avoid duplicates, and files verified findings with precise
+    locations, the reviewed commit, and the appropriate worktree path (or NULL for git reads).
+    It runs required checks subject to their execution constraints and reports checks it could
+    not run. After each hand-off it waits with `lani wait --timeout 1m` in the foreground.
+    - When the shell tool yields a running process/session identifier, Codex resumes that same
+      process until it exits, rather than starting another wait or ending the task. Exit 4
+      repeats the command, exit 3 stops because the review is closed, and exit 0 starts another
+      pass. A shell tool that stops the command first needs a shorter timeout; other failures
+      or a missing shell tool are reported.
+    - Each pass refreshes the review's current committed head and open issues, verifies replies
+      against the code, resolves fixed findings, and replies on the rest before handing off.
+      Questions awaiting the human can be resolved only by the human. The prompt follows LANI's
+      hand-off routing and tells the human and opens the web UI when action is theirs; it never
+      closes the review without an explicit request.
   - *Other harness* is for harnesses that can use MCP servers, such as OpenCode. It doesn't
     assume the harness gives the model the server instructions, so it carries the steps itself:
     read the change, look for problems, file issues, hand off, wait and follow up.

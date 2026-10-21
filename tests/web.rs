@@ -2298,7 +2298,7 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
     let f = fixture();
     let review = format!("/reviews/{}", f.review_id);
     let (_, _, page) = send(&f.app, get(&review)).await;
-    for kind in ["claude_code", "generic"] {
+    for kind in ["claude_code", "codex", "generic"] {
         let (text, default, edited) = prompt_panel(&page, kind);
         assert_eq!((text.as_str(), edited), (default.as_str(), false), "{kind}");
         assert!(
@@ -2308,7 +2308,12 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
             )),
             "{default}"
         );
+        assert!(
+            page.contains(&format!("name=\"prompt-kind\" value=\"{kind}\"")),
+            "{kind} has a choice in the picker: {page}"
+        );
     }
+    assert!(page.contains("Prompt for Codex"), "{page}");
     assert!(
         page.contains("<input type=\"radio\" name=\"prompt-kind\" value=\"claude_code\" checked>"),
         "Claude Code is chosen first: {page}"
@@ -2324,41 +2329,44 @@ async fn the_reviewer_prompt_panel_shows_the_last_copied_edit() {
     );
 
     // lani.js saves the text it copied, with the line endings a browser submits.
-    let (_, default, _) = prompt_panel(&page, "generic");
-    let edited = format!("{default}\n\nAlso read <docs/notes.md> & \"TODO\" lines.");
-    let (status, _, _) = send(
-        &f.app,
-        post(
-            &format!("{review}/prompts"),
-            &format!(
-                "kind=generic&text={}",
-                form_value(&edited.replace('\n', "\r\n"))
+    for kind in ["generic", "codex"] {
+        let (_, default, _) = prompt_panel(&page, kind);
+        let edited = format!("{default}\n\nAlso read <docs/notes.md> & \"TODO\" lines.");
+        let (status, _, _) = send(
+            &f.app,
+            post(
+                &format!("{review}/prompts"),
+                &format!(
+                    "kind={kind}&text={}",
+                    form_value(&edited.replace('\n', "\r\n"))
+                ),
             ),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, _, page) = send(&f.app, get(&review)).await;
-    assert_eq!(
-        prompt_panel(&page, "generic"),
-        (edited.clone(), default.clone(), true)
-    );
-    assert!(
-        !prompt_panel(&page, "claude_code").2,
-        "the other prompt is unchanged"
-    );
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, _, page) = send(&f.app, get(&review)).await;
+        assert_eq!(prompt_panel(&page, kind), (edited, default.clone(), true));
+        for other in ["claude_code", "codex", "generic"] {
+            if other != kind {
+                assert!(
+                    !prompt_panel(&page, other).2,
+                    "the other prompts are unchanged"
+                );
+            }
+        }
 
-    // Copying the default again goes back to it.
-    send(
-        &f.app,
-        post(
-            &format!("{review}/prompts"),
-            &format!("kind=generic&text={}", form_value(&default)),
-        ),
-    )
-    .await;
-    let (_, _, page) = send(&f.app, get(&review)).await;
-    assert!(!prompt_panel(&page, "generic").2, "{page}");
+        // Copying the default again goes back to it.
+        send(
+            &f.app,
+            post(
+                &format!("{review}/prompts"),
+                &format!("kind={kind}&text={}", form_value(&default)),
+            ),
+        )
+        .await;
+        let (_, _, page) = send(&f.app, get(&review)).await;
+        assert!(!prompt_panel(&page, kind).2, "{page}");
+    }
 
     let (status, _, refused) = send(
         &f.app,

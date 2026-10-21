@@ -1106,8 +1106,8 @@ fn reopening_the_database_keeps_the_schema() {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
     assert_eq!(
-        version, 5,
-        "the baseline schema, the turns migration, hand-off notes and prompt edits"
+        version, 6,
+        "the baseline schema, turns, hand-off notes, prompt edits and Codex prompts"
     );
     let timeout: String = conn
         .query_row(
@@ -1318,7 +1318,7 @@ fn a_running_lani_stops_once_a_newer_lani_upgrades_the_database() {
     let outdated = |error: Error| match error {
         Error::Outdated(message) => {
             assert!(
-                message.contains("schema version 99") && message.contains("up to 5"),
+                message.contains("schema version 99") && message.contains("up to 6"),
                 "{message}"
             );
         }
@@ -2561,6 +2561,92 @@ fn prompt_text(service: &Service, review_id: i64, kind: PromptKind) -> (String, 
 }
 
 #[test]
+fn migrating_a_version_5_database_keeps_prompt_edits_and_accepts_codex_edits() {
+    let home = TestHome::new();
+    let db_path = home.db_path();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    for migration in [
+        include_str!("../src/store/migrations/0002_baseline.sql"),
+        include_str!("../src/store/migrations/0003_turns.sql"),
+        include_str!("../src/store/migrations/0004_hand_off_notes.sql"),
+        include_str!("../src/store/migrations/0005_prompt_edits.sql"),
+    ] {
+        conn.execute_batch(migration).unwrap();
+    }
+    conn.execute_batch(
+        "INSERT INTO repo (git_dir, name, created_at) VALUES ('/r/.git', 'r', 't');
+         INSERT INTO review (repo_id, title, head_ref, base_ref, base_source, status,
+                             created_by, created_at, closed_at, summary, summary_updated_by,
+                             summary_updated_at, summary_version, turn, turn_by, turn_at,
+                             turn_note, rounds)
+           VALUES (1, 'Old', 'refs/heads/x', NULL, 'explicit', 'open', 'reviewer', 't', NULL,
+                   '', NULL, NULL, 1, NULL, NULL, NULL, NULL, 0);
+         PRAGMA user_version = 5;",
+    )
+    .unwrap();
+    let review = lani::store::get_review(&conn, 1).unwrap();
+    let mut old_edits = Vec::new();
+    for (id, kind) in [(7, PromptKind::ClaudeCode), (13, PromptKind::Generic)] {
+        let default = lani::prompt::default_text(kind, &review).unwrap();
+        let edited = format!("{default}\nAlso check compatibility.");
+        let patch = lani::prompt::diff(&default, &edited).unwrap();
+        conn.execute(
+            "INSERT INTO prompt_default (id, text) VALUES (?1, ?2)",
+            rusqlite::params![id, default],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO prompt_edit (id, review_id, kind, default_id, patch, lani_version, created_at)
+             VALUES (?1, 1, ?2, ?1, ?3, 'old', 't')",
+            rusqlite::params![id, kind, patch],
+        )
+        .unwrap();
+        old_edits.push((kind, edited));
+    }
+    // A return to the default is history too, even when a later copy edited it again.
+    conn.execute(
+        "INSERT INTO prompt_edit (id, review_id, kind, default_id, patch, lani_version, created_at)
+         VALUES (11, 1, 'generic', 13, NULL, 'old', 't')",
+        [],
+    )
+    .unwrap();
+    let old_rows = prompt_rows(&home);
+    drop(conn);
+
+    let mut service = Service::open(&db_path).unwrap();
+    assert_eq!(prompt_rows(&home), old_rows);
+    for (kind, edited) in old_edits {
+        assert_eq!(prompt_text(&service, 1, kind), (edited, true));
+    }
+    let (default, edited) = prompt_text(&service, 1, PromptKind::Codex);
+    assert!(!edited);
+    let copied = format!("{default}\nAlso check compatibility.");
+    assert!(
+        service
+            .save_reviewer_prompt(Actor::Human, 1, PromptKind::Codex, &copied)
+            .unwrap()
+    );
+    drop(service);
+    let service = Service::open(&db_path).unwrap();
+    assert_eq!(prompt_text(&service, 1, PromptKind::Codex), (copied, true));
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let ids: Vec<i64> = conn
+        .prepare("SELECT id FROM prompt_edit ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(ids, [7, 11, 13, 14]);
+    let broken_references: i64 = conn
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(broken_references, 0);
+}
+
+#[test]
 fn a_copied_edit_is_kept_as_a_diff_and_shown_next_time() {
     let home = TestHome::new();
     let repo = feature_repo();
@@ -2571,7 +2657,14 @@ fn a_copied_edit_is_kept_as_a_diff_and_shown_next_time() {
         .id;
     let prompts = service.reviewer_prompts(review_id).unwrap();
     let kinds: Vec<PromptKind> = prompts.iter().map(|prompt| prompt.kind).collect();
-    assert_eq!(kinds, [PromptKind::ClaudeCode, PromptKind::Generic]);
+    assert_eq!(
+        kinds,
+        [
+            PromptKind::ClaudeCode,
+            PromptKind::Codex,
+            PromptKind::Generic
+        ]
+    );
     assert!(prompts.iter().all(|prompt| !prompt.edited()));
     let default = prompts[0].default.clone();
     assert!(default.contains("branch feature against main"), "{default}");
@@ -2592,10 +2685,12 @@ fn a_copied_edit_is_kept_as_a_diff_and_shown_next_time() {
         prompt_text(&service, review_id, PromptKind::ClaudeCode),
         (edited.clone(), true)
     );
-    assert!(
-        !prompt_text(&service, review_id, PromptKind::Generic).1,
-        "the other kind keeps its default"
-    );
+    for kind in [PromptKind::Codex, PromptKind::Generic] {
+        assert!(
+            !prompt_text(&service, review_id, kind).1,
+            "the other kinds keep their defaults"
+        );
+    }
     let rows = prompt_rows(&home);
     let (kind, patch, stored_default, version) = &rows[0];
     let patch = patch.as_deref().unwrap();

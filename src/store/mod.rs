@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0003_turns.sql"),
     include_str!("migrations/0004_hand_off_notes.sql"),
     include_str!("migrations/0005_prompt_edits.sql"),
+    include_str!("migrations/0006_codex_prompt.sql"),
 ];
 
 /// The schema version the baseline migration creates. Databases at an earlier version come from

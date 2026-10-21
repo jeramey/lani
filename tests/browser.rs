@@ -727,13 +727,18 @@ fn the_reviewer_prompt_is_copied_and_its_edit_kept() {
         ))
     };
     assert_eq!(
-        (shown("claude_code"), shown("generic")),
-        (json!(true), json!(false))
+        (shown("claude_code"), shown("codex"), shown("generic")),
+        (json!(true), json!(false), json!(false))
+    );
+    browser.click("input[name=prompt-kind][value=codex]");
+    assert_eq!(
+        (shown("claude_code"), shown("codex"), shown("generic")),
+        (json!(false), json!(true), json!(false))
     );
     browser.click("input[name=prompt-kind][value=generic]");
     assert_eq!(
-        (shown("claude_code"), shown("generic")),
-        (json!(false), json!(true))
+        (shown("claude_code"), shown("codex"), shown("generic")),
+        (json!(false), json!(false), json!(true))
     );
     assert_eq!(
         browser.run(

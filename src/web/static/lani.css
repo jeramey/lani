@@ -302,6 +302,7 @@ details.toggle > :not(summary) {
 .prompt-kinds legend { font-weight: 600; font-size: 14px; padding: 0; margin: 4px 0; }
 .prompt-kinds label { display: inline-flex; gap: 6px; align-items: center; font-weight: normal; margin: 0 16px 0 0; }
 .prompt-panel:has(input[value="claude_code"]:checked) .prompt:not([data-kind="claude_code"]),
+.prompt-panel:has(input[value="codex"]:checked) .prompt:not([data-kind="codex"]),
 .prompt-panel:has(input[value="generic"]:checked) .prompt:not([data-kind="generic"]) { display: none; }
 .prompt-head { display: flex; gap: 8px; align-items: baseline; }
 .badge.prompt-edited { background: var(--outdated); }

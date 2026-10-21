@@ -62,6 +62,7 @@ db_enum!(
     /// The kind of harness a reviewer prompt is written for (§13.9).
     PromptKind {
         ClaudeCode => "claude_code",
+        Codex => "codex",
         Generic => "generic",
     }
 );

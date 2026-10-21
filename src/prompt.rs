@@ -18,12 +18,18 @@ struct ClaudeCodePrompt<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "prompts/reviewer_codex.txt")]
+struct CodexPrompt<'a> {
+    f: &'a Fields<'a>,
+}
+
+#[derive(Template)]
 #[template(path = "prompts/reviewer_generic.txt")]
 struct GenericPrompt<'a> {
     f: &'a Fields<'a>,
 }
 
-/// What both templates fill in. `head` and `base` are short names, for reading; `instructions` and
+/// What the templates fill in. `head` and `base` are short names, for reading; `instructions` and
 /// `range` go into commands, so they use full ref names, which git cannot mistake for a tag of the
 /// same name, and are quoted where a shell needs it.
 struct Fields<'a> {
@@ -51,6 +57,7 @@ pub fn default_text(kind: PromptKind, review: &Review) -> Result<String> {
     };
     let rendered = match kind {
         PromptKind::ClaudeCode => ClaudeCodePrompt { f: &fields }.render(),
+        PromptKind::Codex => CodexPrompt { f: &fields }.render(),
         PromptKind::Generic => GenericPrompt { f: &fields }.render(),
     };
     rendered.map_err(|error| Error::Internal(format!("could not render the prompt: {error}")))
@@ -205,7 +212,11 @@ mod tests {
 
     #[test]
     fn a_whole_tree_prompt_reads_review_md_from_the_head_and_asks_for_files() {
-        for kind in [PromptKind::ClaudeCode, PromptKind::Generic] {
+        for kind in [
+            PromptKind::ClaudeCode,
+            PromptKind::Codex,
+            PromptKind::Generic,
+        ] {
             let text = default_text(kind, &review("feature/x", None)).unwrap();
             assert!(
                 text.contains("a whole-tree review of branch feature/x."),
@@ -219,17 +230,17 @@ mod tests {
                 !text.contains("git diff") && !text.contains("code-review"),
                 "{text}"
             );
-            assert!(
-                text.ends_with("hand the review to the human.\n\nFiles to review:")
-                    || text.ends_with("as the instructions say.\n\nFiles to review:"),
-                "{text}"
-            );
+            assert!(text.ends_with("\n\nFiles to review:"), "{text}");
         }
     }
 
     #[test]
     fn prompts_leave_out_the_title_and_the_summary() {
-        for kind in [PromptKind::ClaudeCode, PromptKind::Generic] {
+        for kind in [
+            PromptKind::ClaudeCode,
+            PromptKind::Codex,
+            PromptKind::Generic,
+        ] {
             for base in [Some("main"), None] {
                 let text = default_text(kind, &review("feature/x", base)).unwrap();
                 assert!(
@@ -242,16 +253,18 @@ mod tests {
 
     #[test]
     fn refs_in_commands_are_quoted_for_the_shell() {
-        let text = default_text(PromptKind::Generic, &review("x$(touch y)", Some("it's"))).unwrap();
-        assert!(
-            text.contains(r"`git show 'refs/heads/it'\''s:REVIEW.md'`"),
-            "{text}"
-        );
-        assert!(
-            text.contains(r"`git diff 'refs/heads/it'\''s...refs/heads/x$(touch y)'`"),
-            "{text}"
-        );
-        assert!(text.contains("branch x$(touch y) against it's."), "{text}");
+        for kind in [PromptKind::Codex, PromptKind::Generic] {
+            let text = default_text(kind, &review("x$(touch y)", Some("it's"))).unwrap();
+            assert!(
+                text.contains(r"`git show 'refs/heads/it'\''s:REVIEW.md'`"),
+                "{text}"
+            );
+            assert!(
+                text.contains(r"`git diff 'refs/heads/it'\''s...refs/heads/x$(touch y)'`"),
+                "{text}"
+            );
+            assert!(text.contains("branch x$(touch y) against it's."), "{text}");
+        }
         assert_eq!(
             shell_word("origin/main...feature/x-1.2"),
             "origin/main...feature/x-1.2"
@@ -265,7 +278,11 @@ mod tests {
         // git resolves a short name to refs/tags/<name> before refs/heads/<name>.
         let mut remote = review("release-1.2", Some("main"));
         remote.base_ref = Some("refs/remotes/origin/main".to_string());
-        for kind in [PromptKind::ClaudeCode, PromptKind::Generic] {
+        for kind in [
+            PromptKind::ClaudeCode,
+            PromptKind::Codex,
+            PromptKind::Generic,
+        ] {
             let text = default_text(kind, &remote).unwrap();
             assert!(
                 text.contains("branch release-1.2 against origin/main."),
@@ -280,6 +297,29 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn the_codex_prompt_reviews_the_range_and_resumes_a_yielded_wait() {
+        let text = default_text(PromptKind::Codex, &review("feature/x", Some("main"))).unwrap();
+        for instruction in [
+            "`git show refs/heads/main:REVIEW.md`",
+            "`git diff refs/heads/main...refs/heads/feature/x`",
+            "Leave code changes and commits to the implementer.",
+            "`lani wait --review 12 --for reviewer --timeout 1m` in the foreground",
+            "resume that same process until it exits",
+            "Exit 4: run the command again. Exit 3: stop; the review is closed. Exit 0: continue",
+            "On each subsequent turn, refresh get_review",
+        ] {
+            assert!(
+                text.contains(instruction),
+                "missing {instruction:?}: {text}"
+            );
+        }
+        assert!(
+            !text.contains("code-review") && !text.contains("xhigh"),
+            "{text}"
+        );
     }
 
     #[test]
